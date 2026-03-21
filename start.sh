@@ -37,9 +37,15 @@ fi
 echo "[3/5] Activando entorno virtual..."
 source backend/venv/bin/activate
 
+VENV_PYTHON="$(pwd)/backend/venv/bin/python"
+if [ ! -x "$VENV_PYTHON" ]; then
+  echo "[ERROR] No se encontró el ejecutable del venv: $VENV_PYTHON"
+  exit 1
+fi
+
 echo "[4/5] Instalando dependencias..."
-python -m pip install --upgrade pip
-pip install -r backend/requirements.txt
+"$VENV_PYTHON" -m pip install --upgrade pip
+"$VENV_PYTHON" -m pip install -r backend/requirements.txt
 
 echo "[5/5] Iniciando FastAPI..."
 echo "========================================="

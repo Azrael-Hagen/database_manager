@@ -1,6 +1,6 @@
 @echo off
 REM Quick Start Script para Database Manager en Windows CMD
-REM Más simple que PowerShell, compatibilidad garantizada
+REM Usa venv para aislamiento de dependencias
 
 setlocal enabledelayedexpansion
 
@@ -37,12 +37,20 @@ if not exist "backend\venv" (
 
 REM Activar venv
 echo [3/5] Activando entorno virtual...
-call backend\venv\Scripts\activate.bat
+set "VENV_DIR=%~dp0backend\venv"
+if not exist "%VENV_DIR%\Scripts\activate.bat" (
+    echo [ERROR] No se encontró %VENV_DIR%\Scripts\activate.bat
+    pause
+    exit /b 1
+)
+call "%VENV_DIR%\Scripts\activate.bat"
 
-REM Instalar dependencias
+REM Instalar dependencias con venv
 echo [4/5] Instalando dependencias...
-python -m pip install -q --upgrade pip
-pip install -q -r backend\requirements.txt
+"%VENV_DIR%\Scripts\python.exe" -m pip install --upgrade pip setuptools wheel
+"%VENV_DIR%\Scripts\python.exe" -m pip install numpy --only-binary :all:
+"%VENV_DIR%\Scripts\python.exe" -m pip install pandas --only-binary :all:
+"%VENV_DIR%\Scripts\python.exe" -m pip install -r "%~dp0backend\requirements.txt"
 if errorlevel 1 (
     color 0C
     echo [ERROR] No se pudieron instalar dependencias
