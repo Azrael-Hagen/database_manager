@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Database Manager - Panel de Control</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="container">
+            <div class="logo">📊 Database Manager</div>
+            <div class="user-menu" id="userMenu">
+                <span id="userName"></span>
+                <button onclick="logout()" class="btn btn-logout">Cerrar Sesión</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <ul class="menu">
+            <li><a href="#" onclick="loadSection('dashboard')" class="menu-item active">Dashboard</a></li>
+            <li><a href="#" onclick="loadSection('datos')" class="menu-item">Datos</a></li>
+            <li><a href="#" onclick="loadSection('importar')" class="menu-item">Importar</a></li>
+            <li><a href="#" onclick="loadSection('qr')" class="menu-item">Generar QR</a></li>
+            <li><a href="#" onclick="loadSection('usuarios')" class="menu-item">Usuarios</a></li>
+            <li><a href="#" onclick="loadSection('auditoria')" class="menu-item">Auditoría</a></li>
+        </ul>
+    </div>
+
+    <!-- Contenido Principal -->
+    <main class="main-container">
+        <div class="container">
+            <!-- Sección de Login -->
+            <section id="loginSection" class="panel">
+                <h2>Database Manager - Iniciar Sesión</h2>
+                <form onsubmit="login(event)">
+                    <div class="form-group">
+                        <label>Usuario:</label>
+                        <input type="text" id="username" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Contraseña:</label>
+                        <input type="password" id="password" required>
+                    </div>
+                    <button type="submit" class="btn">Ingresar</button>
+                    <button type="button" onclick="showRegister()" class="btn btn-secondary">Registrarse</button>
+                </form>
+            </section>
+
+            <!-- Sección de Registro -->
+            <section id="registerSection" class="panel" style="display: none;">
+                <h2>Registrar Nueva Cuenta</h2>
+                <form onsubmit="registrar(event)">
+                    <div class="form-group">
+                        <label>Usuario:</label>
+                        <input type="text" id="regUsername" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Email:</label>
+                        <input type="email" id="regEmail" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Nombre Completo:</label>
+                        <input type="text" id="regFullName">
+                    </div>
+                    <div class="form-group">
+                        <label>Contraseña:</label>
+                        <input type="password" id="regPassword" required>
+                    </div>
+                    <button type="submit" class="btn">Registrar</button>
+                    <button type="button" onclick="showLogin()" class="btn btn-secondary">Volver al Login</button>
+                </form>
+            </section>
+
+            <!-- Sección de Dashboard -->
+            <section id="dashboardSection" class="panel" style="display: none;">
+                <h1>Dashboard</h1>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>Registros Totales</h3>
+                        <p id="totalRegistros" class="stat-value">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Importaciones</h3>
+                        <p id="totalImportaciones" class="stat-value">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>QR Generados</h3>
+                        <p id="totalQR" class="stat-value">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Usuarios</h3>
+                        <p id="totalUsuarios" class="stat-value">0</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Sección de Datos -->
+            <section id="datosSection" class="panel" style="display: none;">
+                <h1>Visualizar Datos</h1>
+                <div class="search-bar">
+                    <input type="text" id="searchInput" placeholder="Buscar..." onkeyup="buscarDatos()">
+                    <select id="tablasSelect" onchange="cambiarTabla()">
+                        <option value="">-- Selecciona tabla --</option>
+                    </select>
+                </div>
+                <div id="datosContainer" class="table-responsive"></div>
+            </section>
+
+            <!-- Sección de Importación -->
+            <section id="importarSection" class="panel" style="display: none;">
+                <h1>Importar Datos</h1>
+                <form onsubmit="importarArchivo(event)">
+                    <div class="form-group">
+                        <label>Archivo:</label>
+                        <input type="file" id="archivoInput" required accept=".csv,.xlsx,.txt,.dat">
+                    </div>
+                    <div class="form-group">
+                        <label>Tipo:</label>
+                        <select id="tipoArchivo" onchange="cambiarTipo()">
+                            <option value="csv">CSV</option>
+                            <option value="excel">Excel</option>
+                            <option value="txt">TXT</option>
+                            <option value="dat">DAT</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Delimitador:</label>
+                        <select id="delimitador">
+                            <option value=",">Coma (,)</option>
+                            <option value=";">Punto y coma (;)</option>
+                            <option value="\t">Tabulación</option>
+                            <option value="|">Pipe (|)</option>
+                            <option value=" ">Espacio</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Tabla Destino:</label>
+                        <input type="text" id="tablaDestino" value="datos_importados">
+                    </div>
+                    <button type="submit" class="btn">Importar</button>
+                </form>
+                <div id="importProgress" style="display: none; margin-top: 20px;">
+                    <p>Importando...</p>
+                    <div class="progress-bar">
+                        <div id="progressFill" class="progress-fill"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Sección de QR -->
+            <section id="qrSection" class="panel" style="display: none;">
+                <h1>Generar Código QR</h1>
+                <form onsubmit="generarQR(event)">
+                    <div class="form-group">
+                        <label>Contenido del QR:</label>
+                        <textarea id="contenidoQR" placeholder="Ingresa el contenido para el QR"></textarea>
+                    </div>
+                    <button type="submit" class="btn">Generar QR</button>
+                </form>
+                <div id="qrContainer" style="margin-top: 30px; text-align: center;"></div>
+            </section>
+
+            <!-- Sección de Auditoría -->
+            <section id="auditoriaSection" class="panel" style="display: none;">
+                <h1>Auditoría de Acciones</h1>
+                <div id="auditoriaContainer" class="table-responsive"></div>
+            </section>
+        </div>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 Database Manager. Versión 1.0.0 - PRODUCCIÓN</p>
+    </footer>
+
+    <!-- Librerías externas -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode.js/1.5.3/qrcode.min.js"></script>
+    
+    <script src="js/api-client.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
