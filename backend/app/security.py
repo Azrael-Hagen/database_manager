@@ -55,7 +55,12 @@ def verify_token(token: str) -> dict:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token inválido"
             )
-        return {"username": username}
+        return {
+            "username": username,
+            "id": payload.get("id"),
+            "es_admin": payload.get("es_admin", False),
+            "email": payload.get("email")
+        }
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

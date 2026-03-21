@@ -37,7 +37,50 @@ qrcode==7.4.2
 passlib==1.7.4
 python-jose==3.3.0
 bcrypt==4.1.2
+click==8.3.1
 ```
+
+---
+
+## 🗄️ NUEVAS FUNCIONES DE GESTIÓN DE BASES DE DATOS
+
+### **Endpoints Agregados**
+Se han implementado endpoints completos para gestión de bases de datos:
+
+#### **Listar Bases de Datos**
+- **GET** `/api/databases/`
+- Lista todas las bases de datos disponibles en MariaDB
+
+#### **Listar Tablas**
+- **GET** `/api/databases/{db_name}/tables`
+- Lista todas las tablas en una base de datos específica
+
+#### **Ver Datos de Tabla**
+- **GET** `/api/databases/{db_name}/tables/{table_name}`
+- Muestra estructura y datos de una tabla (con paginación)
+
+#### **Ejecutar Consultas SQL**
+- **POST** `/api/databases/{db_name}/query`
+- Ejecuta consultas SQL personalizadas (SELECT, INSERT, UPDATE, DELETE)
+
+#### **Crear Tablas**
+- **POST** `/api/databases/{db_name}/tables`
+- Crea nuevas tablas con SQL personalizado
+
+#### **Eliminar Tablas**
+- **DELETE** `/api/databases/{db_name}/tables/{table_name}`
+- Elimina tablas existentes
+
+### **Logging Mejorado**
+- Todos los endpoints registran operaciones en la terminal
+- Nivel INFO para operaciones normales
+- Nivel ERROR para problemas
+- Logs incluyen usuario, base de datos y operación realizada
+
+### **Seguridad**
+- Todos los endpoints requieren autenticación JWT
+- Operaciones auditadas por usuario
+- Validación de permisos
 
 ---
 
@@ -98,7 +141,7 @@ database_manager/
 ├── scripts/                      # ✅ Scripts SQL
 ├── tests/                        # ✅ Tests
 ├── start.bat                     # ✅ Script de inicio único
-├── README-COMPLETO.md            # ✅ Documentación completa
+├── README.md                     # ✅ Documentación principal
 ├── QUICKSTART.md                 # ✅ Inicio rápido
 ├── PRODUCTION.md                 # ✅ Guía de producción
 ├── INSTALAR-MARIADB.md           # ✅ Guía de instalación
@@ -201,6 +244,11 @@ python main.py
 - ✅ Generación QR
 - ✅ Auditoría completa
 - ✅ Validaciones Pydantic
+- ✅ **NUEVO:** Gestión completa de bases de datos
+- ✅ **NUEVO:** Listado de bases de datos y tablas
+- ✅ **NUEVO:** CRUD en tablas con SQL personalizado
+- ✅ **NUEVO:** Logging detallado en terminal
+- ✅ **NUEVO:** Cierre graceful con Ctrl+C
 
 ### **Base de Datos**
 - ✅ Conexión estable
@@ -223,6 +271,7 @@ python main.py
 2. **Login admin:** admin / Admin123!
 3. **Cambiar contraseña** del admin
 4. **Probar importación** de datos CSV
+5. **NUEVO:** Explorar bases de datos en `/docs` → Database Management
 
 ### **Mediano Plazo**
 1. **Configurar frontend** (si existe)
@@ -240,11 +289,11 @@ python main.py
 
 ## 📞 CONTACTO Y SOPORTE
 
-**Estado del proyecto:** ✅ 100% Funcional
+**Estado del proyecto:** ✅ 100% Funcional + Nuevas Funciones de DB
 **Compatibilidad:** Windows + Linux
-**Documentación:** Completa en README-COMPLETO.md
+**Documentación:** Completa en README.md
 **Soporte:** Archivos de log en `backend/logs/`
 
 ---
 
-*Este checkpoint documenta la finalización exitosa del proyecto Database Manager. Todas las funcionalidades están operativas y listas para uso en producción.*
+*Este checkpoint documenta la finalización exitosa del proyecto Database Manager con funcionalidades ampliadas de gestión de bases de datos. Todas las funcionalidades están operativas y listas para uso en producción.*

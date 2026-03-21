@@ -16,7 +16,9 @@ class UsuarioBase(BaseModel):
 class UsuarioCrear(UsuarioBase):
     """Esquema para crear usuario."""
     password: str = Field(..., min_length=8, max_length=100)
-    
+    es_admin: bool = False
+    es_activo: bool = True
+
     @validator('password')
     def password_strength(cls, v):
         """Validar fortaleza de contraseña."""
@@ -29,21 +31,47 @@ class UsuarioCrear(UsuarioBase):
         return v
 
 
+class UsuarioActualizar(BaseModel):
+    """Esquema para actualizar usuario."""
+    username: Optional[str] = Field(None, min_length=3, max_length=50)
+    email: Optional[EmailStr] = None
+    nombre_completo: Optional[str] = Field(None, max_length=255)
+    es_activo: Optional[bool] = None
+    es_admin: Optional[bool] = None
+
+
 class Usuario(UsuarioBase):
-    """Esquema de usuario (lectura)."""
-    
+    """Esquema completo de usuario para respuestas."""
+    id: int
+    es_activo: bool = True
+    es_admin: bool = False
+    fecha_creacion: datetime
+    fecha_actualizacion: Optional[datetime] = None
+
     class Config:
         from_attributes = True
-    
-    id: int
-    es_activo: bool
-    fecha_creacion: datetime
 
 
 class UsuarioAuth(BaseModel):
     """Esquema para autenticación."""
     username: str
     password: str
+
+
+class PasswordUpdate(BaseModel):
+    """Esquema para actualizar contraseña."""
+    password: str = Field(..., min_length=8, max_length=100)
+
+    @validator('password')
+    def password_strength(cls, v):
+        """Validar fortaleza de contraseña."""
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Contraseña debe contener mayúscula')
+        if not re.search(r'[0-9]', v):
+            raise ValueError('Contraseña debe contener número')
+        if not re.search(r'[!@#$%^&*]', v):
+            raise ValueError('Contraseña debe contener carácter especial')
+        return v
 
 
 class Token(BaseModel):

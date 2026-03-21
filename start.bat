@@ -3,11 +3,12 @@ REM Database Manager - Script de Inicio Único
 REM Windows - Python + MariaDB
 
 setlocal enabledelayedexpansion
+chcp 65001 >nul
 color 0A
 
 echo.
 echo ========================================
-echo Database Manager - Inicio Rápido
+echo Database Manager - Inicio Rapido
 echo Python 3.14.3 + MariaDB 12.2.2
 echo ========================================
 echo.
@@ -20,7 +21,7 @@ python --version >nul 2>&1
 if errorlevel 1 (
     color 0C
     echo [ERROR] Python no encontrado
-    echo Descargalo desde: https://www.python.org
+    echo Descargalo desde https://www.python.org
     pause
     exit /b 1
 )
@@ -44,7 +45,7 @@ if exist "C:\Program Files\MariaDB 12.2\bin\mysql.exe" (
         color 0C
         echo [ERROR] MariaDB no encontrado
         echo.
-        echo SOLUCIÓN:
+        echo SOLUCION:
         echo Lee INSTALAR-MARIADB.md para instalar MariaDB
         echo.
         pause
@@ -57,44 +58,33 @@ REM Iniciar aplicación
 echo [PASO 3/3] Iniciando Database Manager...
 echo.
 echo ========================================
-echo   APLICACIÓN INICIANDO...
+echo   APLICACION INICIANDO...
 echo ========================================
 echo.
 echo URL:              http://localhost:8000
-echo Documentación:    http://localhost:8000/docs
+echo Documentacion:    http://localhost:8000/docs
+echo Frontend activo:  carpeta web\ (no frontend\)
 echo Usuario:          admin
-echo Contraseña:       Admin123!
+echo Contrasena:       Admin123!
 echo.
 echo Presiona Ctrl+C para detener
 echo.
 
-REM Ejecutar aplicación
-"C:/Users/Azrael/AppData/Local/Python/pythoncore-3.14-64/python.exe" "backend/main.py"
+REM Verificar si ya existe un proceso escuchando en el puerto configurado
+set "PORT_ACTION=0"
+powershell -NoProfile -Command "$port = 8000; $connections = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; if (-not $connections) { exit 0 }; Write-Host '[AVISO] Ya hay procesos escuchando en el puerto 8000.'; Write-Host ('PID(s): ' + ($connections -join ' ')); Write-Host ''; Get-CimInstance Win32_Process | Where-Object { $connections -contains $_.ProcessId } | Select-Object ProcessId, CommandLine | Format-Table -AutoSize | Out-Host; Write-Host ''; Write-Host 'Opciones:'; Write-Host '  1. Reutilizar la sesion actual'; Write-Host '  2. Reiniciar y crear una sesion nueva'; Write-Host '  3. Cancelar'; $answer = Read-Host 'Elige una opcion [1/2/3]'; if ($answer -eq '1') { exit 11 }; if ($answer -eq '3') { exit 12 }; if ($answer -ne '2') { exit 12 }; Write-Host ''; Write-Host 'Cerrando sesiones activas...'; foreach ($procId in $connections) { $result = Start-Process -FilePath taskkill.exe -ArgumentList '/PID', $procId, '/T', '/F' -NoNewWindow -Wait -PassThru; if ($result.ExitCode -ne 0) { Write-Host ('[ERROR] No se pudo cerrar el proceso ' + $procId); exit 2 }; Write-Host ('[OK] Proceso ' + $procId + ' cerrado') }; Start-Sleep -Seconds 2; $remaining = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; if ($remaining) { Write-Host ('[ERROR] El puerto 8000 sigue ocupado por: ' + ($remaining -join ' ')); exit 2 }; Write-Host '[OK] Puerto 8000 liberado'; exit 10"
+set "PORT_ACTION=%errorlevel%"
 
-pause
-"%VENV_DIR%\Scripts\python.exe" -m pip install numpy --only-binary :all:
-"%VENV_DIR%\Scripts\python.exe" -m pip install pandas --only-binary :all:
-"%VENV_DIR%\Scripts\python.exe" -m pip install -r "%~dp0backend\requirements.txt"
-if errorlevel 1 (
-    color 0C
-    echo [ERROR] No se pudieron instalar dependencias
-    pause
-    exit /b 1
+if "%PORT_ACTION%"=="2" exit /b 1
+if "%PORT_ACTION%"=="11" (
+    echo [OK] Reutilizando la sesion activa en http://localhost:8000
+    exit /b 0
 )
-echo [OK] Dependencias instaladas
+if "%PORT_ACTION%"=="12" exit /b 0
 
-REM Iniciar servidor
-echo [5/5] Iniciando FastAPI...
-echo.
-echo ========================================
-echo Servidor FastAPI iniciando...
-echo Web:     http://localhost:8000
-echo Docs:    http://localhost:8000/docs
-echo ReDoc:   http://localhost:8000/redoc
-echo ========================================
-echo.
-
+REM Ejecutar aplicación a través de main.py para respetar el manejador de Ctrl+C
 cd backend
-python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
-
-pause
+set "PYTHONPATH=%CD%"
+set "API_DEBUG=False"
+python main.py
+exit /b %errorlevel%

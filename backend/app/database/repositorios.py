@@ -18,6 +18,10 @@ class RepositorioUsuario(RepositorioBase):
     def __init__(self, db: Session):
         super().__init__(Usuario, db)
     
+    def obtener_todos(self, skip: int = 0, limit: int = 100) -> List[Usuario]:
+        """Obtener todos los usuarios."""
+        return self.db.query(Usuario).offset(skip).limit(limit).all()
+    
     def obtener_por_username(self, username: str) -> Optional[Usuario]:
         """Obtener usuario por nombre de usuario."""
         return self.db.query(Usuario).filter(Usuario.username == username).first()
@@ -26,8 +30,47 @@ class RepositorioUsuario(RepositorioBase):
         """Obtener usuario por email."""
         return self.db.query(Usuario).filter(Usuario.email == email).first()
     
+    def crear_usuario(self, usuario_dict: dict) -> Usuario:
+        """Crear nuevo usuario desde dict."""
+        usuario = Usuario(**usuario_dict)
+        self.db.add(usuario)
+        self.db.commit()
+        self.db.refresh(usuario)
+        logger.info(f"Usuario creado: {usuario.username}")
+        return usuario
+    
+    def actualizar_usuario(self, usuario_id: int, updates: dict) -> Usuario:
+        """Actualizar usuario."""
+        usuario = self.obtener_por_id(usuario_id)
+        if usuario:
+            for key, value in updates.items():
+                if hasattr(usuario, key):
+                    setattr(usuario, key, value)
+            self.db.add(usuario)
+            self.db.commit()
+            self.db.refresh(usuario)
+        return usuario
+    
+    def eliminar_usuario(self, usuario_id: int):
+        """Eliminar usuario (soft delete)."""
+        usuario = self.obtener_por_id(usuario_id)
+        if usuario:
+            usuario.es_activo = False
+            self.db.add(usuario)
+            self.db.commit()
+            logger.info(f"Usuario eliminado: {usuario.username}")
+    
+    def actualizar_password(self, usuario_id: int, nueva_password_hash: str):
+        """Actualizar contraseña."""
+        usuario = self.obtener_por_id(usuario_id)
+        if usuario:
+            usuario.hashed_password = nueva_password_hash
+            self.db.add(usuario)
+            self.db.commit()
+            logger.info(f"Contraseña actualizada para: {usuario.username}")
+    
     def crear(self, usuario_in: UsuarioCrear) -> Usuario:
-        """Crear nuevo usuario."""
+        """Crear nuevo usuario (método legacy)."""
         usuario_dict = usuario_in.dict()
         password = usuario_dict.pop("password")
         usuario_dict["hashed_password"] = hash_password(password)

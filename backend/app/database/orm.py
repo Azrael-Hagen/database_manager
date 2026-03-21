@@ -34,6 +34,8 @@ def get_db() -> Session:
     """Dependency para obtener sesión de BD."""
     db = SessionLocal()
     try:
+        # Reset database context in case a previous request switched via USE.
+        db.execute(text(f"USE `{config.DB_NAME}`"))
         yield db
     finally:
         db.close()

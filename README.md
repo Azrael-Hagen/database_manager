@@ -1,70 +1,89 @@
-# Database Manager - Gestor de Base de Datos
+# Database Manager
 
-Aplicación modular para gestionar bases de datos MariaDB/MySQL con importación de archivos (CSV, Excel, TXT, DAT), generación de códigos QR y acceso web.
+Aplicación para administración de MariaDB con interfaz web moderna, autenticación JWT, importación de archivos y herramientas SQL avanzadas.
 
 ## Características
 
-✅ **Importación de Datos**
-- Importar CSV, Excel, TXT y archivos DAT
-- Selección de delimitadores personalizados
-- Validación de datos antes de importar
-
-✅ **Generación de QR**
-- Generar códigos QR para cada registro
-- Almacenar información codificada en QR
-- Exportar QR como imagen
-
-✅ **Interfaz Local**
-- GUI de escritorio con PyQt5
-- Visualización y edición de datos
-- Gestor de base de datos integrado
-
-✅ **Servidor Web**
-- API REST con FastAPI
-- Panel web para visualizar datos
-- Acceso remoto para múltiples usuarios
+- Gestión de bases de datos: listar bases, tablas, ver datos y eliminar tablas.
+- Herramientas SQL avanzadas: ejecutar consultas completas SQL desde UI.
+- Importación de archivos: CSV, Excel, TXT y DAT.
+- Importación adaptable: CSV/TXT/DAT se ajustan a tablas existentes (agrega columnas faltantes).
+- Gestión de usuarios: CRUD de usuarios, roles y cambio de contraseña.
+- Auditoría: registro de acciones con vista en interfaz.
+- Tiempo real configurable: actualización periódica con modo ligero para ahorrar recursos.
 
 ## Requisitos
 
-- Python 3.9+
-- MariaDB/MySQL server
-- pip (gestor de paquetes)
+- Python 3.14+
+- MariaDB 12+
+- Windows/Linux/macOS
 
-## Instalación
+## Inicio rápido (Windows)
 
-### 1. Backend
-```bash
-cd backend
-pip install -r requirements.txt
-python main.py
+```cmd
+cd C:\ruta\database_manager
+start.bat
 ```
 
-### 2. Frontend Desktop
-```bash
-cd frontend
-pip install -r requirements.txt
-python main.py
+Accesos:
+
+- App: http://localhost:8000
+- API Docs: http://localhost:8000/docs
+
+Credenciales iniciales:
+
+- Usuario: admin
+- Contraseña: Admin123!
+
+## Uso básico
+
+1. Inicia sesión con usuario administrador.
+2. En Bases de Datos: carga bases, explora tablas y ejecuta SQL.
+3. En Importar: selecciona archivo, delimitador y tabla destino.
+4. En Usuarios: crea, edita y administra cuentas.
+5. En Auditoría: revisa actividad reciente.
+
+## Configuración de tiempo real
+
+En Dashboard puedes configurar:
+
+- Tiempo real: ON/OFF
+- Intervalo: 10s / 20s / 30s / 60s
+
+Modo ligero incorporado:
+
+- Si la pestaña está inactiva, pausa auto-refresh.
+- Al volver a la pestaña, reanuda según configuración.
+
+## Estructura principal
+
+```text
+backend/        API FastAPI + modelos + seguridad
+web/            Interfaz HTML/CSS/JS
+start.bat       Arranque local en Windows
 ```
 
-### 3. Servidor Web
-Accede a `http://localhost:8000` cuando el backend esté corriendo
+## API principal
 
-## Estructura del Proyecto
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `GET /api/databases/`
+- `GET /api/databases/{db}/tables`
+- `GET /api/databases/{db}/tables/{table}`
+- `POST /api/databases/{db}/query`
+- `POST /api/import/csv`
+- `POST /api/import/excel`
+- `POST /api/import/txt`
+- `POST /api/import/dat`
+- `GET /api/import/estado/{id}`
+- `GET /api/usuarios/`
+- `PUT /api/usuarios/{id}/password`
+- `GET /api/auditoria/`
 
-```
-database_manager/
-├── backend/          # Servidor API y lógica de negocio
-├── frontend/         # Aplicación de escritorio
-├── web/             # Frontend web
-├── tests/           # Tests automatizados
-└── docs/            # Documentación
-```
+## Estado
 
-## Documentación Adicional
-
-- [Guía de Setup](docs/SETUP.md)
-- [Documentación de API](docs/API.md)
-- [Arquitectura del Proyecto](docs/ARCHITECTURE.md)
+- Producción local estable
+- E2E validado en login, SQL avanzada, importación adaptable y cambio de contraseña
 
 ## Licencia
 

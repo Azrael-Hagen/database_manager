@@ -172,7 +172,7 @@ Plus: Nginx como reverse proxy en producción
 - Coverage de auth, CRUD, health
 
 **Documentación:**
-- README-COMPLETO.md (guía 200+líneas)
+- README.md (guía principal)
 - PRODUCTION.md (deployment guide)
 -  .env.example (template config)
 
@@ -305,7 +305,7 @@ FASE 2 (Futuro):
 
 ## 📞 Soporte
 
-**Para iniciar:** Ver [README-COMPLETO.md](README-COMPLETO.md)
+**Para iniciar:** Ver [README.md](README.md)
 **Para deployar:** Ver [PRODUCTION.md](backend/PRODUCTION.md)
 **Para APIs:** http://localhost:8000/docs (Swagger)
 

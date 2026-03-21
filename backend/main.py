@@ -8,12 +8,17 @@ from fastapi.exceptions import RequestValidationError
 import logging
 import os
 from datetime import datetime
+import signal
+import sys
 
 from app.config import config
 from app.database.orm import init_db, get_db
 from app.api.auth import router as auth_router
 from app.api.datos import router as datos_router
 from app.api.importacion import router as importacion_router
+from app.api.database import router as database_router
+from app.api.usuarios import router as usuarios_router
+from app.api.auditoria import router as auditoria_router
 
 # Configurar logging
 logging.basicConfig(
@@ -99,6 +104,9 @@ async def general_exception_handler(request: Request, exc: Exception):
 app.include_router(auth_router)
 app.include_router(datos_router)
 app.include_router(importacion_router)
+app.include_router(database_router)
+app.include_router(usuarios_router)
+app.include_router(auditoria_router)
 
 
 # HEALTH CHECK
@@ -150,11 +158,27 @@ async def shutdown():
 if __name__ == "__main__":
     import uvicorn
     
+    def signal_handler(sig, frame):
+        logger.info("Recibida señal de interrupción (Ctrl+C). Cerrando servidor...")
+        sys.exit(0)
+    
+    # Registrar manejador de señales
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     logger.info(f"Iniciando servidor en {config.API_HOST}:{config.API_PORT}")
-    uvicorn.run(
-        "main:app",
-        host=config.API_HOST,
-        port=config.API_PORT,
-        reload=config.API_DEBUG,
-        log_level=config.LOG_LEVEL.lower()
-    )
+    logger.info("Presiona Ctrl+C para detener el servidor")
+    
+    try:
+        uvicorn.run(
+            "main:app",
+            host=config.API_HOST,
+            port=config.API_PORT,
+            reload=False,
+            log_level=config.LOG_LEVEL.lower()
+        )
+    except KeyboardInterrupt:
+        logger.info("Servidor detenido por el usuario")
+    except Exception as e:
+        logger.error(f"Error al iniciar servidor: {e}")
+        sys.exit(1)

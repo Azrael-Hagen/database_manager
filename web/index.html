@@ -21,12 +21,13 @@
     <!-- Sidebar -->
     <div class="sidebar">
         <ul class="menu">
-            <li><a href="#" onclick="loadSection('dashboard')" class="menu-item active">Dashboard</a></li>
-            <li><a href="#" onclick="loadSection('datos')" class="menu-item">Datos</a></li>
-            <li><a href="#" onclick="loadSection('importar')" class="menu-item">Importar</a></li>
-            <li><a href="#" onclick="loadSection('qr')" class="menu-item">Generar QR</a></li>
-            <li><a href="#" onclick="loadSection('usuarios')" class="menu-item">Usuarios</a></li>
-            <li><a href="#" onclick="loadSection('auditoria')" class="menu-item">Auditoría</a></li>
+            <li><a href="#" onclick="loadSection('dashboard', event)" class="menu-item active">Dashboard</a></li>
+            <li><a href="#" onclick="loadSection('datos', event)" class="menu-item">Datos</a></li>
+            <li><a href="#" onclick="loadSection('databases', event)" class="menu-item">Bases de Datos</a></li>
+            <li><a href="#" onclick="loadSection('importar', event)" class="menu-item">Importar</a></li>
+            <li><a href="#" onclick="loadSection('qr', event)" class="menu-item">Generar QR</a></li>
+            <li><a href="#" onclick="loadSection('usuarios', event)" class="menu-item">Usuarios</a></li>
+            <li><a href="#" onclick="loadSection('auditoria', event)" class="menu-item">Auditoría</a></li>
         </ul>
     </div>
 
@@ -78,6 +79,27 @@
             <!-- Sección de Dashboard -->
             <section id="dashboardSection" class="panel" style="display: none;">
                 <h1>Dashboard</h1>
+                <div class="live-strip">
+                    <span id="liveIndicator" class="live-dot"></span>
+                    <span>Actualización en tiempo real activa</span>
+                    <label class="live-control">
+                        <span>Tiempo real</span>
+                        <select id="realtimeEnabled" onchange="aplicarConfigTiempoReal()">
+                            <option value="on" selected>ON</option>
+                            <option value="off">OFF</option>
+                        </select>
+                    </label>
+                    <label class="live-control">
+                        <span>Intervalo</span>
+                        <select id="realtimeInterval" onchange="aplicarConfigTiempoReal()">
+                            <option value="10000">10s</option>
+                            <option value="20000" selected>20s</option>
+                            <option value="30000">30s</option>
+                            <option value="60000">60s</option>
+                        </select>
+                    </label>
+                    <span id="lastUpdated" class="last-updated">Sin datos</span>
+                </div>
                 <div class="stats-grid">
                     <div class="stat-card">
                         <h3>Registros Totales</h3>
@@ -110,6 +132,34 @@
                 <div id="datosContainer" class="table-responsive"></div>
             </section>
 
+            <!-- Sección de Bases de Datos -->
+            <section id="databasesSection" class="panel" style="display: none;">
+                <h1>Gestión de Bases de Datos</h1>
+                <div class="db-actions">
+                    <button onclick="cargarDatabases()" class="btn">Cargar Bases de Datos</button>
+                    <button onclick="abrirQueryPanel()" class="btn btn-secondary">Herramientas SQL Avanzadas</button>
+                </div>
+                <div id="databasesContainer" class="table-responsive"></div>
+                
+                <!-- SQL Query Panel -->
+                <div id="queryPanel" style="display: none; margin-top: 20px;">
+                    <h3>Herramientas SQL Avanzadas</h3>
+                    <div class="form-group">
+                        <label>Base de Datos:</label>
+                        <select id="queryDatabase">
+                            <option value="">-- Selecciona BD --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Consulta SQL:</label>
+                        <textarea id="querySQL" rows="8" placeholder="SELECT * FROM tabla LIMIT 10;\n\n-- Puedes ejecutar consultas completas (DDL/DML)"></textarea>
+                    </div>
+                    <button onclick="ejecutarQuerySQL()" class="btn">Ejecutar</button>
+                    <button onclick="cerrarQueryPanel()" class="btn btn-secondary">Cerrar</button>
+                    <div id="queryResult" style="margin-top: 20px;"></div>
+                </div>
+            </section>
+
             <!-- Sección de Importación -->
             <section id="importarSection" class="panel" style="display: none;">
                 <h1>Importar Datos</h1>
@@ -139,8 +189,9 @@
                     </div>
                     <div class="form-group">
                         <label>Tabla Destino:</label>
-                        <input type="text" id="tablaDestino" value="datos_importados">
+                        <input type="text" id="tablaDestino" value="datos_importados" placeholder="tabla_existente_o_nueva">
                     </div>
+                    <p class="hint">Si la tabla ya existe, el sistema adapta columnas faltantes automáticamente para CSV/TXT/DAT.</p>
                     <button type="submit" class="btn">Importar</button>
                 </form>
                 <div id="importProgress" style="display: none; margin-top: 20px;">
@@ -164,11 +215,100 @@
                 <div id="qrContainer" style="margin-top: 30px; text-align: center;"></div>
             </section>
 
+            <!-- Sección de Usuarios -->
+            <section id="usuariosSection" class="panel" style="display: none;">
+                <h1>Gestión de Usuarios</h1>
+                <div class="user-actions">
+                    <button onclick="mostrarCrearUsuario()" class="btn">Crear Usuario</button>
+                    <button onclick="cargarUsuarios()" class="btn btn-secondary">Actualizar Lista</button>
+                </div>
+                <div id="usuariosContainer" class="table-responsive"></div>
+            </section>
+
             <!-- Sección de Auditoría -->
             <section id="auditoriaSection" class="panel" style="display: none;">
-                <h1>Auditoría de Acciones</h1>
+                <h1>Auditoría</h1>
+                <div class="user-actions">
+                    <button onclick="cargarAuditoria()" class="btn btn-secondary">Actualizar</button>
+                </div>
                 <div id="auditoriaContainer" class="table-responsive"></div>
             </section>
+
+            <!-- Modal Crear Usuario -->
+            <div id="usuarioModal" class="modal" style="display: none;">
+                <div class="modal-content">
+                    <span class="close" onclick="cerrarModal()">&times;</span>
+                    <h2 id="modalTitle">Crear Usuario</h2>
+                    <form onsubmit="guardarUsuario(event)">
+                        <input type="hidden" id="usuarioId">
+                        <div class="form-group">
+                            <label>Usuario:</label>
+                            <input type="text" id="usuarioUsername" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Email:</label>
+                            <input type="email" id="usuarioEmail" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Nombre Completo:</label>
+                            <input type="text" id="usuarioNombreCompleto">
+                        </div>
+                        <div class="form-group" id="passwordGroup">
+                            <label>Contraseña:</label>
+                            <input type="password" id="usuarioPassword" required>
+                        </div>
+                        <div class="form-group">
+                            <label><input type="checkbox" id="usuarioEsAdmin"> Administrador</label>
+                        </div>
+                        <div class="form-group">
+                            <label><input type="checkbox" id="usuarioEsActivo" checked> Activo</label>
+                        </div>
+                        <button type="submit" class="btn">Guardar</button>
+                        <button type="button" onclick="cerrarModal()" class="btn btn-secondary">Cancelar</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Modal Importar a Base de Datos -->
+            <div id="importBDModal" class="modal" style="display: none;">
+                <div class="modal-content">
+                    <span class="close" onclick="cerrarImportBD()">&times;</span>
+                    <h2>Importar a <span id="importBDName"></span></h2>
+                    <form onsubmit="importarABD(event)">
+                        <div class="form-group">
+                            <label>Archivo (CSV, TXT, DAT, TSV):</label>
+                            <input type="file" id="importBDFile" required accept=".csv,.txt,.dat,.tsv">
+                        </div>
+                        <div class="form-group">
+                            <label>Tabla destino (nueva o existente):</label>
+                            <input type="text" id="importBDTableInput" required placeholder="nombre_tabla">
+                        </div>
+                        <div class="form-group">
+                            <label>Delimitador:</label>
+                            <select id="importBDDelimiter">
+                                <option value=",">Coma (,)</option>
+                                <option value=";">Punto y coma (;)</option>
+                                <option value="\t">Tabulación</option>
+                                <option value="|">Pipe (|)</option>
+                                <option value=" ">Espacio</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Codificación:</label>
+                            <select id="importBDEncoding">
+                                <option value="utf-8">UTF-8</option>
+                                <option value="latin-1">Latin-1 / ISO-8859-1</option>
+                                <option value="utf-8-sig">UTF-8 con BOM</option>
+                            </select>
+                        </div>
+                        <p class="hint">Si la tabla existe, se agregan columnas faltantes automáticamente.</p>
+                        <button type="submit" class="btn">Importar</button>
+                        <button type="button" onclick="cerrarImportBD()" class="btn btn-secondary">Cancelar</button>
+                    </form>
+                    <div id="importBDProgress" style="display:none;margin-top:12px"><p>Importando, por favor espera...</p></div>
+                    <div id="importBDResult" style="margin-top:10px;color:red;font-size:.9em"></div>
+                </div>
+            </div>
         </div>
     </main>
 

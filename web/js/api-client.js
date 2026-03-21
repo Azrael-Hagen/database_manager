@@ -9,6 +9,10 @@ class APIClient {
         this.token = localStorage.getItem('authToken');
     }
 
+    getToken() {
+        return this.token || localStorage.getItem('authToken');
+    }
+
     /**
      * Realizar solicitud HTTP
      */
@@ -16,13 +20,15 @@ class APIClient {
         const url = `${this.baseURL}${endpoint}`;
         const options = {
             method,
+            cache: 'no-store',
             headers: {
                 'Content-Type': 'application/json',
             }
         };
 
-        if (this.token) {
-            options.headers['Authorization'] = `Bearer ${this.token}`;
+        const token = this.getToken();
+        if (token) {
+            options.headers['Authorization'] = `Bearer ${token}`;
         }
 
         if (data && (method === 'POST' || method === 'PUT')) {
@@ -33,7 +39,18 @@ class APIClient {
             const response = await fetch(url, options);
             
             if (!response.ok) {
-                throw new Error(`HTTP Error: ${response.status}`);
+                let detail = `HTTP Error: ${response.status}`;
+                try {
+                    const payload = await response.json();
+                    detail = payload.detail || payload.mensaje || detail;
+                } catch (_) {
+                    // ignore JSON parse errors
+                }
+                throw new Error(detail);
+            }
+
+            if (response.status === 204) {
+                return {};
             }
 
             return await response.json();
@@ -53,11 +70,13 @@ class APIClient {
 
         const options = {
             method: 'POST',
+            cache: 'no-store',
             headers: {}
         };
 
-        if (this.token) {
-            options.headers['Authorization'] = `Bearer ${this.token}`;
+        const token = this.getToken();
+        if (token) {
+            options.headers['Authorization'] = `Bearer ${token}`;
         }
 
         options.body = formData;
@@ -66,7 +85,14 @@ class APIClient {
             const response = await fetch(url, options);
             
             if (!response.ok) {
-                throw new Error(`HTTP Error: ${response.status}`);
+                let detail = `HTTP Error: ${response.status}`;
+                try {
+                    const payload = await response.json();
+                    detail = payload.detail || payload.mensaje || detail;
+                } catch (_) {
+                    // ignore JSON parse errors
+                }
+                throw new Error(detail);
             }
 
             return await response.json();
@@ -100,6 +126,11 @@ class APIClient {
     setToken(token) {
         this.token = token;
         localStorage.setItem('authToken', token);
+    }
+
+    clearToken() {
+        this.token = null;
+        localStorage.removeItem('authToken');
     }
 
     // === DATOS ===
@@ -155,6 +186,80 @@ class APIClient {
     // === AUDITORÍA ===
     async getAuditoria() {
         return this.request('GET', '/auditoria');
+    }
+
+    // === GESTIÓN DE BASES DE DATOS ===
+    async getDatabases() {
+        return this.request('GET', '/databases/');
+    }
+
+    async getTables(database) {
+        return this.request('GET', `/databases/${database}/tables`);
+    }
+
+    async getTableData(database, table, limit = 50) {
+        return this.request('GET', `/databases/${database}/tables/${table}?limit=${limit}`);
+    }
+
+    async executeQuery(database, query) {
+        return this.request('POST', `/databases/${database}/query`, { query });
+    }
+
+    async deleteTable(database, table) {
+        return this.request('DELETE', `/databases/${database}/tables/${table}`);
+    }
+
+    async deleteDatabase(dbName) {
+        return this.request('DELETE', `/databases/${encodeURIComponent(dbName)}`);
+    }
+
+    async importToDatabase(dbName, formData) {
+        const url = `${this.baseURL}/databases/${encodeURIComponent(dbName)}/import`;
+        const options = {
+            method: 'POST',
+            cache: 'no-store',
+            headers: {}
+        };
+        const token = this.getToken();
+        if (token) {
+            options.headers['Authorization'] = `Bearer ${token}`;
+        }
+        options.body = formData;
+        const response = await fetch(url, options);
+        if (!response.ok) {
+            let detail = `HTTP Error: ${response.status}`;
+            try {
+                const payload = await response.json();
+                detail = payload.detail || detail;
+            } catch (_) {}
+            throw new Error(detail);
+        }
+        return response.json();
+    }
+
+    // === GESTIÓN DE USUARIOS ===
+    async getUsuarios() {
+        return this.request('GET', '/usuarios/');
+    }
+
+    async getUsuario(id) {
+        return this.request('GET', `/usuarios/${id}`);
+    }
+
+    async crearUsuario(userData) {
+        return this.request('POST', '/usuarios/', userData);
+    }
+
+    async actualizarUsuario(id, userData) {
+        return this.request('PUT', `/usuarios/${id}`, userData);
+    }
+
+    async cambiarPasswordUsuario(id, password) {
+        return this.request('PUT', `/usuarios/${id}/password`, { password });
+    }
+
+    async eliminarUsuario(id) {
+        return this.request('DELETE', `/usuarios/${id}`);
     }
 
     // === HEALTH CHECK ===

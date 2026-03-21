@@ -2,14 +2,17 @@
 
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, status, BackgroundTasks, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 import logging
 import os
 import tempfile
 from datetime import datetime
 import time
 import json
+import re
 from app.database.orm import get_db
 from app.database.repositorios import RepositorioImportLog, RepositorioDatoImportado, RepositorioAuditoria
+from app.models import ImportLog
 from app.importers import CSVImporter, ExcelImporter, TextImporter
 from app.qr import QRGenerator
 from app.security import get_current_user
@@ -17,6 +20,97 @@ from app.config import config
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/import", tags=["Importación"])
+
+
+def _crear_log_importacion(repo_import: RepositorioImportLog, log_data: dict) -> ImportLog:
+    """Crear log de importación preservando todos los campos requeridos por el modelo."""
+    log = ImportLog(**log_data)
+    repo_import.db.add(log)
+    repo_import.db.commit()
+    repo_import.db.refresh(log)
+    return log
+
+
+def _safe_identifier(name: str) -> str:
+    """Sanitizar identificador SQL (tabla o columna)."""
+    cleaned = re.sub(r'[^a-zA-Z0-9_]', '_', (name or '').strip())
+    if not cleaned:
+        raise ValueError("Nombre inválido")
+    return cleaned
+
+
+def _serialize_cell(value):
+    """Normalizar valor para inserción SQL."""
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _ensure_table_and_columns(db: Session, table_name: str, columns: list[str]):
+    """Crear tabla si no existe y agregar columnas faltantes."""
+    safe_table = _safe_identifier(table_name)
+    safe_columns = [_safe_identifier(col) for col in columns if col and str(col).strip()]
+
+    exists_query = text(
+        """
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE() AND table_name = :table_name
+        """
+    )
+    exists = db.execute(exists_query, {"table_name": safe_table}).scalar()
+
+    if not exists:
+        create_cols = ["`id` INT AUTO_INCREMENT PRIMARY KEY", "`created_at` DATETIME DEFAULT CURRENT_TIMESTAMP"]
+        create_cols.extend([f"`{col}` TEXT NULL" for col in safe_columns])
+        db.execute(text(f"CREATE TABLE `{safe_table}` ({', '.join(create_cols)}) ENGINE=InnoDB"))
+        db.commit()
+        return safe_table, safe_columns
+
+    current_cols_result = db.execute(text(f"SHOW COLUMNS FROM `{safe_table}`"))
+    current_cols = {row[0] for row in current_cols_result.fetchall()}
+
+    for col in safe_columns:
+        if col not in current_cols:
+            db.execute(text(f"ALTER TABLE `{safe_table}` ADD COLUMN `{col}` TEXT NULL"))
+
+    db.commit()
+    return safe_table, safe_columns
+
+
+def _insert_rows_dynamic(db: Session, table_name: str, rows: list[dict]) -> tuple[int, int]:
+    """Insertar filas dinámicas en tabla destino."""
+    if not rows:
+        return 0, 0
+
+    raw_columns = list(rows[0].keys())
+    safe_table, safe_columns = _ensure_table_and_columns(db, table_name, raw_columns)
+
+    if not safe_columns:
+        return 0, len(rows)
+
+    columns_sql = ", ".join([f"`{col}`" for col in safe_columns])
+    values_sql = ", ".join([f":{col}" for col in safe_columns])
+    stmt = text(f"INSERT INTO `{safe_table}` ({columns_sql}) VALUES ({values_sql})")
+
+    ok = 0
+    failed = 0
+    for row in rows:
+        payload = {}
+        for original_key, value in row.items():
+            safe_key = _safe_identifier(str(original_key))
+            if safe_key in safe_columns:
+                payload[safe_key] = _serialize_cell(value)
+        try:
+            db.execute(stmt, payload)
+            ok += 1
+        except Exception:
+            failed += 1
+
+    db.commit()
+    return ok, failed
 
 
 def procesar_importacion(
@@ -51,55 +145,9 @@ def procesar_importacion(
         if not importer.validate_data():
             raise Exception(f"Validación fallida: {importer.errors}")
         
-        # Generar QR y preparar datos
-        qr_gen = QRGenerator()
-        registros_para_insertar = []
-        registros_fallidos = 0
-        
-        for row in importer.data:
-            try:
-                # Generar QR con datos del registro
-                qr_filename = f"qr_{importacion_id}_{len(registros_para_insertar)}.png"
-                qr_filepath = qr_gen.generate_qr_from_data(row, qr_filename)
-                
-                # Preparar registro
-                registro = {
-                    "nombre": row.get("nombre") or row.get("Nombre") or "",
-                    "email": row.get("email") or row.get("Email"),
-                    "telefono": row.get("telefono") or row.get("Telefono"),
-                    "empresa": row.get("empresa") or row.get("Empresa"),
-                    "ciudad": row.get("ciudad") or row.get("Ciudad"),
-                    "pais": row.get("pais") or row.get("Pais"),
-                    "datos_adicionales": json.dumps({k: v for k, v in row.items() 
-                                                    if k not in ["nombre", "email", "telefono", "empresa", "ciudad", "pais"]}),
-                    "qr_filename": qr_filename,
-                    "contenido_qr": json.dumps(row),
-                    "creado_por": usuario_id,
-                    "importacion_id": importacion_id,
-                    "es_activo": True
-                }
-                registros_para_insertar.append(registro)
-            except Exception as e:
-                logger.error(f"Error procesando fila: {e}")
-                registros_fallidos += 1
-        
-        # Insertar en lotes
-        registros_importados = 0
-        if registros_para_insertar:
-            from app.models import DatoImportado
-            
-            # Insertar en lote
-            for registro in registros_para_insertar:
-                try:
-                    from app.models import DatoImportado as Model
-                    obj = Model(**registro)
-                    db.add(obj)
-                except Exception as e:
-                    logger.error(f"Error insertando registro: {e}")
-                    registros_fallidos += 1
-            
-            db.commit()
-            registros_importados = len(registros_para_insertar) - registros_fallidos
+        # Insertar de forma adaptable en la tabla destino
+        registros_importados, errores_insert = _insert_rows_dynamic(db, tabla_destino, importer.data)
+        registros_fallidos = errores_insert
         
         # Calcular duración
         duracion = int(time.time() - inicio)
@@ -147,7 +195,8 @@ def procesar_importacion(
 
 @router.post("/csv")
 async def importar_csv(
-    archivo: UploadFile = File(...),
+    archivo: UploadFile = File(None),
+    file: UploadFile = File(None),
     tabla: str = Form(...),
     delimitador: str = Form(default=","),
     background_tasks: BackgroundTasks = None,
@@ -157,17 +206,21 @@ async def importar_csv(
 ):
     """Importar archivo CSV."""
     try:
+        archivo_subido = archivo or file
+        if not archivo_subido:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Debe enviar un archivo")
+
         repo_import = RepositorioImportLog(db)
         
         # Guardar archivo temporal
         with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
-            contenido = await archivo.read()
+            contenido = await archivo_subido.read()
             tmp_file.write(contenido)
             temp_path = tmp_file.name
         
         # Crear log de importación
         log_data = {
-            "archivo_nombre": archivo.filename,
+            "archivo_nombre": archivo_subido.filename,
             "archivo_tamanio": len(contenido),
             "tipo_archivo": "CSV",
             "tabla_destino": tabla,
@@ -177,8 +230,7 @@ async def importar_csv(
             "estado": "PENDING"
         }
         
-        from app.schemas import ImportLogCrear
-        log = repo_import.crear(ImportLogCrear(**log_data))
+        log = _crear_log_importacion(repo_import, log_data)
         
         # Procesar en background
         if background_tasks:
@@ -206,7 +258,8 @@ async def importar_csv(
 
 @router.post("/excel")
 async def importar_excel(
-    archivo: UploadFile = File(...),
+    archivo: UploadFile = File(None),
+    file: UploadFile = File(None),
     tabla: str = Form(...),
     hoja: str = Form(default="0"),
     background_tasks: BackgroundTasks = None,
@@ -215,18 +268,21 @@ async def importar_excel(
 ):
     """Importar archivo Excel."""
     try:
+        archivo_subido = archivo or file
+        if not archivo_subido:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Debe enviar un archivo")
+
         repo_import = RepositorioImportLog(db)
         
         # Guardar archivo temporal
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_file:
-            contenido = await archivo.read()
+            contenido = await archivo_subido.read()
             tmp_file.write(contenido)
             temp_path = tmp_file.name
         
         # Crear log
-        from app.schemas import ImportLogCrear
         log_data = {
-            "archivo_nombre": archivo.filename,
+            "archivo_nombre": archivo_subido.filename,
             "archivo_tamanio": len(contenido),
             "tipo_archivo": "EXCEL",
             "tabla_destino": tabla,
@@ -235,7 +291,7 @@ async def importar_excel(
             "estado": "PENDING"
         }
         
-        log = repo_import.crear(ImportLogCrear(**log_data))
+        log = _crear_log_importacion(repo_import, log_data)
         
         # Procesar en background
         if background_tasks:
@@ -259,6 +315,71 @@ async def importar_excel(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+
+
+@router.post("/txt")
+async def importar_txt(
+    archivo: UploadFile = File(None),
+    file: UploadFile = File(None),
+    tabla: str = Form(...),
+    delimitador: str = Form(default="|"),
+    background_tasks: BackgroundTasks = None,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Importar archivo TXT delimitado."""
+    archivo_subido = archivo or file
+    if not archivo_subido:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Debe enviar un archivo")
+
+    repo_import = RepositorioImportLog(db)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp_file:
+        contenido = await archivo_subido.read()
+        tmp_file.write(contenido)
+        temp_path = tmp_file.name
+
+    log = _crear_log_importacion(repo_import, {
+        "archivo_nombre": archivo_subido.filename,
+        "archivo_tamanio": len(contenido),
+        "tipo_archivo": "TXT",
+        "tabla_destino": tabla,
+        "delimitador": delimitador,
+        "registros_totales": 0,
+        "usuario_id": current_user["id"],
+        "estado": "PENDING"
+    })
+
+    if background_tasks:
+        from app.database.orm import SessionLocal
+        background_tasks.add_task(
+            procesar_importacion,
+            temp_path, "TXT", tabla, delimitador,
+            current_user["id"], log.id, db, SessionLocal
+        )
+
+    return {"status": "success", "mensaje": "Importación iniciada", "importacion_id": log.id, "uuid": log.uuid}
+
+
+@router.post("/dat")
+async def importar_dat(
+    archivo: UploadFile = File(None),
+    file: UploadFile = File(None),
+    tabla: str = Form(...),
+    delimitador: str = Form(default="|"),
+    background_tasks: BackgroundTasks = None,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Importar archivo DAT delimitado."""
+    return await importar_txt(
+        archivo=archivo,
+        file=file,
+        tabla=tabla,
+        delimitador=delimitador,
+        background_tasks=background_tasks,
+        current_user=current_user,
+        db=db
+    )
 
 
 @router.get("/estado/{importacion_id}")
