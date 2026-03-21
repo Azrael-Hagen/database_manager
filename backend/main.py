@@ -19,13 +19,14 @@ from app.api.importacion import router as importacion_router
 from app.api.database import router as database_router
 from app.api.usuarios import router as usuarios_router
 from app.api.auditoria import router as auditoria_router
+from app.api.qr import router as qr_router
 
 # Configurar logging
 logging.basicConfig(
     level=config.LOG_LEVEL,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/app.log'),
+        logging.FileHandler('logs/app.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -107,6 +108,7 @@ app.include_router(importacion_router)
 app.include_router(database_router)
 app.include_router(usuarios_router)
 app.include_router(auditoria_router)
+app.include_router(qr_router)
 
 
 # HEALTH CHECK

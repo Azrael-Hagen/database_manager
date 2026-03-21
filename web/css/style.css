@@ -245,6 +245,37 @@ body {
 
 .form-group textarea {
     resize: vertical;
+
+/* Show/hide password toggle */
+.password-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.password-wrapper input {
+    flex: 1;
+    padding-right: 2.6rem !important;
+}
+
+.btn-eye {
+    position: absolute;
+    right: 0.5rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0.2rem 0.3rem;
+    color: var(--brand-strong);
+    opacity: 0.65;
+    transition: opacity .15s;
+}
+
+.btn-eye:hover {
+    opacity: 1;
+}
+
     min-height: 120px;
     font-family: 'Space Mono', monospace;
     font-size: 0.88rem;

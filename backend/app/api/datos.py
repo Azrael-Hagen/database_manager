@@ -18,6 +18,7 @@ router = APIRouter(prefix="/api/datos", tags=["Datos"])
 async def listar_datos(
     pagina: int = Query(1, ge=1),
     por_pagina: int = Query(10, ge=1, le=100),
+    todos: bool = Query(False),
     buscar: str = Query(None),
     ordenar_por: str = Query("fecha_creacion"),
     direccion: str = Query("desc"),
@@ -27,21 +28,28 @@ async def listar_datos(
     """Listar datos importados con paginación y búsqueda."""
     repo = RepositorioDatoImportado(db)
     
-    skip = (pagina - 1) * por_pagina
-    
+    skip = 0 if todos else (pagina - 1) * por_pagina
+
+    if todos:
+        _, total = repo.buscar(buscar=buscar, skip=0, limit=1)
+        effective_limit = max(total, 1)
+    else:
+        effective_limit = por_pagina
+
     registros, total = repo.buscar(
         buscar=buscar,
         skip=skip,
-        limit=por_pagina
+        limit=effective_limit
     )
     
-    total_paginas = (total + por_pagina - 1) // por_pagina
+    respuesta_por_pagina = total if todos else por_pagina
+    total_paginas = 1 if todos else (total + por_pagina - 1) // por_pagina
     
     return {
         "status": "success",
         "data": registros,
-        "pagina": pagina,
-        "por_pagina": por_pagina,
+        "pagina": 1 if todos else pagina,
+        "por_pagina": respuesta_por_pagina,
         "total": total,
         "total_paginas": total_paginas
     }

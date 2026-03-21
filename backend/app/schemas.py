@@ -4,6 +4,7 @@ from pydantic import BaseModel, EmailStr, Field, validator
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 import re
+from datetime import date
 
 
 class UsuarioBase(BaseModel):
@@ -191,3 +192,30 @@ class RespuestaPaginada(BaseModel):
     por_pagina: int
     total: int
     total_paginas: int
+
+
+class PagoSemanalCrear(BaseModel):
+    """Registrar pago semanal de un agente."""
+    agente_id: int
+    telefono: str = Field(..., min_length=7, max_length=20)
+    numero_voip: Optional[str] = Field(None, max_length=50)
+    semana_inicio: date
+    monto: float = Field(0.0, ge=0)
+    pagado: bool = True
+    observaciones: Optional[str] = Field(None, max_length=500)
+
+
+class PagoSemanalRespuesta(BaseModel):
+    """Respuesta de pago semanal."""
+    id: int
+    agente_id: int
+    telefono: str
+    numero_voip: Optional[str] = None
+    semana_inicio: date
+    monto: float
+    pagado: bool
+    fecha_pago: Optional[datetime] = None
+    observaciones: Optional[str] = None
+
+    class Config:
+        from_attributes = True

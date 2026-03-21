@@ -44,7 +44,10 @@
                     </div>
                     <div class="form-group">
                         <label>Contraseña:</label>
-                        <input type="password" id="password" required>
+                        <div class="password-wrapper">
+                            <input type="password" id="password" required>
+                            <button type="button" class="btn-eye" onclick="togglePassword('password', this)" tabindex="-1">&#128065;</button>
+                        </div>
                     </div>
                     <button type="submit" class="btn">Ingresar</button>
                     <button type="button" onclick="showRegister()" class="btn btn-secondary">Registrarse</button>
@@ -69,7 +72,10 @@
                     </div>
                     <div class="form-group">
                         <label>Contraseña:</label>
-                        <input type="password" id="regPassword" required>
+                        <div class="password-wrapper">
+                            <input type="password" id="regPassword" required>
+                            <button type="button" class="btn-eye" onclick="togglePassword('regPassword', this)" tabindex="-1">&#128065;</button>
+                        </div>
                     </div>
                     <button type="submit" class="btn">Registrar</button>
                     <button type="button" onclick="showLogin()" class="btn btn-secondary">Volver al Login</button>
@@ -125,10 +131,14 @@
                 <h1>Visualizar Datos</h1>
                 <div class="search-bar">
                     <input type="text" id="searchInput" placeholder="Buscar..." onkeyup="buscarDatos()">
+                    <input type="text" id="singleSearchInput" placeholder="ID o UUID exacto">
+                    <button onclick="consultarUnDato()" class="btn btn-secondary">Consultar Uno</button>
+                    <button onclick="cargarTodosLosDatos()" class="btn">Ver Todos</button>
                     <select id="tablasSelect" onchange="cambiarTabla()">
                         <option value="">-- Selecciona tabla --</option>
                     </select>
                 </div>
+                <p class="hint">"Ver Todos" carga todos los registros activos. "Consultar Uno" busca por ID o UUID exacto.</p>
                 <div id="datosContainer" class="table-responsive"></div>
             </section>
 
@@ -204,7 +214,57 @@
 
             <!-- Sección de QR -->
             <section id="qrSection" class="panel" style="display: none;">
-                <h1>Generar Código QR</h1>
+                <h1>QR de Verificación de Agente</h1>
+                <form onsubmit="generarQRVerificacion(event)">
+                    <div class="form-group">
+                        <label>ID del Agente:</label>
+                        <input type="number" id="qrAgenteId" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Teléfono esperado:</label>
+                        <input type="text" id="qrTelefono" placeholder="Ej: 523325051104">
+                    </div>
+                    <div class="form-group">
+                        <label>Número VoIP esperado:</label>
+                        <input type="text" id="qrVoip" placeholder="Ej: 1001 o extensión">
+                    </div>
+                    <div class="form-group">
+                        <label>Semana (lunes):</label>
+                        <input type="date" id="qrSemana">
+                    </div>
+                    <button type="button" class="btn btn-secondary" onclick="verificarAgenteQR()">Verificar Estado</button>
+                    <button type="submit" class="btn">Generar QR Verificación</button>
+                </form>
+
+                <h3 style="margin-top: 22px;">Registrar Pago Semanal</h3>
+                <form onsubmit="registrarPagoSemanal(event)">
+                    <div class="form-group">
+                        <label>ID del Agente:</label>
+                        <input type="number" id="pagoAgenteId" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Teléfono:</label>
+                        <input type="text" id="pagoTelefono" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Número VoIP:</label>
+                        <input type="text" id="pagoVoip">
+                    </div>
+                    <div class="form-group">
+                        <label>Semana (lunes):</label>
+                        <input type="date" id="pagoSemana" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Monto:</label>
+                        <input type="number" id="pagoMonto" min="0" step="0.01" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label><input type="checkbox" id="pagoPagado" checked> Pagado</label>
+                    </div>
+                    <button type="submit" class="btn">Guardar Pago</button>
+                </form>
+
+                <h3 style="margin-top: 22px;">QR Manual</h3>
                 <form onsubmit="generarQR(event)">
                     <div class="form-group">
                         <label>Contenido del QR:</label>
@@ -212,6 +272,7 @@
                     </div>
                     <button type="submit" class="btn">Generar QR</button>
                 </form>
+                <div id="qrVerificationResult" style="margin-top: 16px;"></div>
                 <div id="qrContainer" style="margin-top: 30px; text-align: center;"></div>
             </section>
 
@@ -255,7 +316,10 @@
                         </div>
                         <div class="form-group" id="passwordGroup">
                             <label>Contraseña:</label>
-                            <input type="password" id="usuarioPassword" required>
+                            <div class="password-wrapper">
+                                <input type="password" id="usuarioPassword" required>
+                                <button type="button" class="btn-eye" onclick="togglePassword('usuarioPassword', this)" tabindex="-1">&#128065;</button>
+                            </div>
                         </div>
                         <div class="form-group">
                             <label><input type="checkbox" id="usuarioEsAdmin"> Administrador</label>

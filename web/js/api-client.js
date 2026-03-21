@@ -150,6 +150,11 @@ class APIClient {
         return this.request('GET', `/datos/uuid/${uuid}`);
     }
 
+    async getDatosTodos(search = '') {
+        const suffix = search ? `&buscar=${encodeURIComponent(search)}` : '';
+        return this.request('GET', `/datos/?todos=true${suffix}`);
+    }
+
     async crearDato(data) {
         return this.request('POST', '/datos', data);
     }
@@ -186,6 +191,20 @@ class APIClient {
     // === AUDITORÍA ===
     async getAuditoria() {
         return this.request('GET', '/auditoria');
+    }
+
+    // === QR VERIFICACION ===
+    async verificarAgenteQR(agenteId, telefono = '', numeroVoip = '', semana = '') {
+        const params = new URLSearchParams();
+        if (telefono) params.append('telefono', telefono);
+        if (numeroVoip) params.append('numero_voip', numeroVoip);
+        if (semana) params.append('semana', semana);
+        const qs = params.toString() ? `?${params.toString()}` : '';
+        return this.request('GET', `/qr/verificar/${agenteId}${qs}`);
+    }
+
+    async registrarPagoSemanal(payload) {
+        return this.request('POST', '/qr/pagos', payload);
     }
 
     // === GESTIÓN DE BASES DE DATOS ===

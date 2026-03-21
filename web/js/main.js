@@ -13,6 +13,18 @@ let hiddenDatabases = JSON.parse(localStorage.getItem('hiddenDatabases') || '[]'
 let showHiddenDatabases = false;
 let currentImportDB = '';
 
+function togglePassword(inputId, btn) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    if (input.type === 'password') {
+        input.type = 'text';
+        btn.textContent = '\uD83D\uDE48'; // 🙈
+    } else {
+        input.type = 'password';
+        btn.innerHTML = '&#128065;'; // 👁
+    }
+}
+
 async function fetchJson(url, options = {}) {
     const finalOptions = {
         cache: 'no-store',
@@ -368,6 +380,36 @@ async function cargarTablas() {
     }
 }
 
+async function cargarTodosLosDatos() {
+    try {
+        const search = document.getElementById('searchInput').value.trim();
+        const data = await apiClient.getDatosTodos(search);
+        mostrarDatos(data.data || []);
+        alert(`Mostrando ${data.total || (data.data || []).length} registros activos.`);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error al cargar todos los datos: ' + error.message);
+    }
+}
+
+async function consultarUnDato() {
+    const value = document.getElementById('singleSearchInput').value.trim();
+    if (!value) {
+        alert('Ingresa un ID o UUID.');
+        return;
+    }
+
+    try {
+        const dato = /^\d+$/.test(value)
+            ? await apiClient.getDato(Number(value))
+            : await apiClient.getDatoByUUID(value);
+        mostrarDatos([dato]);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('No se encontró el registro: ' + error.message);
+    }
+}
+
 async function buscarDatos() {
     const search = document.getElementById('searchInput').value;
     try {
@@ -572,6 +614,88 @@ async function generarQR(e) {
 
 function mostrarQR(data) {
     alert('QR Data: ' + data);
+}
+
+function renderSimpleQR(text) {
+    const container = document.getElementById('qrContainer');
+    container.innerHTML = '';
+    // QRCode global from qrcode.js loaded in index.html
+    new QRCode(container, {
+        text,
+        width: 220,
+        height: 220,
+        colorDark: '#000000',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.H
+    });
+}
+
+async function verificarAgenteQR() {
+    const agenteId = document.getElementById('qrAgenteId').value;
+    if (!agenteId) {
+        alert('Ingresa ID del agente.');
+        return;
+    }
+
+    const telefono = document.getElementById('qrTelefono').value.trim();
+    const voip = document.getElementById('qrVoip').value.trim();
+    const semana = document.getElementById('qrSemana').value;
+
+    try {
+        const result = await apiClient.verificarAgenteQR(agenteId, telefono, voip, semana);
+        const v = result.verificacion || {};
+        const a = result.agente || {};
+        const box = document.getElementById('qrVerificationResult');
+
+        box.innerHTML = `
+            <div class="card" style="padding:12px;border:1px solid #d8d8d8;border-radius:8px;">
+                <strong>Agente:</strong> ${a.nombre || '-'} (ID ${a.id || '-'})<br>
+                <strong>Teléfono:</strong> ${a.telefono || '-'}<br>
+                <strong>VoIP:</strong> ${a.numero_voip || '-'}<br>
+                <strong>Asignación válida:</strong> ${v.asignacion_valida ? 'SI' : 'NO'}<br>
+                <strong>Pagado:</strong> ${v.pagado ? 'SI' : 'NO'}<br>
+                <strong>Monto:</strong> ${v.monto ?? 0}
+            </div>
+        `;
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error verificando agente: ' + error.message);
+    }
+}
+
+async function registrarPagoSemanal(e) {
+    e.preventDefault();
+    const payload = {
+        agente_id: Number(document.getElementById('pagoAgenteId').value),
+        telefono: document.getElementById('pagoTelefono').value.trim(),
+        numero_voip: document.getElementById('pagoVoip').value.trim() || null,
+        semana_inicio: document.getElementById('pagoSemana').value,
+        monto: Number(document.getElementById('pagoMonto').value || 0),
+        pagado: document.getElementById('pagoPagado').checked,
+        observaciones: null
+    };
+
+    try {
+        await apiClient.registrarPagoSemanal(payload);
+        alert('Pago semanal guardado correctamente.');
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error guardando pago: ' + error.message);
+    }
+}
+
+async function generarQRVerificacion(e) {
+    e.preventDefault();
+    const agenteId = document.getElementById('qrAgenteId').value;
+    if (!agenteId) {
+        alert('Ingresa ID del agente.');
+        return;
+    }
+
+    const semana = document.getElementById('qrSemana').value;
+    const verifyUrl = `${window.location.origin}/api/qr/public/verify-by-id/${encodeURIComponent(String(agenteId))}${semana ? `?semana=${encodeURIComponent(semana)}` : ''}`;
+    renderSimpleQR(verifyUrl);
+    alert('QR de verificación generado. Al escanearlo, consulta estado de pago de la semana.');
 }
 
 // === AUDITORÍA ===

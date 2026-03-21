@@ -1,6 +1,6 @@
 """Base de datos mejorada usando SQLAlchemy ORM."""
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 import logging

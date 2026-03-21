@@ -4,6 +4,10 @@ REM Windows - Python + MariaDB
 
 setlocal enabledelayedexpansion
 chcp 65001 >nul
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
+title Database Manager - Consola UTF-8
+mode con cols=130 lines=38
 color 0A
 
 echo.

@@ -1,6 +1,6 @@
 """Modelos de base de datos con SQLAlchemy ORM."""
 
-from sqlalchemy import Column, Integer, String, DateTime, LargeBinary, Boolean, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, LargeBinary, Boolean, Text, ForeignKey, Date, Float
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 import uuid
@@ -65,6 +65,29 @@ class DatoImportado(Base):
     
     def __repr__(self):
         return f"<DatoImportado {self.nombre}>"
+
+
+class PagoSemanal(Base):
+    """Pago semanal por agente/número."""
+
+    __tablename__ = "pagos_semanales"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
+    telefono = Column(String(20), nullable=False, index=True)
+    numero_voip = Column(String(50), nullable=True, index=True)
+    semana_inicio = Column(Date, nullable=False, index=True)
+    monto = Column(Float, default=0.0)
+    pagado = Column(Boolean, default=False, index=True)
+    fecha_pago = Column(DateTime)
+    observaciones = Column(Text)
+    fecha_creacion = Column(DateTime, default=datetime.utcnow, index=True)
+    fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    agente = relationship("DatoImportado")
+
+    def __repr__(self):
+        return f"<PagoSemanal agente={self.agente_id} semana={self.semana_inicio} pagado={self.pagado}>"
 
 
 class ImportLog(Base):
