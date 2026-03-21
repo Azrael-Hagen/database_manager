@@ -1,21 +1,21 @@
 @echo off
-REM Quick Start Script para Database Manager en Windows CMD
-REM Usa venv para aislamiento de dependencias
+REM Database Manager - Script de Inicio Único
+REM Windows - Python + MariaDB
 
 setlocal enabledelayedexpansion
-
 color 0A
+
 echo.
 echo ========================================
-echo Database Manager - Quick Start
-echo Windows Command Prompt
+echo Database Manager - Inicio Rápido
+echo Python 3.14.3 + MariaDB 12.2.2
 echo ========================================
 echo.
 
 CD /D "%~dp0"
 
 REM Verificar Python
-echo [1/5] Verificando Python...
+echo [PASO 1/3] Verificando Python...
 python --version >nul 2>&1
 if errorlevel 1 (
     color 0C
@@ -24,30 +24,54 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-echo [OK] Python instalado
+echo [OK] Python disponible
 
-REM Crear venv
-echo [2/5] Configurando entorno virtual...
-if not exist "backend\venv" (
-    python -m venv backend\venv
-    echo [OK] venv creado
+REM Verificar MariaDB
+echo [PASO 2/3] Verificando MariaDB...
+if exist "C:\Program Files\MariaDB 12.2\bin\mysql.exe" (
+    "C:\Program Files\MariaDB 12.2\bin\mysql.exe" --version >nul 2>&1
+    if errorlevel 1 (
+        color 0C
+        echo [ERROR] MariaDB instalado pero no funciona
+        echo Verifica la instalación
+        pause
+        exit /b 1
+    )
+    echo [OK] MariaDB disponible
 ) else (
-    echo [OK] venv ya existe
+    mysql --version >nul 2>&1
+    if errorlevel 1 (
+        color 0C
+        echo [ERROR] MariaDB no encontrado
+        echo.
+        echo SOLUCIÓN:
+        echo Lee INSTALAR-MARIADB.md para instalar MariaDB
+        echo.
+        pause
+        exit /b 1
+    )
+    echo [OK] MariaDB disponible
 )
 
-REM Activar venv
-echo [3/5] Activando entorno virtual...
-set "VENV_DIR=%~dp0backend\venv"
-if not exist "%VENV_DIR%\Scripts\activate.bat" (
-    echo [ERROR] No se encontró %VENV_DIR%\Scripts\activate.bat
-    pause
-    exit /b 1
-)
-call "%VENV_DIR%\Scripts\activate.bat"
+REM Iniciar aplicación
+echo [PASO 3/3] Iniciando Database Manager...
+echo.
+echo ========================================
+echo   APLICACIÓN INICIANDO...
+echo ========================================
+echo.
+echo URL:              http://localhost:8000
+echo Documentación:    http://localhost:8000/docs
+echo Usuario:          admin
+echo Contraseña:       Admin123!
+echo.
+echo Presiona Ctrl+C para detener
+echo.
 
-REM Instalar dependencias con venv
-echo [4/5] Instalando dependencias...
-"%VENV_DIR%\Scripts\python.exe" -m pip install --upgrade pip setuptools wheel
+REM Ejecutar aplicación
+"C:/Users/Azrael/AppData/Local/Python/pythoncore-3.14-64/python.exe" "backend/main.py"
+
+pause
 "%VENV_DIR%\Scripts\python.exe" -m pip install numpy --only-binary :all:
 "%VENV_DIR%\Scripts\python.exe" -m pip install pandas --only-binary :all:
 "%VENV_DIR%\Scripts\python.exe" -m pip install -r "%~dp0backend\requirements.txt"

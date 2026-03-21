@@ -2,7 +2,6 @@
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZIPMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -64,10 +63,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# GZIP - Comprimir respuestas
-app.add_middleware(GZIPMiddleware, minimum_size=1000)
-
 
 # MANEJADORES DE ERRORES
 

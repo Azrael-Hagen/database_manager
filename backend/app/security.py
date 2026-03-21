@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import HTTPBearer, HTTPAuthCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import logging
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ def verify_token(token: str) -> dict:
         )
 
 
-async def get_current_user(credentials: HTTPAuthCredentials = Depends(security)):
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Dependency para obtener usuario actual del token."""
     token = credentials.credentials
     return verify_token(token)

@@ -17,7 +17,7 @@ class Config:
     DB_PORT = int(os.getenv("DB_PORT", 3306))
     
     # Conexión String
-    DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    DATABASE_URL = f"mysql+mysqlconnector://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
     
     # Servidor
     API_HOST = os.getenv("API_HOST", "0.0.0.0")

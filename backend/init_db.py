@@ -30,8 +30,8 @@ def create_admin_user():
     try:
         admin_data = UsuarioCrear(
             username="admin",
-            email="admin@database-manager.local",
-            password="SecurePassword123!",
+            email="admin@example.com",
+            password="Admin123!",
             nombre_completo="Administrador"
         )
         
@@ -41,7 +41,7 @@ def create_admin_user():
         db.commit()
         
         logger.info("✓ Usuario admin creado exitosamente")
-        logger.warning("⚠️ CAMBIAR CONTRASEÑA INMEDIATAMENTE: admin / SecurePassword123!")
+        logger.warning("⚠️ CAMBIAR CONTRASEÑA INMEDIATAMENTE: admin / Admin123!")
         return admin
     except Exception as e:
         logger.error(f"❌ Error creando admin: {e}")
