@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 import logging
+import re
 from app.config import config
 from app.models import Base
 from app.security import ROLE_ADMIN, ROLE_VIEWER
@@ -21,6 +22,57 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+def _column_exists(connection, table_name: str, column_name: str) -> bool:
+    return bool(
+        connection.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = :table_name
+                  AND column_name = :column_name
+                """
+            ),
+            {"table_name": table_name, "column_name": column_name},
+        ).scalar()
+    )
+
+
+def _index_exists(connection, table_name: str, index_name: str) -> bool:
+    return bool(
+        connection.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.statistics
+                WHERE table_schema = DATABASE()
+                  AND table_name = :table_name
+                  AND index_name = :index_name
+                """
+            ),
+            {"table_name": table_name, "index_name": index_name},
+        ).scalar()
+    )
+
+
+def _execute_optional(connection, sql: str, params: dict | None = None, label: str = ""):
+    try:
+        connection.execute(text(sql), params or {})
+    except Exception as exc:
+        if label:
+            logger.warning("Se omitio ajuste opcional [%s]: %s", label, exc)
+        else:
+            logger.warning("Se omitio ajuste opcional: %s", exc)
+
+
+def _safe_identifier(raw: str | None, fallback: str) -> str:
+    value = str(raw or "").strip() or fallback
+    if not re.match(r"^[0-9A-Za-z_]+$", value):
+        return fallback
+    return value
+
+
 def init_db():
     """Crear todas las tablas."""
     try:
@@ -35,20 +87,127 @@ def init_db():
 def _ensure_core_schema_updates():
     """Aplicar ajustes de esquema ligeros requeridos por nuevas funciones."""
     with engine.begin() as connection:
-        role_column_exists = connection.execute(
-            text(
-                """
-                SELECT COUNT(*)
-                FROM information_schema.columns
-                WHERE table_schema = DATABASE()
-                  AND table_name = 'usuarios'
-                  AND column_name = 'rol'
-                """
-            )
-        ).scalar()
+        role_column_exists = _column_exists(connection, "usuarios", "rol")
         if not role_column_exists:
             connection.execute(text("ALTER TABLE `usuarios` ADD COLUMN `rol` VARCHAR(20) NOT NULL DEFAULT 'viewer'"))
             connection.execute(text("CREATE INDEX `ix_usuarios_rol` ON `usuarios` (`rol`)"))
+
+        # Asegurar que papelera_registros existe aunque ya se cree con create_all
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS `papelera_registros` (
+                    `id` INT NOT NULL AUTO_INCREMENT,
+                    `tabla` VARCHAR(80) NOT NULL,
+                    `registro_id` INT NOT NULL,
+                    `snapshot_json` TEXT NOT NULL,
+                    `tipo_borrado` VARCHAR(20) NOT NULL DEFAULT 'soft',
+                    `borrado_por` INT NULL,
+                    `fecha_borrado` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    `restaurado` TINYINT(1) NOT NULL DEFAULT 0,
+                    `fecha_restauracion` DATETIME NULL,
+                    `restaurado_por` INT NULL,
+                    PRIMARY KEY (`id`),
+                    KEY `ix_papelera_tabla_id` (`tabla`, `registro_id`),
+                    KEY `ix_papelera_fecha` (`fecha_borrado`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+        )
+
+        estatus_column_exists = _column_exists(connection, "datos_importados", "estatus_codigo")
+        if not estatus_column_exists:
+            connection.execute(
+                text(
+                    """
+                    ALTER TABLE `datos_importados`
+                    ADD COLUMN `estatus_codigo` VARCHAR(20) NOT NULL DEFAULT 'ACTIVO'
+                    """
+                )
+            )
+
+        if not _index_exists(connection, "datos_importados", "ix_datos_importados_estatus_codigo"):
+            connection.execute(text("CREATE INDEX `ix_datos_importados_estatus_codigo` ON `datos_importados` (`estatus_codigo`)"))
+
+        if not _index_exists(connection, "datos_importados", "ix_datos_importados_activo_nombre"):
+            connection.execute(text("CREATE INDEX `ix_datos_importados_activo_nombre` ON `datos_importados` (`es_activo`, `nombre`)"))
+
+        if not _index_exists(connection, "agente_linea_asignaciones", "ix_agente_linea_asignaciones_agente_activa"):
+            connection.execute(
+                text(
+                    "CREATE INDEX `ix_agente_linea_asignaciones_agente_activa` ON `agente_linea_asignaciones` (`agente_id`, `es_activa`)"
+                )
+            )
+
+        if not _index_exists(connection, "agente_linea_asignaciones", "ix_agente_linea_asignaciones_linea_activa"):
+            connection.execute(
+                text(
+                    "CREATE INDEX `ix_agente_linea_asignaciones_linea_activa` ON `agente_linea_asignaciones` (`linea_id`, `es_activa`)"
+                )
+            )
+
+        if not _index_exists(connection, "pagos_semanales", "ix_pagos_semanales_agente_semana_pagado"):
+            connection.execute(
+                text(
+                    "CREATE INDEX `ix_pagos_semanales_agente_semana_pagado` ON `pagos_semanales` (`agente_id`, `semana_inicio`, `pagado`)"
+                )
+            )
+
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS `cat_estatus_agente` (
+                    `codigo` VARCHAR(20) NOT NULL,
+                    `nombre` VARCHAR(80) NOT NULL,
+                    `descripcion` VARCHAR(255) NULL,
+                    `es_operativo` TINYINT(1) NOT NULL DEFAULT 1,
+                    `orden` INT NOT NULL DEFAULT 100,
+                    PRIMARY KEY (`codigo`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO `cat_estatus_agente` (`codigo`, `nombre`, `descripcion`, `es_operativo`, `orden`)
+                VALUES
+                    ('ACTIVO', 'Activo', 'Agente operativo vigente', 1, 10),
+                    ('SUSPENDIDO', 'Suspendido', 'Bloqueado temporalmente', 0, 20),
+                    ('BAJA', 'Baja', 'Agente dado de baja', 0, 30)
+                ON DUPLICATE KEY UPDATE
+                    `nombre` = VALUES(`nombre`),
+                    `descripcion` = VALUES(`descripcion`),
+                    `es_operativo` = VALUES(`es_operativo`),
+                    `orden` = VALUES(`orden`)
+                """
+            )
+        )
+
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS `agente_eventos_operativos` (
+                    `id` BIGINT NOT NULL AUTO_INCREMENT,
+                    `agente_id` INT NOT NULL,
+                    `usuario_id` INT NULL,
+                    `evento` VARCHAR(40) NOT NULL,
+                    `detalle` TEXT NULL,
+                    `payload_json` JSON NULL,
+                    `fecha_evento` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    KEY `ix_agente_eventos_operativos_agente_fecha` (`agente_id`, `fecha_evento`),
+                    KEY `ix_agente_eventos_operativos_evento_fecha` (`evento`, `fecha_evento`),
+                    CONSTRAINT `fk_agente_eventos_operativos_agente`
+                        FOREIGN KEY (`agente_id`) REFERENCES `datos_importados` (`id`)
+                        ON DELETE CASCADE,
+                    CONSTRAINT `fk_agente_eventos_operativos_usuario`
+                        FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`)
+                        ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+        )
 
         connection.execute(
             text(
@@ -128,6 +287,102 @@ def _ensure_core_schema_updates():
                 WHERE COALESCE(d.es_activo, 1) = 1
                 """
             )
+        )
+
+        connection.execute(
+            text(
+                """
+                CREATE OR REPLACE VIEW vw_agentes_operacion_actual AS
+                SELECT
+                    d.id AS agente_id,
+                    d.uuid,
+                    d.nombre,
+                    d.telefono,
+                    d.email,
+                    d.estatus_codigo,
+                    s.nombre AS estatus_nombre,
+                    COALESCE(s.es_operativo, 1) AS estatus_operativo,
+                    JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.alias')) AS alias,
+                    JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.ubicacion')) AS ubicacion,
+                    JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.grupo')) AS grupo,
+                    JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.numero_voip')) AS numero_voip,
+                    l.id AS linea_id,
+                    l.numero AS linea_numero,
+                    l.tipo AS linea_tipo,
+                    p.semana_inicio,
+                    COALESCE(p.pagado, 0) AS pagado_semana,
+                    COALESCE(p.monto, 0) AS monto_semana,
+                    p.fecha_pago,
+                    CASE
+                        WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'DEBE'
+                        ELSE 'PAGADO'
+                    END AS estado_pago
+                FROM datos_importados d
+                LEFT JOIN cat_estatus_agente s ON s.codigo = d.estatus_codigo
+                LEFT JOIN agente_linea_asignaciones ala
+                    ON ala.agente_id = d.id AND ala.es_activa = 1
+                LEFT JOIN lineas_telefonicas l
+                    ON l.id = ala.linea_id AND COALESCE(l.es_activa, 1) = 1
+                LEFT JOIN pagos_semanales p
+                    ON p.agente_id = d.id
+                   AND p.semana_inicio = DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
+                WHERE COALESCE(d.es_activo, 1) = 1
+                """
+            )
+        )
+
+        _execute_optional(
+            connection,
+            """
+            CREATE OR REPLACE VIEW vw_control_sync_agentes AS
+            SELECT
+                d.id AS agente_id,
+                d.nombre AS nombre_operativo,
+                JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.alias')) AS alias_operativo,
+                a.Nombre AS nombre_legacy,
+                a.alias AS alias_legacy,
+                CASE
+                    WHEN a.ID IS NULL THEN 'FALTANTE_EN_LEGACY'
+                    WHEN COALESCE(a.Nombre, '') <> COALESCE(d.nombre, '')
+                        OR COALESCE(a.alias, '') <> COALESCE(JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.alias')), '')
+                    THEN 'DESALINEADO'
+                    ELSE 'EN_SYNC'
+                END AS estado_sync
+            FROM datos_importados d
+            LEFT JOIN registro_agentes.agentes a ON a.ID = d.id
+            WHERE COALESCE(d.es_activo, 1) = 1
+            """,
+            label="vw_control_sync_agentes",
+        )
+
+        current_db = _safe_identifier(config.DB_NAME, "database_manager")
+        legacy_db = _safe_identifier(config.PBX_DB_NAME, "registro_agentes")
+
+        _execute_optional(
+            connection,
+            f"""
+            CREATE OR REPLACE VIEW `{legacy_db}`.`vw_dm_agentes_operacion_actual` AS
+            SELECT * FROM `{current_db}`.`vw_agentes_operacion_actual`
+            """,
+            label="registro_agentes.vw_dm_agentes_operacion_actual",
+        )
+
+        _execute_optional(
+            connection,
+            f"""
+            CREATE OR REPLACE VIEW `{legacy_db}`.`vw_dm_control_sync_agentes` AS
+            SELECT * FROM `{current_db}`.`vw_control_sync_agentes`
+            """,
+            label="registro_agentes.vw_dm_control_sync_agentes",
+        )
+
+        _execute_optional(
+            connection,
+            f"""
+            CREATE OR REPLACE VIEW `{legacy_db}`.`vw_dm_cat_estatus_agente` AS
+            SELECT * FROM `{current_db}`.`cat_estatus_agente`
+            """,
+            label="registro_agentes.vw_dm_cat_estatus_agente",
         )
 
 

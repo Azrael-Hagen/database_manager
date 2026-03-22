@@ -25,14 +25,20 @@ security = HTTPBearer()
 ROLE_VIEWER = "viewer"
 ROLE_CAPTURE = "capture"
 ROLE_ADMIN = "admin"
+ROLE_SUPER_ADMIN = "super_admin"
+
+_VALID_ROLES = {ROLE_VIEWER, ROLE_CAPTURE, ROLE_ADMIN, ROLE_SUPER_ADMIN}
 
 
 def normalize_role(role: str | None, es_admin: bool = False) -> str:
     """Normalizar rol y mantener compatibilidad con es_admin legacy."""
     value = str(role or "").strip().lower()
-    if value not in {ROLE_VIEWER, ROLE_CAPTURE, ROLE_ADMIN}:
+    # super_admin se respeta directamente sin override por es_admin
+    if value == ROLE_SUPER_ADMIN:
+        return ROLE_SUPER_ADMIN
+    if value not in _VALID_ROLES:
         value = ROLE_ADMIN if es_admin else ROLE_VIEWER
-    if es_admin:
+    if es_admin and value not in {ROLE_ADMIN, ROLE_SUPER_ADMIN}:
         return ROLE_ADMIN
     return value
 
@@ -43,7 +49,8 @@ def role_rank(role: str | None) -> int:
         ROLE_VIEWER: 1,
         ROLE_CAPTURE: 2,
         ROLE_ADMIN: 3,
-    }[value]
+        ROLE_SUPER_ADMIN: 4,
+    }.get(value, 1)
 
 
 def has_minimum_role(current_user: dict, required_role: str) -> bool:
@@ -62,6 +69,15 @@ def require_capture_role(current_user: dict, detail: str = "No tienes permisos p
 
 def require_admin_role(current_user: dict, detail: str = "Solo administradores pueden realizar esta acción"):
     require_minimum_role(current_user, ROLE_ADMIN, detail)
+
+
+def require_super_admin_role(current_user: dict, detail: str = "Solo el super administrador puede realizar esta acción"):
+    require_minimum_role(current_user, ROLE_SUPER_ADMIN, detail)
+
+
+def is_super_admin(current_user: dict) -> bool:
+    role = normalize_role(current_user.get("rol"), bool(current_user.get("es_admin")))
+    return role == ROLE_SUPER_ADMIN
 
 
 def hash_password(password: str) -> str:
@@ -103,8 +119,9 @@ def verify_token(token: str) -> dict:
         return {
             "username": username,
             "id": payload.get("id"),
-            "es_admin": role == ROLE_ADMIN,
+            "es_admin": role in {ROLE_ADMIN, ROLE_SUPER_ADMIN},
             "rol": role,
+            "es_super_admin": role == ROLE_SUPER_ADMIN,
             "email": payload.get("email")
         }
     except JWTError:

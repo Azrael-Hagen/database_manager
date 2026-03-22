@@ -497,7 +497,7 @@
                     </div>
                     <div class="form-group">
                         <label>Teléfono:</label>
-                        <input type="text" id="pagoTelefono" required>
+                        <input type="text" id="pagoTelefono" placeholder="Opcional">
                     </div>
                     <div class="form-group">
                         <label>Número VoIP:</label>
@@ -514,8 +514,17 @@
                     <div class="form-group">
                         <label><input type="checkbox" id="pagoPagado" checked> Pagado</label>
                     </div>
+                    <div class="form-group">
+                        <label><input type="checkbox" id="pagoLiquidarTotal"> Liquidar adeudo acumulado</label>
+                    </div>
+                    <div class="form-group">
+                        <label>Observaciones:</label>
+                        <input type="text" id="pagoObservaciones" maxlength="500" placeholder="Opcional">
+                    </div>
+                    <button type="button" class="btn btn-secondary" onclick="consultarResumenPagoActual()">Consultar Resumen</button>
                     <button type="submit" class="btn">Guardar Pago</button>
                 </form>
+                <div id="resumenPagoAgenteContainer" style="margin-top: 10px;"></div>
 
                 <h3 style="margin-top: 22px;">Configuración de Cuota</h3>
                 <form onsubmit="guardarCuotaSemanal(event)">

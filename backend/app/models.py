@@ -46,6 +46,7 @@ class DatoImportado(Base):
     ciudad = Column(String(100))
     pais = Column(String(100))
     datos_adicionales = Column(Text)  # JSON flexible para campos custom
+    estatus_codigo = Column(String(20), default="ACTIVO", nullable=False, index=True)
     
     # QR
     qr_code = Column(LargeBinary)
@@ -196,6 +197,27 @@ class AgenteLadaPreferencia(Base):
 
     agente = relationship("DatoImportado", back_populates="ladas_preferidas")
     lada = relationship("LadaCatalogo", back_populates="agentes_preferidos")
+
+
+class PapeleraRegistro(Base):
+    """Snapshot JSON de un registro antes de su borrado lógico o definitivo.
+    Permite a super_admin recuperar (rollback) el dato."""
+
+    __tablename__ = "papelera_registros"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tabla = Column(String(80), nullable=False, index=True)
+    registro_id = Column(Integer, nullable=False, index=True)
+    snapshot_json = Column(Text, nullable=False)          # JSON completo del registro
+    tipo_borrado = Column(String(20), nullable=False)      # 'soft' o 'hard'
+    borrado_por = Column(Integer, ForeignKey("usuarios.id"))
+    fecha_borrado = Column(DateTime, default=datetime.utcnow, index=True)
+    restaurado = Column(Boolean, default=False, index=True)
+    fecha_restauracion = Column(DateTime)
+    restaurado_por = Column(Integer, ForeignKey("usuarios.id"))
+
+    def __repr__(self):
+        return f"<PapeleraRegistro tabla={self.tabla} id={self.registro_id} tipo={self.tipo_borrado}>"
 
     def __repr__(self):
         return f"<AgenteLadaPreferencia agente={self.agente_id} lada={self.lada_id} prioridad={self.prioridad}>"

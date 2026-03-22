@@ -14,6 +14,7 @@ import ipaddress
 import signal
 import sys
 import json
+import multiprocessing
 from pathlib import Path
 
 from app.config import config
@@ -355,20 +356,59 @@ if os.path.exists(web_path):
     app.mount("/", NoCacheStaticFiles(directory=web_path, html=True), name="web")
 
 
+# ── Servidor HTTPS auxiliar (arrancado desde __main__) ──────────────────────
+
+def _run_https_server(host: str, port: int, ssl_certfile: str, ssl_keyfile: str, log_level: str) -> None:
+    """Proceso independiente que sirve HTTPS con los certificados TLS."""
+    import uvicorn  # import local para que funcione el spawn en Windows
+    uvicorn.run(
+        "main:app",
+        host=host,
+        port=port,
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
+        reload=False,
+        log_level=log_level,
+    )
+
+
 if __name__ == "__main__":
+    # Windows multiprocessing requiere este guard
+    multiprocessing.freeze_support()
+
     import uvicorn
-    
+
     def signal_handler(sig, frame):
         logger.info("Recibida señal de interrupción (Ctrl+C). Cerrando servidor...")
         sys.exit(0)
-    
-    # Registrar manejador de señales
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
-    logger.info(f"Iniciando servidor en {config.API_HOST}:{config.API_PORT}")
+
+    # Detectar certificados TLS
+    ssl_dir  = Path(__file__).parent.parent / "ssl"
+    ssl_cert = ssl_dir / "cert.pem"
+    ssl_key  = ssl_dir / "key.pem"
+    ssl_port = int(os.getenv("SSL_PORT", 8443))
+
+    https_proc = None
+    if ssl_cert.exists() and ssl_key.exists():
+        logger.info(f"Certificados TLS encontrados en {ssl_dir}")
+        logger.info(f"Iniciando servidor HTTPS en {config.API_HOST}:{ssl_port}")
+        https_proc = multiprocessing.Process(
+            target=_run_https_server,
+            args=(config.API_HOST, ssl_port, str(ssl_cert), str(ssl_key), config.LOG_LEVEL.lower()),
+            daemon=True,
+            name="https-server",
+        )
+        https_proc.start()
+    else:
+        logger.info("Sin certificados TLS — solo HTTP activo.")
+        logger.info("Para HTTPS ejecuta:  scripts\\setup-https.ps1")
+
+    logger.info(f"Iniciando servidor HTTP en {config.API_HOST}:{config.API_PORT}")
     logger.info("Presiona Ctrl+C para detener el servidor")
-    
+
     try:
         uvicorn.run(
             "main:app",
@@ -382,3 +422,7 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Error al iniciar servidor: {e}")
         sys.exit(1)
+    finally:
+        if https_proc and https_proc.is_alive():
+            https_proc.terminate()
+            https_proc.join(timeout=5)

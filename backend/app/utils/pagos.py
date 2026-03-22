@@ -63,6 +63,61 @@ def set_cuota_semanal(db: Session, cuota: float) -> float:
     return float(cuota)
 
 
+def _weeks_between(start_monday: date, end_monday: date) -> int:
+    if end_monday < start_monday:
+        return 0
+    return ((end_monday - start_monday).days // 7) + 1
+
+
+def _agent_start_week(db: Session, agente: DatoImportado, semana_ref: date) -> date:
+    pago_min = db.query(PagoSemanal).filter(PagoSemanal.agente_id == agente.id).order_by(PagoSemanal.semana_inicio.asc()).first()
+    if pago_min and pago_min.semana_inicio:
+        return monday_of_week(pago_min.semana_inicio)
+    created = agente.fecha_creacion.date() if agente.fecha_creacion else semana_ref
+    return monday_of_week(created)
+
+
+def resumen_cobranza_agente(db: Session, agente: DatoImportado, semana: date | None = None) -> dict:
+    """Resumen de deuda acumulada y estado semanal de un agente."""
+    semana_ref = monday_of_week(semana or date.today())
+    cuota = get_cuota_semanal(db)
+    start_week = _agent_start_week(db, agente, semana_ref)
+    weeks_due = max(1, _weeks_between(start_week, semana_ref))
+    deuda_total = float(cuota) * float(weeks_due)
+
+    total_abonado_rows = db.query(PagoSemanal.monto).filter(
+        PagoSemanal.agente_id == agente.id,
+        PagoSemanal.semana_inicio <= semana_ref,
+    ).all()
+    total_abonado = float(sum(float(r[0] or 0) for r in total_abonado_rows))
+
+    saldo_acumulado = max(deuda_total - total_abonado, 0.0)
+
+    pago_semana = db.query(PagoSemanal).filter(
+        PagoSemanal.agente_id == agente.id,
+        PagoSemanal.semana_inicio == semana_ref,
+    ).first()
+    abonado_semana = float(pago_semana.monto or 0) if pago_semana else 0.0
+    pagado_semana = bool(pago_semana.pagado) if pago_semana else False
+    saldo_semana = max(float(cuota) - abonado_semana, 0.0)
+
+    semanas_pendientes = int(saldo_acumulado // float(cuota))
+    if saldo_acumulado % float(cuota) > 0.0001:
+        semanas_pendientes += 1
+
+    return {
+        "semana_inicio": semana_ref,
+        "cuota_semanal": float(cuota),
+        "deuda_total": float(deuda_total),
+        "total_abonado": float(total_abonado),
+        "saldo_acumulado": float(saldo_acumulado),
+        "semanas_pendientes": max(0, semanas_pendientes),
+        "abonado_semana": float(abonado_semana),
+        "saldo_semana": float(saldo_semana),
+        "pagado_semana": bool(pagado_semana),
+    }
+
+
 def generar_alertas_miercoles_pendientes(db: Session, today: date | None = None) -> dict:
     """Generate unpaid alerts for each Wednesday since the last check."""
     today = today or date.today()
@@ -162,6 +217,7 @@ def obtener_reporte_semanal(
         pagado = bool(pago.pagado) if pago else False
         monto_pagado = float(pago.monto) if pago else 0.0
         saldo = max(cuota - monto_pagado, 0.0)
+        resumen = resumen_cobranza_agente(db, agente, semana_ref)
 
         if pagado:
             total_pagados += 1
@@ -169,6 +225,7 @@ def obtener_reporte_semanal(
             total_pendientes += 1
 
         filas.append({
+            "pago_id": pago.id if pago else None,
             "agente_id": agente.id,
             "uuid": agente.uuid,
             "nombre": agente.nombre,
@@ -178,6 +235,10 @@ def obtener_reporte_semanal(
             "monto_pagado": monto_pagado,
             "cuota": cuota,
             "saldo": saldo,
+            "deuda_total": resumen["deuda_total"],
+            "total_abonado": resumen["total_abonado"],
+            "saldo_acumulado": resumen["saldo_acumulado"],
+            "semanas_pendientes": resumen["semanas_pendientes"],
             "fecha_pago": pago.fecha_pago.isoformat() if pago and pago.fecha_pago else None,
             "alerta_emitida": bool(alerta),
             "alerta_atendida": bool(alerta.atendida) if alerta else False,

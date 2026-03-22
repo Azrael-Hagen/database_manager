@@ -218,6 +218,15 @@ class APIClient {
         return this.request('POST', '/qr/pagos', payload);
     }
 
+    async getResumenPagoAgente(agenteId, semana = '') {
+        const qs = semana ? `?semana=${encodeURIComponent(semana)}` : '';
+        return this.request('GET', `/qr/pagos/resumen/${agenteId}${qs}`);
+    }
+
+    async editarPagoSemanalAdmin(pagoId, payload) {
+        return this.request('PUT', `/qr/pagos/${pagoId}`, payload);
+    }
+
     async getCuotaSemanal() {
         return this.request('GET', '/qr/config/cuota');
     }
@@ -490,6 +499,14 @@ class APIClient {
 
     async purgeInactiveDatos() {
         return this.request('DELETE', '/datos/purge/inactivos');
+    }
+
+    async listarPapelera(skip = 0, limit = 50) {
+        return this.request('GET', `/datos/papelera?skip=${skip}&limit=${limit}`);
+    }
+
+    async rollbackDato(id) {
+        return this.request('POST', `/datos/${id}/rollback`);
     }
 
     // === HEALTH CHECK ===

@@ -71,6 +71,25 @@ if errorlevel 1 (
 
 :skip_host_setup
 
+REM Preguntar sobre HTTPS
+if exist "%~dp0ssl\cert.pem" (
+    echo [OK] Certificados TLS detectados. HTTPS estara activo en el puerto 8443.
+    echo      Accede via: https://phantom.database.local
+    goto skip_https_setup
+)
+echo.
+choice /C SN /N /M "Configurar HTTPS con certificado TLS (para camara en red)? [S/N]: "
+if errorlevel 2 goto skip_https_setup
+if errorlevel 1 (
+    echo [INFO] Configurando HTTPS; requiere permisos de administrador...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\setup-https.ps1"
+    if errorlevel 1 (
+        echo [AVISO] No se pudo configurar HTTPS. Continuando solo con HTTP.
+    )
+)
+
+:skip_https_setup
+
 REM Iniciar aplicación
 echo [PASO 3/3] Iniciando Database Manager...
 echo.

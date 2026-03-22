@@ -217,11 +217,19 @@ class RespuestaPaginada(BaseModel):
 class PagoSemanalCrear(BaseModel):
     """Registrar pago semanal de un agente."""
     agente_id: int
-    telefono: str = Field(..., min_length=7, max_length=20)
+    telefono: Optional[str] = Field(None, max_length=20)
     numero_voip: Optional[str] = Field(None, max_length=50)
     semana_inicio: date
     monto: float = Field(0.0, ge=0)
     pagado: bool = True
+    observaciones: Optional[str] = Field(None, max_length=500)
+    liquidar_total: bool = False
+
+
+class PagoSemanalAdminActualizar(BaseModel):
+    """Edicion administrativa de pago semanal existente."""
+    monto: Optional[float] = Field(None, ge=0)
+    pagado: Optional[bool] = None
     observaciones: Optional[str] = Field(None, max_length=500)
 
 

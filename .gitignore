@@ -43,6 +43,9 @@ qr_codes/
 backend/backups/
 *.log
 temp/
+tmp/
+ssl/*.pem
+ssl/*.key
 
 # Database
 *.db

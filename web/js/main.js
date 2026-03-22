@@ -34,6 +34,46 @@ const BRANDING_DEFAULTS = {
     subtitle: 'database_manager',
     logoPath: 'sources/logo.png'
 };
+const DB_OBJECT_CATALOG = {
+    datos_importados: { logical: 'Agentes Operativos', purpose: 'Maestro de agentes usados en altas, cambios, pagos y QR.' },
+    agentes: { logical: 'Agentes Legado', purpose: 'Tabla historica de compatibilidad para integraciones externas.' },
+    extensions_pbx: { logical: 'Extensiones PBX Fuente', purpose: 'Inventario fuente de lineas sincronizadas desde PBX.' },
+    lineas_telefonicas: { logical: 'Lineas Operativas', purpose: 'Inventario gestionado para asignaciones a agentes.' },
+    agente_linea_asignaciones: { logical: 'Asignaciones Agente-Linea', purpose: 'Historial de asignaciones y liberaciones de lineas.' },
+    pagos_semanales: { logical: 'Pagos Semanales', purpose: 'Registro de pagos y abonos por semana de cada agente.' },
+    recibos_pago: { logical: 'Recibos de Pago', purpose: 'Comprobantes persistentes para reimpresion y auditoria.' },
+    cat_estatus_agente: { logical: 'Catalogo Estatus Agente', purpose: 'Catalogo de estados operativos del agente.' },
+    agente_eventos_operativos: { logical: 'Bitacora Operativa Agente', purpose: 'Traza eventos de flujo operativo por agente.' },
+    ladas_catalogo: { logical: 'Catalogo de Ladas', purpose: 'Catalogo de ladas activas para filtros y asignacion.' },
+    catalogo_ladas: { logical: 'Catalogo Ladas Especial', purpose: 'Tabla especial legado (registro_agentes) para ladas oficiales.' },
+    usuarios: { logical: 'Usuarios del Sistema', purpose: 'Cuentas, roles y control de acceso.' },
+    auditoria_acciones: { logical: 'Auditoria del Sistema', purpose: 'Registro de acciones por usuario y fecha.' },
+    config_sistema: { logical: 'Configuracion del Sistema', purpose: 'Parametros globales como cuota semanal y alertas.' },
+    alertas_pago: { logical: 'Alertas de Pago', purpose: 'Alertas por falta de pago semanal y su seguimiento.' },
+    import_logs: { logical: 'Bitacora de Importaciones', purpose: 'Historial de importaciones y su resultado.' },
+    vw_agentes_extensiones_pago_actual: { logical: 'Vista Agentes + Extensiones + Pago', purpose: 'Estado semanal por agente con linea y pago.' },
+    vw_agentes_operacion_actual: { logical: 'Vista Operacion Actual', purpose: 'Consolidado operativo con estatus, linea y pago.' },
+    vw_control_sync_agentes: { logical: 'Vista Control Sincronizacion', purpose: 'Controla alineacion entre base operativa y legado.' },
+    vw_dm_agentes_operacion_actual: { logical: 'Vista Operacion (Espejo DM)', purpose: 'Espejo en registro_agentes para consulta amigable.' },
+    vw_dm_control_sync_agentes: { logical: 'Vista Sync (Espejo DM)', purpose: 'Espejo en registro_agentes del control de sync.' },
+    vw_dm_cat_estatus_agente: { logical: 'Catalogo Estatus (Espejo DM)', purpose: 'Espejo en registro_agentes del catalogo de estatus.' },
+};
+
+function getDbObjectInfo(name) {
+    const key = String(name || '').trim();
+    return DB_OBJECT_CATALOG[key] || null;
+}
+
+function formatDbObjectOption(name) {
+    const info = getDbObjectInfo(name);
+    return info ? `${info.logical} [${name}]` : name;
+}
+
+function renderDbObjectCell(name) {
+    const info = getDbObjectInfo(name);
+    if (!info) return escapeHtml(name);
+    return `<div><strong>${escapeHtml(info.logical)}</strong><br><span class="hint">Fisico: ${escapeHtml(name)} | ${escapeHtml(info.purpose)}</span></div>`;
+}
 
 function togglePassword(inputId, btn) {
     const input = document.getElementById(inputId);
@@ -121,22 +161,27 @@ function scrollToTop() {
 
 function getCurrentRole() {
     const role = String(currentUser?.rol || '').trim().toLowerCase();
+    if (role === 'super_admin' || currentUser?.es_super_admin) return 'super_admin';
     if (role === 'admin' || currentUser?.es_admin) return 'admin';
     if (role === 'capture') return 'capture';
     return 'viewer';
 }
 
 function canCapture() {
-    return getCurrentRole() === 'capture' || getCurrentRole() === 'admin';
+    return getCurrentRole() === 'capture' || canAdmin();
 }
 
 function canAdmin() {
-    return getCurrentRole() === 'admin';
+    return getCurrentRole() === 'admin' || canSuperAdmin();
+}
+
+function canSuperAdmin() {
+    return getCurrentRole() === 'super_admin' || currentUser?.es_super_admin === true;
 }
 
 function canAccessSection(section) {
     const role = getCurrentRole();
-    if (role === 'admin') return true;
+    if (role === 'super_admin' || role === 'admin') return true;
     if (role === 'capture') {
         return ['dashboard', 'datos', 'importar', 'altasAgentes'].includes(section);
     }
@@ -145,7 +190,10 @@ function canAccessSection(section) {
 
 function applyRoleBasedUI() {
     const role = getCurrentRole();
-    const roleLabel = role === 'admin' ? 'Administrador' : role === 'capture' ? 'Altas' : 'Consulta';
+    const roleLabel = role === 'super_admin' ? 'Super Admin'
+        : role === 'admin' ? 'Administrador'
+        : role === 'capture' ? 'Altas'
+        : 'Consulta';
     const userNameEl = document.getElementById('userName');
     if (userNameEl) {
         userNameEl.textContent = `${currentUser?.username || 'Usuario'} · ${roleLabel}`;
@@ -161,6 +209,7 @@ function applyRoleBasedUI() {
         qr: canAdmin(),
         usuarios: canAdmin(),
         auditoria: canAdmin(),
+        papelera: canSuperAdmin(),
     };
     Object.entries(menuRules).forEach(([section, visible]) => {
         const item = document.querySelector(`.menu-item[onclick*="'${section}'"]`);
@@ -170,9 +219,12 @@ function applyRoleBasedUI() {
     });
 
     const purgeBtn = document.getElementById('purgeInactiveBtn');
-    if (purgeBtn) purgeBtn.style.display = canAdmin() ? '' : 'none';
+    if (purgeBtn) purgeBtn.style.display = canSuperAdmin() ? '' : 'none';
     const maintenancePanel = document.getElementById('dbMaintenancePanel');
     if (maintenancePanel) maintenancePanel.style.display = canAdmin() ? 'block' : 'none';
+    // Papelera panel — only super_admin
+    const papeleraSection = document.getElementById('papeleraSection');
+    if (papeleraSection) papeleraSection.style.display = canSuperAdmin() ? '' : 'none';
 }
 
 function getAltasTourStorageKey() {
@@ -561,6 +613,9 @@ function showApp() {
     syncRealtimeControls();
     loadSection('dashboard');
     startRealtimeUpdates();
+    setTimeout(() => {
+        applyQrDeepLinkIfPresent().catch((err) => console.warn('Deep link QR no aplicado:', err?.message || err));
+    }, 120);
 }
 
 async function login(e) {
@@ -935,6 +990,51 @@ function pickPreferredDatabase(databases) {
     return databases[0];
 }
 
+function getStartupQueryParams() {
+    try {
+        return new URLSearchParams(window.location.search || '');
+    } catch (_) {
+        return new URLSearchParams('');
+    }
+}
+
+async function applyQrDeepLinkIfPresent() {
+    const params = getStartupQueryParams();
+    const section = (params.get('section') || '').trim();
+    const agenteId = Number(params.get('agente_id') || 0);
+    const semana = (params.get('semana') || '').trim();
+    const autoverify = ['1', 'true', 'yes'].includes((params.get('autoverify') || '').trim().toLowerCase());
+
+    if (section !== 'qr' && !agenteId) {
+        return;
+    }
+
+    if (section === 'qr' || agenteId > 0) {
+        if (!canAdmin()) {
+            return;
+        }
+        loadSection('qr');
+    }
+
+    if (agenteId > 0) {
+        const qrInput = document.getElementById('qrAgenteId');
+        const pagoInput = document.getElementById('pagoAgenteId');
+        if (qrInput) qrInput.value = String(agenteId);
+        if (pagoInput) pagoInput.value = String(agenteId);
+    }
+    if (semana) {
+        const qrSemana = document.getElementById('qrSemana');
+        const pagoSemana = document.getElementById('pagoSemana');
+        if (qrSemana) qrSemana.value = semana;
+        if (pagoSemana) pagoSemana.value = semana;
+    }
+
+    if (autoverify && agenteId > 0) {
+        await verificarAgenteQR();
+        await consultarResumenPagoActual(false);
+    }
+}
+
 function isAgentDataTableContext(dbName, tableName) {
     return tableName === 'datos_importados' && (dbName === DEFAULT_AGENT_DATABASE || dbName === 'database_manager');
 }
@@ -1136,7 +1236,7 @@ async function cargarTablas() {
 
         let html = '<option value="">-- Selecciona tabla --</option>';
         tables.forEach(t => {
-            html += `<option value="${t}">${t}</option>`;
+            html += `<option value="${t}">${escapeHtml(formatDbObjectOption(t))}</option>`;
         });
         tableSelect.innerHTML = html;
 
@@ -1371,7 +1471,10 @@ function mostrarDatos(datos) {
             
             if (canAdmin()) {
                 actionHtml += `<button onclick="eliminarDato(${fila.id})" class="btn btn-small" title="Eliminar registro">🗑️</button>`;
-                actionHtml += `<button onclick="eliminarDatoDefinitivo(${fila.id})" class="btn btn-small btn-danger" title="Eliminar definitivamente">🔥</button>`;
+                if (canSuperAdmin()) {
+                    actionHtml += `<button onclick="eliminarDatoDefinitivo(${fila.id})" class="btn btn-small btn-danger" title="Eliminar definitivamente (super admin)">🔥</button>`;
+                    actionHtml += `<button onclick="rollbackDato(${fila.id})" class="btn btn-small" title="Restaurar desde papelera">↩️</button>`;
+                }
             }
             actionHtml += `</td></tr>`;
             html += actionHtml;
@@ -1412,14 +1515,19 @@ async function editarDato(id) {
 }
 
 async function eliminarDatoDefinitivo(id) {
-    if (!canAdmin()) {
-        alert('Solo administradores pueden eliminar definitivamente.');
+    if (!canSuperAdmin()) {
+        alert('Solo super administradores pueden eliminar definitivamente.');
         return;
     }
-    if (!confirm('Esto eliminará el registro y sus dependencias de forma permanente. ¿Continuar?')) return;
+    if (!confirm('⚠️ ADVERTENCIA: Esto eliminará el registro y sus dependencias de forma PERMANENTE.\n¿Desea continuar con la primera confirmación?')) return;
+    const confirmacion = prompt('Para confirmar, escribe la palabra CONFIRMAR:');
+    if (confirmacion !== 'CONFIRMAR') {
+        alert('Operación cancelada. No se realizaron cambios.');
+        return;
+    }
     try {
         await apiClient.hardDeleteDato(id);
-        alert('Registro eliminado definitivamente.');
+        alert('✅ Registro eliminado definitivamente. Un backup fue guardado en la papelera.');
         cargarTodosLosDatos();
     } catch (error) {
         console.error('Error:', error);
@@ -1428,11 +1536,16 @@ async function eliminarDatoDefinitivo(id) {
 }
 
 async function purgarDatosInactivos() {
-    if (!canAdmin()) {
-        alert('Solo administradores pueden purgar registros.');
+    if (!canSuperAdmin()) {
+        alert('Solo super administradores pueden purgar registros.');
         return;
     }
-    if (!confirm('Se eliminarán definitivamente todos los registros inactivos. ¿Continuar?')) return;
+    if (!confirm('⚠️ ADVERTENCIA: Se eliminarán DEFINITIVAMENTE todos los registros inactivos.\n¿Desea continuar con la primera confirmación?')) return;
+    const confirmacion = prompt('Para confirmar, escribe la palabra CONFIRMAR:');
+    if (confirmacion !== 'CONFIRMAR') {
+        alert('Operación cancelada. No se realizaron cambios.');
+        return;
+    }
     try {
         const result = await apiClient.purgeInactiveDatos();
         alert(result.mensaje || 'Purgado completado.');
@@ -1440,6 +1553,22 @@ async function purgarDatosInactivos() {
     } catch (error) {
         console.error('Error:', error);
         alert('Error purgando inactivos: ' + error.message);
+    }
+}
+
+async function rollbackDato(id) {
+    if (!canSuperAdmin()) {
+        alert('Solo super administradores pueden restaurar registros.');
+        return;
+    }
+    if (!confirm(`¿Restaurar el registro ID ${id} desde la papelera?`)) return;
+    try {
+        const result = await apiClient.rollbackDato(id);
+        alert(result.mensaje || `Registro ${id} restaurado correctamente.`);
+        cargarTodosLosDatos();
+    } catch (error) {
+        console.error('Error en rollback:', error);
+        alert('Error al restaurar: ' + error.message);
     }
 }
 
@@ -1481,6 +1610,7 @@ async function generarQrIndividualEnContexto(agenteId, options = {}) {
                 <div class="card" style="padding:12px;border:1px solid #d8d8d8;border-radius:8px;">
                     <strong>QR individual generado para:</strong> ${data.nombre || 'Agente'}<br>
                     <strong>Asignación:</strong> ${data.tiene_asignacion ? 'Con número asignado' : 'Sin número asignado'}<br>
+                    <strong>Modo QR:</strong> ${data.es_qr_seguro ? 'Seguro por línea activa' : 'Fallback por UUID (sin línea)'}<br>
                     <strong>URL pública:</strong> <a href="${data.public_url}" target="_blank">Abrir verificación</a><br>
                     <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
                         <button type="button" class="btn btn-secondary" onclick="descargarQrAgente(${agenteId})">Descargar PNG</button>
@@ -1549,35 +1679,162 @@ async function iniciarEscanerQR() {
         return;
     }
 
-    qrScannerInstance = new Html5Qrcode('qrScanner');
-    try {
-        const formats = (typeof Html5QrcodeSupportedFormats !== 'undefined')
-            ? [
-                Html5QrcodeSupportedFormats.QR_CODE,
-                Html5QrcodeSupportedFormats.CODE_128,
-                Html5QrcodeSupportedFormats.CODE_39,
-                Html5QrcodeSupportedFormats.EAN_13,
-                Html5QrcodeSupportedFormats.EAN_8,
-                Html5QrcodeSupportedFormats.UPC_A,
-                Html5QrcodeSupportedFormats.UPC_E,
-            ]
-            : undefined;
+    const qrEl = document.getElementById('qrScanner');
 
+    function mostrarErrorCamara(msg) {
+        if (qrEl) {
+            qrEl.innerHTML = `<div style="color:#c0392b;background:#fdecea;border:1px solid #f5c6cb;border-radius:6px;padding:14px;font-size:14px;line-height:1.6;">${msg}</div>`;
+        } else {
+            alert(msg.replace(/<[^>]+>/g, ''));
+        }
+    }
+
+    // El acceso a la cámara requiere HTTPS o localhost.
+    // En HTTP sobre un dominio personalizado el navegador bloquea navigator.mediaDevices.
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        const origin = location.origin;
+        mostrarErrorCamara(
+            `<strong>⚠️ Cámara bloqueada por el navegador (HTTP inseguro)</strong><br><br>` +
+            `El navegador solo permite acceder a la cámara desde conexiones <b>HTTPS</b> o <b>localhost</b>.<br><br>` +
+            `<b>Opciones:</b><ul style="margin:6px 0 0 18px;">` +
+            `<li>Configura HTTPS en el servidor (recomendado)</li>` +
+            `<li>En Chrome/Edge: visita <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>, ` +
+            `agrega <code>${origin}</code> y reinicia el navegador</li>` +
+            `<li>Accede vía <code>localhost</code> si el servidor está en esta máquina</li></ul>`
+        );
+        return;
+    }
+
+    const formats = (typeof Html5QrcodeSupportedFormats !== 'undefined')
+        ? [
+            Html5QrcodeSupportedFormats.QR_CODE,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+        ]
+        : undefined;
+
+    const scanConfig = {
+        fps: 10,
+        qrbox: { width: 240, height: 240 },
+        formatsToSupport: formats,
+    };
+
+    const onScan = async (decodedText) => { await manejarQRLeido(decodedText); };
+    const onError = () => {};
+
+    function limpiarContenedor() {
+        if (qrEl) qrEl.innerHTML = '';
+    }
+
+    async function tryStart(cameraIdOrConstraint) {
+        limpiarContenedor();
+        const scanner = new Html5Qrcode('qrScanner');
+        await scanner.start(cameraIdOrConstraint, scanConfig, onScan, onError);
+        return scanner;
+    }
+
+    // Paso 1: pedir permiso explícitamente antes de enumerar.
+    // Esto muestra el diálogo de permiso del navegador.
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(t => t.stop()); // liberar inmediatamente
+    } catch (err) {
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            mostrarErrorCamara(
+                `<strong>🚫 Permiso de cámara denegado</strong><br><br>` +
+                `Habilita el acceso a la cámara en la configuración del navegador ` +
+                `(ícono 🔒 junto a la barra de dirección) y recarga la página.`
+            );
+            return;
+        }
+        if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+            mostrarErrorCamara(`<strong>❌ No se encontró ninguna cámara</strong><br>Verifica que haya una cámara conectada y habilitada.`);
+            return;
+        }
+        // Para otros errores seguimos intentando con Html5Qrcode
+    }
+
+    // Paso 2: enumerar cámaras (ahora que hay permiso, recibiremos labels reales)
+    let cameras = [];
+    try {
+        cameras = await Html5Qrcode.getCameras();
+    } catch (_) {}
+
+    // Preferir cámara trasera por etiqueta
+    const rearCamera = cameras.find(c => /back|rear|trasera|environment/i.test(c.label));
+    const candidateIds = rearCamera
+        ? [rearCamera.deviceId, ...cameras.filter(c => c !== rearCamera).map(c => c.deviceId)]
+        : cameras.map(c => c.deviceId);
+
+    // Fallbacks por constraint (funcionan en desktop sin facingMode real)
+    const constraintFallbacks = [
+        { facingMode: { ideal: 'environment' } },
+        { facingMode: 'user' },
+        true,
+    ];
+
+    const attempts = [
+        ...candidateIds.map(id => () => tryStart({ deviceId: { exact: id } })),
+        ...constraintFallbacks.map(c => () => tryStart(c)),
+    ];
+
+    for (const attempt of attempts) {
+        try {
+            qrScannerInstance = await attempt();
+            return; // éxito
+        } catch (_) {
+            limpiarContenedor();
+        }
+    }
+
+    // Todos los intentos fallaron — mostrar selector manual si hay cámaras conocidas
+    if (cameras.length > 0) {
+        limpiarContenedor();
+        const opts = cameras.map(c => `<option value="${c.deviceId}">${c.label || c.deviceId}</option>`).join('');
+        if (qrEl) {
+            qrEl.innerHTML =
+                `<p style="color:#e74c3c;margin:0 0 8px;">No se pudo iniciar la cámara automáticamente.</p>` +
+                `<label style="display:block;margin-bottom:6px;">Selecciona una cámara:` +
+                `<select id="cameraSelector" style="margin-left:8px;">${opts}</select></label>` +
+                `<button onclick="iniciarEscanerQRManual()">Usar esta cámara</button>`;
+        }
+    } else {
+        mostrarErrorCamara(
+            `<strong>❌ No se pudo acceder a la cámara</strong><br><br>` +
+            `Posibles causas:<ul style="margin:6px 0 0 18px;">` +
+            `<li>La página se sirve en <b>HTTP</b> (se requiere HTTPS)</li>` +
+            `<li>Permiso de cámara no concedido en el navegador</li>` +
+            `<li>Otra aplicación está usando la cámara</li></ul>`
+        );
+    }
+}
+
+async function iniciarEscanerQRManual() {
+    const sel = document.getElementById('cameraSelector');
+    if (!sel) return;
+    const deviceId = sel.value;
+    const el = document.getElementById('qrScanner');
+    if (el) el.innerHTML = '';
+
+    const formats = (typeof Html5QrcodeSupportedFormats !== 'undefined')
+        ? [Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
+           Html5QrcodeSupportedFormats.CODE_39, Html5QrcodeSupportedFormats.EAN_13]
+        : undefined;
+    try {
+        qrScannerInstance = new Html5Qrcode('qrScanner');
         await qrScannerInstance.start(
-            { facingMode: 'environment' },
-            {
-                fps: 10,
-                qrbox: { width: 240, height: 240 },
-                formatsToSupport: formats,
-            },
-            async (decodedText) => {
-                await manejarQRLeido(decodedText);
-            },
+            { deviceId: { exact: deviceId } },
+            { fps: 10, qrbox: { width: 240, height: 240 }, formatsToSupport: formats },
+            async (decodedText) => { await manejarQRLeido(decodedText); },
             () => {}
         );
-    } catch (error) {
+    } catch (err) {
         qrScannerInstance = null;
-        alert('No se pudo iniciar la cámara: ' + error.message);
+        alert('No se pudo iniciar la cámara seleccionada: ' + err.message);
     }
 }
 
@@ -2053,20 +2310,20 @@ async function liberarLinea(lineaId) {
 }
 
 async function eliminarDato(id) {
-    if (!confirm('¿Estás seguro?')) return;
+    if (!confirm(`⚠️ ¿Estás seguro de que deseas eliminar el registro ID ${id}?\nEsta acción lo marcará como inactivo.`)) return;
+    const confirmacion = prompt('Para confirmar, escribe la palabra CONFIRMAR:');
+    if (confirmacion !== 'CONFIRMAR') {
+        alert('Operación cancelada. No se realizaron cambios.');
+        return;
+    }
 
     try {
-        const response = await fetch(`${API_URL}/datos/${id}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-
-        if (response.ok) {
-            alert('Dato eliminado');
-            buscarDatos();
-        }
+        await apiClient.eliminarDato(id);
+        alert('✅ Dato eliminado. Se generó un backup en la papelera.');
+        buscarDatos();
     } catch (error) {
         console.error('Error:', error);
+        alert('Error al eliminar: ' + error.message);
     }
 }
 
@@ -2267,8 +2524,12 @@ function prepararPagoDesdeVerificacion(agente, verificacion) {
     document.getElementById('pagoTelefono').value = agente.telefono || '';
     document.getElementById('pagoVoip').value = agente.numero_voip || '';
     document.getElementById('pagoSemana').value = verificacion.semana_inicio || mondayISO();
-    document.getElementById('pagoMonto').value = Number(verificacion.cuota_semanal || verificacion.monto || 300);
+    document.getElementById('pagoMonto').value = Number(verificacion.cuota_semanal || verificacion.saldo_acumulado || verificacion.monto || 300);
     document.getElementById('pagoPagado').checked = true;
+    const liquidarEl = document.getElementById('pagoLiquidarTotal');
+    if (liquidarEl) liquidarEl.checked = false;
+    const obsEl = document.getElementById('pagoObservaciones');
+    if (obsEl) obsEl.value = '';
     document.getElementById('pagoAgenteId').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
@@ -2317,6 +2578,9 @@ async function verificarAgenteQR() {
                 <strong>Estado:</strong> <span class="payment-pill ${v.pagado ? 'paid' : 'unpaid'}">${paidText}</span><br>
                 <strong>Cuota:</strong> $${Number(v.cuota_semanal ?? 0).toFixed(2)} MXN<br>
                 <strong>Monto:</strong> $${Number(v.monto ?? 0).toFixed(2)} MXN<br>
+                <strong>Abonado acumulado:</strong> $${Number(v.total_abonado ?? 0).toFixed(2)} MXN<br>
+                <strong>Saldo acumulado:</strong> $${Number(v.saldo_acumulado ?? 0).toFixed(2)} MXN<br>
+                <strong>Semanas pendientes:</strong> ${Number(v.semanas_pendientes ?? 0)}<br>
                 <strong>Fecha pago:</strong> ${v.fecha_pago ? new Date(v.fecha_pago).toLocaleString() : 'Sin pago registrado'}<br>
                 <div style="margin-top:12px">${actionButton}</div>
             </div>
@@ -2329,14 +2593,16 @@ async function verificarAgenteQR() {
 
 async function registrarPagoSemanal(e) {
     e.preventDefault();
+    const liquidarTotal = !!document.getElementById('pagoLiquidarTotal')?.checked;
     const payload = {
         agente_id: Number(document.getElementById('pagoAgenteId').value),
-        telefono: document.getElementById('pagoTelefono').value.trim(),
+        telefono: document.getElementById('pagoTelefono').value.trim() || null,
         numero_voip: document.getElementById('pagoVoip').value.trim() || null,
         semana_inicio: document.getElementById('pagoSemana').value,
         monto: Number(document.getElementById('pagoMonto').value || 0),
         pagado: document.getElementById('pagoPagado').checked,
-        observaciones: null
+        liquidar_total: liquidarTotal,
+        observaciones: document.getElementById('pagoObservaciones')?.value?.trim() || null
     };
 
     try {
@@ -2352,6 +2618,8 @@ async function registrarPagoSemanal(e) {
             monto: Number(pago.monto ?? payload.monto ?? 0),
             fecha_pago: pago.fecha_pago || new Date().toISOString(),
             estado: payload.pagado ? 'PAGADO' : 'PENDIENTE',
+            abono_registrado: Number(pago.abono_registrado ?? payload.monto ?? 0),
+            saldo_acumulado: Number(pago.saldo_acumulado ?? 0),
             recibo_token: recibo.token || null,
             expira_en: recibo.expira_en || null,
         };
@@ -2360,6 +2628,7 @@ async function registrarPagoSemanal(e) {
         if (document.getElementById('qrAgenteId').value === String(payload.agente_id)) {
             await verificarAgenteQR();
         }
+        await consultarResumenPagoActual(false);
         cargarReporteSemanal();
         cargarRecibosPersistidos();
     } catch (error) {
@@ -2381,6 +2650,8 @@ function renderReciboPago(data) {
             <p><strong>Línea:</strong> ${data.linea_numero || '-'}</p>
             <p><strong>Semana:</strong> ${data.semana_inicio || '-'}</p>
             <p><strong>Monto:</strong> $${Number(data.monto || 0).toFixed(2)} MXN</p>
+            <p><strong>Abono aplicado:</strong> $${Number(data.abono_registrado || 0).toFixed(2)} MXN</p>
+            <p><strong>Saldo acumulado:</strong> $${Number(data.saldo_acumulado || 0).toFixed(2)} MXN</p>
             <p><strong>Fecha de pago:</strong> ${data.fecha_pago ? new Date(data.fecha_pago).toLocaleString() : '-'}</p>
             <p><strong>Estado:</strong> ${data.estado || 'PAGADO'}</p>
             <p><strong>Token recibo:</strong> ${data.recibo_token || '-'}</p>
@@ -2391,6 +2662,35 @@ function renderReciboPago(data) {
             </div>
         </div>
     `;
+}
+
+async function consultarResumenPagoActual(showAlerts = true) {
+    const agenteId = Number(document.getElementById('pagoAgenteId')?.value || 0);
+    const semana = document.getElementById('pagoSemana')?.value || '';
+    const container = document.getElementById('resumenPagoAgenteContainer');
+    if (!container) return;
+    if (!agenteId) {
+        container.innerHTML = '<p>Ingresa un ID de agente para consultar su resumen.</p>';
+        return;
+    }
+    try {
+        const res = await apiClient.getResumenPagoAgente(agenteId, semana);
+        const data = res.data || {};
+        container.innerHTML = `
+            <div class="card" style="padding:12px;border-radius:8px;">
+                <strong>Semana:</strong> ${data.semana_inicio || '-'}<br>
+                <strong>Cuota semanal:</strong> $${Number(data.cuota_semanal || 0).toFixed(2)} MXN<br>
+                <strong>Deuda total:</strong> $${Number(data.deuda_total || 0).toFixed(2)} MXN<br>
+                <strong>Total abonado:</strong> $${Number(data.total_abonado || 0).toFixed(2)} MXN<br>
+                <strong>Saldo acumulado:</strong> $${Number(data.saldo_acumulado || 0).toFixed(2)} MXN<br>
+                <strong>Semanas pendientes:</strong> ${Number(data.semanas_pendientes || 0)}
+            </div>
+        `;
+    } catch (error) {
+        console.error('Error:', error);
+        container.innerHTML = '<p style="color:#b00020;">No fue posible obtener el resumen de pagos.</p>';
+        if (showAlerts) alert('Error consultando resumen de pagos: ' + error.message);
+    }
 }
 
 async function reimprimirReciboPorToken(token) {
@@ -2538,8 +2838,9 @@ async function cargarReporteSemanal() {
         if (filas.length === 0) {
             container.innerHTML = '<p>No hay agentes activos para esta semana.</p>';
         } else {
+            const adminMode = canAdmin();
             let html = '<table class="data-table"><thead><tr>';
-            html += '<th>ID</th><th>Nombre</th><th>Telefono</th><th>Pagado</th><th>Monto</th><th>Saldo</th><th>Alerta</th>';
+            html += '<th>ID</th><th>Nombre</th><th>Telefono</th><th>Pagado</th><th>Monto Semana</th><th>Saldo Semana</th><th>Saldo Acumulado</th><th>Alerta</th>';
             html += '</tr></thead><tbody>';
             filas.forEach((f, index) => {
                 html += `<tr>
@@ -2549,7 +2850,8 @@ async function cargarReporteSemanal() {
                     <td>${f.pagado ? 'SI' : 'NO'}</td>
                     <td>$${Number(f.monto_pagado || 0).toFixed(2)}</td>
                     <td>$${Number(f.saldo || 0).toFixed(2)}</td>
-                    <td>${f.alerta_emitida ? (f.alerta_atendida ? 'Atendida' : 'Pendiente') : 'Sin alerta'}<br><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"><button onclick="generarQrIndividual(${f.agente_id})" class="btn btn-small btn-secondary">Ver QR</button><button onclick="generarReciboDesdeReporte(${index})" class="btn btn-small">Recibo</button></div></td>
+                    <td>$${Number(f.saldo_acumulado || 0).toFixed(2)}</td>
+                    <td>${f.alerta_emitida ? (f.alerta_atendida ? 'Atendida' : 'Pendiente') : 'Sin alerta'}<br><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"><button onclick="generarQrIndividual(${f.agente_id})" class="btn btn-small btn-secondary">Ver QR</button><button onclick="generarReciboDesdeReporte(${index})" class="btn btn-small">Recibo</button>${adminMode && f.pago_id ? `<button onclick="editarPagoAdminDesdeReporte(${f.pago_id}, ${f.agente_id})" class="btn btn-small btn-secondary">Editar Pago</button>` : ''}</div></td>
                 </tr>`;
             });
             html += '</tbody></table>';
@@ -2562,6 +2864,32 @@ async function cargarReporteSemanal() {
     } catch (error) {
         console.error('Error:', error);
         alert('Error cargando reporte semanal: ' + error.message);
+    }
+}
+
+async function editarPagoAdminDesdeReporte(pagoId, agenteId) {
+    if (!canAdmin()) {
+        alert('Solo administradores pueden editar pagos manualmente.');
+        return;
+    }
+    const montoRaw = prompt('Nuevo monto semanal (MXN):');
+    if (montoRaw === null) return;
+    const monto = Number(montoRaw);
+    if (!Number.isFinite(monto) || monto < 0) {
+        alert('Monto inválido.');
+        return;
+    }
+    const observaciones = prompt('Observaciones (opcional):') || null;
+    try {
+        await apiClient.editarPagoSemanalAdmin(pagoId, { monto, observaciones });
+        alert('Pago actualizado correctamente.');
+        await cargarReporteSemanal();
+        if (Number(document.getElementById('pagoAgenteId')?.value || 0) === Number(agenteId)) {
+            await consultarResumenPagoActual(false);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('No fue posible editar el pago: ' + error.message);
     }
 }
 
@@ -2980,7 +3308,7 @@ function mostrarTablas(database, tables) {
     tables.forEach(table => {
         html += `
             <tr>
-                <td>${table}</td>
+                <td>${renderDbObjectCell(table)}</td>
                 <td>
                     <button onclick="verDatosTabla('${database}', '${table}')" class="btn btn-small">Ver Datos</button>
                     ${captureMode ? `<button onclick="abrirImportBD('${database}', '${table}')" class="btn btn-small">Importar</button>` : ''}
@@ -3063,7 +3391,7 @@ async function verVistas(database) {
         html += '<table class="data-table"><thead><tr><th>Vista</th><th>Acciones</th></tr></thead><tbody>';
         views.forEach(view => {
             html += `<tr>
-                <td>${view}</td>
+                <td>${renderDbObjectCell(view)}</td>
                 <td>
                     <button onclick="verDatosTabla('${database}', '${view}')" class="btn btn-small">Consultar</button>
                     ${adminMode ? `<button onclick="eliminarVista('${database}', '${view}')" class="btn btn-small btn-danger">Eliminar</button>` : ''}
@@ -3242,7 +3570,12 @@ function mostrarDatosTabla(database, table, data) {
         limit: currentTableBrowserState.limit || 50,
     };
     
-    let html = `<h3>Datos de ${table} en ${database}</h3>`;
+    const info = getDbObjectInfo(table);
+    const titleText = info ? `${info.logical} [${table}]` : table;
+    let html = `<h3>Datos de ${escapeHtml(titleText)} en ${escapeHtml(database)}</h3>`;
+    if (info) {
+        html += `<p class="hint">${escapeHtml(info.purpose)}</p>`;
+    }
     html += `<p>Total de registros: ${data.total}</p>`;
     html += `<div class="search-bar" style="margin-bottom:10px;max-width:760px;">
         <select id="dbTableOrderBy" onchange="cambiarOrdenTablaNavegador()">

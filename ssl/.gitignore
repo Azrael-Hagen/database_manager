@@ -1,0 +1,6 @@
+# Nunca comitear claves privadas ni certificados TLS
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx

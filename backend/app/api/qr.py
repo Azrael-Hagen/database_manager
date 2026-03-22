@@ -27,7 +27,7 @@ from app.models import (
     PagoSemanal,
     ReciboPago,
 )
-from app.schemas import PagoSemanalCrear
+from app.schemas import PagoSemanalCrear, PagoSemanalAdminActualizar
 from app.security import get_current_user, require_admin_role, require_capture_role
 from app.qr import QRGenerator
 from app.config import config
@@ -43,15 +43,20 @@ from app.utils.pagos import (
     get_cuota_semanal,
     monday_of_week,
     obtener_reporte_semanal,
+    resumen_cobranza_agente,
     set_cuota_semanal,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/qr", tags=["QR Verificacion"])
+NO_PHONE_VALUE = "SIN_TELEFONO"
 
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 SYNCED_EXTENSION_TYPE = "EXT_PBX"
 SYNCED_EXTENSION_PREFIX = "SYNC extensions_pbx"
+LEGACY_AGENTES_DB = "registro_agentes"
+LEGACY_AGENTES_TABLE = "agentes"
+LEGACY_LADAS_TABLE = "catalogo_ladas"
 
 
 def _utcnow() -> datetime:
@@ -335,6 +340,77 @@ def _sync_extensions_inventory(db: Session) -> dict[str, int]:
     }
 
 
+def _sync_ladas_from_legacy_catalog(db: Session) -> dict[str, int]:
+    """Importar/actualizar ladas desde registro_agentes.catalogo_ladas hacia ladas_catalogo."""
+    source_db = _safe_sql_identifier(config.PBX_DB_NAME, "registro_agentes")
+    source_table = _safe_sql_identifier(LEGACY_LADAS_TABLE, "catalogo_ladas")
+    rows = db.execute(
+        text(
+            f"""
+            SELECT
+                CAST(`LADA` AS CHAR) AS codigo,
+                CAST(`CIUDAD` AS CHAR) AS ciudad,
+                CAST(`ESTADO` AS CHAR) AS estado,
+                CAST(`PAIS` AS CHAR) AS pais
+            FROM `{source_db}`.`{source_table}`
+            WHERE `LADA` IS NOT NULL
+            """
+        )
+    ).mappings().all()
+
+    existing = {row.codigo: row for row in db.query(LadaCatalogo).all()}
+    normalized_rows: dict[str, dict[str, str]] = {}
+
+    for row in rows:
+        raw_code = row.get("codigo")
+        try:
+            codigo = _normalize_lada(str(raw_code or ""))
+        except HTTPException:
+            continue
+
+        ciudad = str(row.get("ciudad") or "").strip()
+        estado = str(row.get("estado") or "").strip()
+        pais = str(row.get("pais") or "").strip()
+        nombre_region = ", ".join([part for part in [ciudad, estado] if part]) or (pais or None)
+        normalized_rows[codigo] = {
+            "nombre_region": nombre_region,
+        }
+
+    created = 0
+    updated = 0
+    reactivated = 0
+
+    for codigo, payload in normalized_rows.items():
+        nombre_region = payload["nombre_region"]
+
+        current = existing.get(codigo)
+        if not current:
+            db.add(LadaCatalogo(codigo=codigo, nombre_region=nombre_region, es_activa=True))
+            existing[codigo] = True
+            created += 1
+            continue
+
+        changed = False
+        if not current.es_activa:
+            current.es_activa = True
+            reactivated += 1
+            changed = True
+        if nombre_region and current.nombre_region != nombre_region:
+            current.nombre_region = nombre_region
+            changed = True
+        if changed:
+            updated += 1
+
+    db.flush()
+    return {
+        "source": len(rows),
+        "normalized": len(normalized_rows),
+        "created": created,
+        "updated": updated,
+        "reactivated": reactivated,
+    }
+
+
 def _get_managed_active_line_query(db: Session):
     return db.query(LineaTelefonica).filter(
         LineaTelefonica.es_activa.is_(True),
@@ -343,13 +419,20 @@ def _get_managed_active_line_query(db: Session):
 
 
 def _render_public_status_page(payload: dict) -> HTMLResponse:
-    """Render a public green/red verification page for scanned QR codes."""
+    """Render a public verification page with current payment and debt status."""
     agente = payload.get("agente", {})
     pagado = bool(payload.get("pagado", False))
     asignado = bool(agente.get("tiene_asignacion", False))
+    saldo_acumulado = float(payload.get("saldo_acumulado", 0.0) or 0.0)
+    deuda_total = float(payload.get("deuda_total", 0.0) or 0.0)
+    total_abonado = float(payload.get("total_abonado", 0.0) or 0.0)
+    semanas_pendientes = int(payload.get("semanas_pendientes", 0) or 0)
+    linea = str(agente.get("linea") or "-")
+    pago_url = str(payload.get("pago_url") or "").strip()
     color = "#16966a" if pagado else "#d64545"
     label = "PAGADO" if pagado else "PENDIENTE"
     asignacion = "NUMERO ASIGNADO" if asignado else "SIN NUMERO ASIGNADO"
+    action_html = f"<a class=\"cta\" href=\"{pago_url}\">Registrar pago de este agente</a>" if pago_url else ""
     html = f"""
     <!doctype html>
     <html lang=\"es\">
@@ -359,7 +442,7 @@ def _render_public_status_page(payload: dict) -> HTMLResponse:
         <title>Verificación de Pago</title>
         <style>
             body {{ font-family: Segoe UI, Arial, sans-serif; margin: 0; background: #f4f7fb; color: #1a2330; }}
-            .wrap {{ max-width: 760px; margin: 40px auto; padding: 20px; }}
+            .wrap {{ max-width: 820px; margin: 40px auto; padding: 20px; }}
             .card {{ background: #fff; border-radius: 18px; box-shadow: 0 12px 30px rgba(0,0,0,.10); overflow: hidden; }}
             .hero {{ background: {color}; color: #fff; padding: 28px; text-align: center; }}
             .hero h1 {{ margin: 0; font-size: 2rem; }}
@@ -367,6 +450,8 @@ def _render_public_status_page(payload: dict) -> HTMLResponse:
             .body {{ padding: 24px; font-size: 1rem; line-height: 1.6; }}
             .row {{ margin-bottom: 10px; }}
             .label {{ font-weight: 700; }}
+            .cta {{ display: inline-block; margin-top: 14px; padding: 10px 16px; border-radius: 10px; background: #0f6ecf; color: #fff; text-decoration: none; font-weight: 700; }}
+            .cta:hover {{ filter: brightness(1.08); }}
         </style>
     </head>
     <body>
@@ -378,11 +463,17 @@ def _render_public_status_page(payload: dict) -> HTMLResponse:
                 </div>
                 <div class=\"body\">
                     <div class=\"row\"><span class=\"label\">ID:</span> {agente.get('id', agente.get('uuid', '-'))}</div>
-                    <div class=\"row\"><span class=\"label\">Teléfono:</span> {agente.get('telefono', '-')}</div>
-                    <div class=\"row\"><span class=\"label\">Asignación:</span> {asignacion}</div>
+                    <div class=\"row\"><span class=\"label\">Telefono:</span> {agente.get('telefono', '-')}</div>
+                    <div class=\"row\"><span class=\"label\">Asignacion:</span> {asignacion}</div>
+                    <div class=\"row\"><span class=\"label\">Linea activa:</span> {linea}</div>
                     <div class=\"row\"><span class=\"label\">Semana:</span> {payload.get('semana_inicio', '-')}</div>
-                    <div class=\"row\"><span class=\"label\">Monto:</span> ${float(payload.get('monto', 0.0)):.2f} MXN</div>
+                    <div class=\"row\"><span class=\"label\">Monto semana:</span> ${float(payload.get('monto', 0.0)):.2f} MXN</div>
+                    <div class=\"row\"><span class=\"label\">Total abonado:</span> ${total_abonado:.2f} MXN</div>
+                    <div class=\"row\"><span class=\"label\">Deuda total:</span> ${deuda_total:.2f} MXN</div>
+                    <div class=\"row\"><span class=\"label\">Saldo acumulado:</span> ${saldo_acumulado:.2f} MXN</div>
+                    <div class=\"row\"><span class=\"label\">Semanas pendientes:</span> {semanas_pendientes}</div>
                     <div class=\"row\"><span class=\"label\">Fecha de pago:</span> {payload.get('fecha_pago') or 'Sin registro'}</div>
+                    {action_html}
                 </div>
             </div>
         </div>
@@ -415,6 +506,89 @@ def _safe_json_object(raw: str | None) -> dict:
         return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return {}
+
+
+def _sync_legacy_agente_row(db: Session, *, agente_id: int, nombre: str, datos_adicionales: dict | None = None) -> None:
+    extras = datos_adicionales if isinstance(datos_adicionales, dict) else {}
+    db_name = _safe_sql_identifier(LEGACY_AGENTES_DB, "registro_agentes")
+    table_name = _safe_sql_identifier(LEGACY_AGENTES_TABLE, "agentes")
+    db.execute(
+        text(
+            f"""
+            INSERT INTO `{db_name}`.`{table_name}`
+                (`ID`, `Nombre`, `alias`, `Ubicacion`, `FP`, `FC`, `Grupo`)
+            VALUES
+                (:id, :nombre, :alias, :ubicacion, :fp, :fc, :grupo)
+            ON DUPLICATE KEY UPDATE
+                `Nombre` = VALUES(`Nombre`),
+                `alias` = VALUES(`alias`),
+                `Ubicacion` = VALUES(`Ubicacion`),
+                `FP` = VALUES(`FP`),
+                `FC` = VALUES(`FC`),
+                `Grupo` = VALUES(`Grupo`)
+            """
+        ),
+        {
+            "id": int(agente_id),
+            "nombre": str(nombre or "").strip(),
+            "alias": str(extras.get("alias") or "").strip() or None,
+            "ubicacion": str(extras.get("ubicacion") or "").strip() or None,
+            "fp": str(extras.get("fp") or "").strip() or None,
+            "fc": str(extras.get("fc") or "").strip() or None,
+            "grupo": str(extras.get("grupo") or "").strip() or None,
+        },
+    )
+
+
+def _refresh_agent_qr_for_state(db: Session, agente: DatoImportado, request: Request | None = None) -> dict:
+    """Generar QR por agente: seguro si tiene linea activa, fallback por UUID si no."""
+    active_assignment = _active_assignment_for_agent(db, agente.id)
+    linea = active_assignment.linea if active_assignment and active_assignment.linea and active_assignment.linea.es_activa else None
+    public_base_url = config.get_public_base_url(request)
+
+    secure_token = None
+    qr_mode = "uuid_fallback"
+    if linea:
+        secure_token = _build_secure_qr_token(
+            agente_id=agente.id,
+            linea_id=linea.id,
+            linea_numero=linea.numero,
+        )
+        public_url = f"{public_base_url}/api/qr/public/verify-secure/{secure_token}"
+        qr_mode = "secure_line_bound"
+    else:
+        public_url = f"{public_base_url}/api/qr/public/verify/{agente.uuid}"
+
+    lineas_agente = _agent_active_lines(db, agente.id)
+    payload = {
+        "agente_id": agente.id,
+        "uuid": agente.uuid,
+        "nombre": agente.nombre,
+        "telefono": agente.telefono,
+        "numero_voip": _extract_voip(agente),
+        "tiene_asignacion": _has_assignment(agente) or bool(lineas_agente),
+        "lineas": lineas_agente,
+        "linea_activa": {
+            "linea_id": linea.id if linea else None,
+            "numero": linea.numero if linea else None,
+            "tipo": linea.tipo if linea else None,
+        } if linea else None,
+        "qr_mode": qr_mode,
+        "es_qr_seguro": bool(linea),
+        "secure_token": secure_token,
+        "public_url": public_url,
+    }
+
+    generator = QRGenerator()
+    filename = f"agente_{agente.id}_{'linea_'+str(linea.id) if linea else 'sin_linea'}_{agente.uuid}.png"
+    filepath = generator.generate_qr_from_text(public_url, filename)
+
+    agente.qr_filename = filename
+    agente.contenido_qr = json.dumps(payload, ensure_ascii=False)
+    db.add(agente)
+    db.flush()
+
+    return {**payload, "qr_filename": filename, "qr_path": filepath}
 
 
 def _has_assignment(dato: DatoImportado) -> bool:
@@ -646,7 +820,7 @@ async def registrar_pago_semanal(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Registrar o actualizar pago semanal por agente/número."""
+    """Registrar pago semanal con soporte de abonos y liquidacion total."""
     agente = db.query(DatoImportado).filter(
         DatoImportado.id == pago_in.agente_id,
         DatoImportado.es_activo.is_(True)
@@ -655,7 +829,22 @@ async def registrar_pago_semanal(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agente no encontrado")
 
     semana = monday_of_week(pago_in.semana_inicio)
-    monto_final = pago_in.monto if pago_in.monto and pago_in.monto > 0 else get_cuota_semanal(db)
+    resumen_prev = resumen_cobranza_agente(db, agente, semana)
+    cuota = float(resumen_prev["cuota_semanal"])
+    saldo_acumulado_prev = float(resumen_prev["saldo_acumulado"])
+
+    monto_final = float(pago_in.monto or 0)
+    if bool(pago_in.liquidar_total):
+        monto_final = saldo_acumulado_prev
+    elif monto_final <= 0 and pago_in.pagado:
+        monto_final = cuota
+
+    if monto_final <= 0 and saldo_acumulado_prev > 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Debes indicar un abono mayor a 0 o marcar liquidar_total")
+
+    telefono_final = str((pago_in.telefono or agente.telefono or NO_PHONE_VALUE)).strip()[:20] or NO_PHONE_VALUE
+    voip_final = str((pago_in.numero_voip or _extract_voip(agente) or "")).strip() or None
+
     pago = db.query(PagoSemanal).filter(
         PagoSemanal.agente_id == pago_in.agente_id,
         PagoSemanal.semana_inicio == semana
@@ -664,24 +853,24 @@ async def registrar_pago_semanal(
     if not pago:
         pago = PagoSemanal(
             agente_id=pago_in.agente_id,
-            telefono=pago_in.telefono,
-            numero_voip=pago_in.numero_voip,
+            telefono=telefono_final,
+            numero_voip=voip_final,
             semana_inicio=semana,
             monto=monto_final,
-            pagado=pago_in.pagado,
-            fecha_pago=datetime.utcnow() if pago_in.pagado else None,
+            pagado=monto_final >= cuota,
+            fecha_pago=datetime.utcnow() if monto_final > 0 else None,
             observaciones=pago_in.observaciones,
         )
         db.add(pago)
     else:
-        pago.telefono = pago_in.telefono
-        pago.numero_voip = pago_in.numero_voip
-        pago.monto = monto_final
-        pago.pagado = pago_in.pagado
-        pago.observaciones = pago_in.observaciones
-        pago.fecha_pago = datetime.utcnow() if pago_in.pagado else None
+        pago.telefono = telefono_final
+        pago.numero_voip = voip_final
+        pago.monto = float(pago.monto or 0) + float(monto_final)
+        pago.pagado = bool(pago.monto >= cuota)
+        pago.observaciones = pago_in.observaciones or pago.observaciones
+        pago.fecha_pago = datetime.utcnow() if monto_final > 0 else pago.fecha_pago
 
-    if pago_in.pagado:
+    if pago.pagado:
         alertas = db.query(AlertaPago).filter(
             AlertaPago.agente_id == pago_in.agente_id,
             AlertaPago.semana_inicio == semana,
@@ -693,6 +882,8 @@ async def registrar_pago_semanal(
 
     db.commit()
     db.refresh(pago)
+
+    resumen_after = resumen_cobranza_agente(db, agente, semana)
 
     active_assignment = _active_assignment_for_agent(db, agente.id)
     linea = active_assignment.linea if active_assignment and active_assignment.linea else None
@@ -707,14 +898,89 @@ async def registrar_pago_semanal(
         "telefono": pago.telefono,
         "numero_voip": pago.numero_voip,
         "semana_inicio": pago.semana_inicio.isoformat() if pago.semana_inicio else None,
+        "abono_registrado": float(monto_final),
         "monto": float(pago.monto or 0),
         "pagado": bool(pago.pagado),
         "fecha_pago": pago.fecha_pago.isoformat() if pago.fecha_pago else None,
         "observaciones": pago.observaciones,
+        "saldo_acumulado": float(resumen_after["saldo_acumulado"]),
+        "deuda_total": float(resumen_after["deuda_total"]),
+        "total_abonado": float(resumen_after["total_abonado"]),
+        "semanas_pendientes": int(resumen_after["semanas_pendientes"]),
         "recibo": {
             "token": recibo.token_recibo,
             "expira_en": recibo.expira_en.isoformat() if recibo.expira_en else None,
             "linea_numero": recibo.linea_numero,
+        },
+    }
+
+
+@router.put("/pagos/{pago_id}")
+async def editar_pago_semanal_admin(
+    pago_id: int,
+    payload: PagoSemanalAdminActualizar,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Permitir a administradores editar manualmente un pago semanal."""
+    require_admin_role(current_user, "Solo admin puede editar manualmente pagos")
+    pago = db.query(PagoSemanal).filter(PagoSemanal.id == pago_id).first()
+    if not pago:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pago no encontrado")
+
+    cuota = get_cuota_semanal(db)
+    if payload.monto is not None:
+        pago.monto = float(payload.monto)
+    if payload.pagado is not None:
+        pago.pagado = bool(payload.pagado)
+    else:
+        pago.pagado = bool((pago.monto or 0) >= cuota)
+    if payload.observaciones is not None:
+        pago.observaciones = payload.observaciones
+    pago.fecha_pago = datetime.utcnow() if pago.pagado else None
+
+    db.add(pago)
+    db.commit()
+    db.refresh(pago)
+
+    agente = db.query(DatoImportado).filter(DatoImportado.id == pago.agente_id).first()
+    resumen = resumen_cobranza_agente(db, agente, pago.semana_inicio) if agente else None
+    return {
+        "status": "success",
+        "data": {
+            "id": pago.id,
+            "agente_id": pago.agente_id,
+            "semana_inicio": pago.semana_inicio.isoformat() if pago.semana_inicio else None,
+            "monto": float(pago.monto or 0),
+            "pagado": bool(pago.pagado),
+            "fecha_pago": pago.fecha_pago.isoformat() if pago.fecha_pago else None,
+            "observaciones": pago.observaciones,
+            "saldo_acumulado": float((resumen or {}).get("saldo_acumulado", 0)),
+        },
+    }
+
+
+@router.get("/pagos/resumen/{agente_id}")
+async def resumen_pagos_agente(
+    agente_id: int,
+    semana: date | None = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Obtener resumen acumulado por agente para cobro y liquidaciones."""
+    agente = db.query(DatoImportado).filter(
+        DatoImportado.id == agente_id,
+        DatoImportado.es_activo.is_(True),
+    ).first()
+    if not agente:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agente no encontrado")
+    resumen = resumen_cobranza_agente(db, agente, semana)
+    return {
+        "status": "success",
+        "agente": {"id": agente.id, "nombre": agente.nombre, "uuid": agente.uuid},
+        "data": {
+            **resumen,
+            "semana_inicio": resumen["semana_inicio"].isoformat() if resumen.get("semana_inicio") else None,
         },
     }
 
@@ -747,6 +1013,7 @@ async def verificar_agente(
         PagoSemanal.agente_id == agente_id,
         PagoSemanal.semana_inicio == semana_ref
     ).first()
+    resumen_pago = resumen_cobranza_agente(db, agente, semana_ref)
     lineas_agente = _agent_active_lines(db, agente.id)
     tiene_asignacion = _has_assignment(agente) or bool(lineas_agente)
 
@@ -772,6 +1039,10 @@ async def verificar_agente(
             "pagado": bool(pago.pagado) if pago else False,
             "monto": float(pago.monto) if pago else 0.0,
             "cuota_semanal": get_cuota_semanal(db),
+            "deuda_total": float(resumen_pago["deuda_total"]),
+            "total_abonado": float(resumen_pago["total_abonado"]),
+            "saldo_acumulado": float(resumen_pago["saldo_acumulado"]),
+            "semanas_pendientes": int(resumen_pago["semanas_pendientes"]),
             "fecha_pago": pago.fecha_pago.isoformat() if pago and pago.fecha_pago else None,
             "observaciones": pago.observaciones if pago else None,
         }
@@ -914,11 +1185,26 @@ async def crear_agente_manual(
         ciudad=ciudad,
         pais=pais,
         datos_adicionales=json.dumps(datos_adicionales, ensure_ascii=False) if datos_adicionales else None,
+        estatus_codigo="ACTIVO",
         creado_por=current_user.get("id"),
         es_activo=True,
     )
     db.add(agente)
     db.flush()
+
+    try:
+        _sync_legacy_agente_row(
+            db,
+            agente_id=agente.id,
+            nombre=agente.nombre,
+            datos_adicionales=datos_adicionales,
+        )
+    except Exception as exc:
+        logger.exception("No se pudo sincronizar alta manual en registro_agentes.agentes")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="No fue posible guardar el agente en registro_agentes.agentes",
+        ) from exc
 
     asignacion_resumen = {"modo": modo, "asignada": False}
 
@@ -958,6 +1244,8 @@ async def crear_agente_manual(
 
     _set_agent_lada_preference(db, agente.id, lada_objetivo)
 
+    qr_payload = _refresh_agent_qr_for_state(db, agente)
+
     db.commit()
     db.refresh(agente)
 
@@ -970,6 +1258,11 @@ async def crear_agente_manual(
             "modo_asignacion": modo,
             "asignacion": asignacion_resumen,
             "lineas": _agent_active_lines(db, agente.id),
+            "qr": {
+                "public_url": qr_payload.get("public_url"),
+                "es_qr_seguro": bool(qr_payload.get("es_qr_seguro")),
+                "qr_mode": qr_payload.get("qr_mode"),
+            },
         },
     }
 
@@ -981,6 +1274,12 @@ async def listar_ladas(
     db: Session = Depends(get_db),
 ):
     """Listar ladas para filtros de asignacion y alta manual."""
+    try:
+        _sync_ladas_from_legacy_catalog(db)
+    except Exception:
+        # Si la tabla legacy no existe o no es accesible, mantener operación con catálogo local.
+        logger.warning("No se pudo sincronizar catalogo_ladas legado; se usa ladas_catalogo local")
+
     query = db.query(LadaCatalogo).filter(LadaCatalogo.es_activa.is_(True))
     if search:
         term = f"%{search.strip()}%"
@@ -994,6 +1293,7 @@ async def listar_ladas(
                 "id": row.id,
                 "codigo": row.codigo,
                 "nombre_region": row.nombre_region,
+                "source": "catalogo_ladas+local",
             }
             for row in rows
         ],
@@ -1174,6 +1474,7 @@ async def asignar_linea_a_agente(
 
     row = AgenteLineaAsignacion(agente_id=agente_id, linea_id=linea_id, es_activa=True)
     db.add(row)
+    _refresh_agent_qr_for_state(db, agente)
     db.commit()
     db.refresh(row)
     return {
@@ -1217,6 +1518,8 @@ async def liberar_linea(
 
     current.es_activa = False
     current.fecha_liberacion = datetime.utcnow()
+    if current.agente:
+        _refresh_agent_qr_for_state(db, current.agente)
     db.commit()
     return {
         "status": "success",
@@ -1577,7 +1880,7 @@ async def obtener_qr_agente(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Obtener payload y URL pública de QR firmado ligado a agente + linea activa."""
+    """Obtener QR por agente: seguro con linea activa, fallback UUID si aun no tiene linea."""
     agente = db.query(DatoImportado).filter(
         DatoImportado.id == agente_id,
         DatoImportado.es_activo.is_(True)
@@ -1585,48 +1888,10 @@ async def obtener_qr_agente(
     if not agente:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agente no encontrado")
 
-    active_assignment = _active_assignment_for_agent(db, agente.id)
-    if not active_assignment or not active_assignment.linea or not active_assignment.linea.es_activa:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="El agente no tiene una linea activa para emitir QR seguro",
-        )
-    linea = active_assignment.linea
-
-    public_base_url = config.get_public_base_url(request)
-    secure_token = _build_secure_qr_token(
-        agente_id=agente.id,
-        linea_id=linea.id,
-        linea_numero=linea.numero,
-    )
-    public_url = f"{public_base_url}/api/qr/public/verify-secure/{secure_token}"
-    lineas_agente = _agent_active_lines(db, agente.id)
-    payload = {
-        "agente_id": agente.id,
-        "uuid": agente.uuid,
-        "nombre": agente.nombre,
-        "telefono": agente.telefono,
-        "numero_voip": _extract_voip(agente),
-        "tiene_asignacion": _has_assignment(agente) or bool(lineas_agente),
-        "lineas": lineas_agente,
-        "linea_activa": {
-            "linea_id": linea.id,
-            "numero": linea.numero,
-            "tipo": linea.tipo,
-        },
-        "secure_token": secure_token,
-        "public_url": public_url,
-    }
-
-    generator = QRGenerator()
-    filename = f"agente_{agente.id}_linea_{linea.id}_{agente.uuid}.png"
-    filepath = generator.generate_qr_from_text(public_url, filename)
-    agente.qr_filename = filename
-    agente.contenido_qr = json.dumps(payload, ensure_ascii=False)
-    db.add(agente)
+    payload = _refresh_agent_qr_for_state(db, agente, request=request)
     db.commit()
 
-    return {"status": "success", "data": {**payload, "qr_filename": filename, "qr_path": filepath}}
+    return {"status": "success", "data": payload}
 
 
 @router.get("/agente/{agente_id}/qr/download")
@@ -1658,6 +1923,9 @@ async def verificar_publico_qr_seguro(
         PagoSemanal.agente_id == agente.id,
         PagoSemanal.semana_inicio == semana_ref,
     ).first()
+    resumen = resumen_cobranza_agente(db, agente, semana_ref)
+    app_url = config.get_public_base_url()
+    pago_url = f"{app_url}/?section=qr&agente_id={agente.id}&semana={semana_ref.isoformat()}&autoverify=1"
 
     payload = {
         "status": "success",
@@ -1673,11 +1941,17 @@ async def verificar_publico_qr_seguro(
         "pagado": bool(pago.pagado) if pago else False,
         "monto": float(pago.monto) if pago else 0.0,
         "fecha_pago": pago.fecha_pago.isoformat() if pago and pago.fecha_pago else None,
+        "deuda_total": float(resumen["deuda_total"]),
+        "total_abonado": float(resumen["total_abonado"]),
+        "saldo_acumulado": float(resumen["saldo_acumulado"]),
+        "semanas_pendientes": int(resumen["semanas_pendientes"]),
+        "pago_url": pago_url,
     }
     return _render_public_status_page(payload)
 
 
 @router.get("/public/verify/{uuid}", response_class=HTMLResponse)
+@router.get("/public/verify-uuid/{uuid}", response_class=HTMLResponse)
 async def verificar_publico_por_uuid(
     uuid: str,
     semana: date | None = Query(None),
@@ -1696,6 +1970,9 @@ async def verificar_publico_por_uuid(
         PagoSemanal.agente_id == agente.id,
         PagoSemanal.semana_inicio == semana_ref
     ).first()
+    resumen = resumen_cobranza_agente(db, agente, semana_ref)
+    app_url = config.get_public_base_url()
+    pago_url = f"{app_url}/?section=qr&agente_id={agente.id}&semana={semana_ref.isoformat()}&autoverify=1"
 
     payload = {
         "status": "success",
@@ -1710,6 +1987,11 @@ async def verificar_publico_por_uuid(
         "pagado": bool(pago.pagado) if pago else False,
         "monto": float(pago.monto) if pago else 0.0,
         "fecha_pago": pago.fecha_pago.isoformat() if pago and pago.fecha_pago else None,
+        "deuda_total": float(resumen["deuda_total"]),
+        "total_abonado": float(resumen["total_abonado"]),
+        "saldo_acumulado": float(resumen["saldo_acumulado"]),
+        "semanas_pendientes": int(resumen["semanas_pendientes"]),
+        "pago_url": pago_url,
     }
     return _render_public_status_page(payload)
 
@@ -1733,6 +2015,9 @@ async def verificar_publico_por_id(
         PagoSemanal.agente_id == agente.id,
         PagoSemanal.semana_inicio == semana_ref
     ).first()
+    resumen = resumen_cobranza_agente(db, agente, semana_ref)
+    app_url = config.get_public_base_url()
+    pago_url = f"{app_url}/?section=qr&agente_id={agente.id}&semana={semana_ref.isoformat()}&autoverify=1"
 
     payload = {
         "status": "success",
@@ -1747,5 +2032,10 @@ async def verificar_publico_por_id(
         "pagado": bool(pago.pagado) if pago else False,
         "monto": float(pago.monto) if pago else 0.0,
         "fecha_pago": pago.fecha_pago.isoformat() if pago and pago.fecha_pago else None,
+        "deuda_total": float(resumen["deuda_total"]),
+        "total_abonado": float(resumen["total_abonado"]),
+        "saldo_acumulado": float(resumen["saldo_acumulado"]),
+        "semanas_pendientes": int(resumen["semanas_pendientes"]),
+        "pago_url": pago_url,
     }
     return _render_public_status_page(payload)
