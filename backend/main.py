@@ -26,6 +26,7 @@ from app.api.usuarios import router as usuarios_router
 from app.api.auditoria import router as auditoria_router
 from app.api.qr import router as qr_router
 from app.api.export import router as export_router
+from app.api.dashboard import router as dashboard_router
 from app.security import get_current_user
 from app.utils.pagos import generar_alertas_miercoles_pendientes
 from app.utils.backups import create_weekly_backup
@@ -170,6 +171,7 @@ app.include_router(usuarios_router)
 app.include_router(auditoria_router)
 app.include_router(qr_router)
 app.include_router(export_router)
+app.include_router(dashboard_router)
 
 
 # HEALTH CHECK

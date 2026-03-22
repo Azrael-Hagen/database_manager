@@ -102,6 +102,12 @@
             <!-- Sección de Dashboard -->
             <section id="dashboardSection" class="panel" style="display: none;">
                 <h1>Dashboard</h1>
+                <div class="dashboard-banner" role="img" aria-label="Banner tecnológico de fondo">
+                    <div class="dashboard-banner-overlay">
+                        <h2>Centro Operativo</h2>
+                        <p>Monitoreo en tiempo real de agentes, líneas y estado de operación.</p>
+                    </div>
+                </div>
                 <div class="live-strip">
                     <span id="liveIndicator" class="live-dot"></span>
                     <span>Actualización en tiempo real activa</span>
@@ -125,8 +131,12 @@
                 </div>
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <h3>Registros Totales</h3>
+                        <h3>Registros en BD</h3>
                         <p id="totalRegistros" class="stat-value">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Agentes Activos</h3>
+                        <p id="totalActivos" class="stat-value">0</p>
                     </div>
                     <div class="stat-card">
                         <h3>Importaciones</h3>
@@ -137,8 +147,63 @@
                         <p id="totalQR" class="stat-value">0</p>
                     </div>
                     <div class="stat-card">
-                        <h3>Usuarios</h3>
-                        <p id="totalUsuarios" class="stat-value">0</p>
+                        <h3>Usuarios en Línea</h3>
+                        <p id="totalUsuariosOnline" class="stat-value">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Registros Inactivos</h3>
+                        <p id="totalInactivos" class="stat-value">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>QR Pendientes</h3>
+                        <p id="totalQrPendientes" class="stat-value">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Alertas de Pago</h3>
+                        <p id="totalAlertasPago" class="stat-value">0</p>
+                    </div>
+                </div>
+                <div class="dashboard-grid" style="margin-top: 16px;">
+                    <div class="dashboard-card dashboard-card-wide">
+                        <h3>Alertas operativas</h3>
+                        <p id="alertSummary" class="hint">Sin datos</p>
+                        <div id="alertsList" class="dashboard-list"></div>
+                    </div>
+                    <div class="dashboard-card">
+                        <h3>Usuarios en línea (30 min)</h3>
+                        <p id="usuariosOnlineResumen" class="hint">Sin datos</p>
+                        <div id="usuariosOnlineList" class="dashboard-list"></div>
+                    </div>
+                    <div class="dashboard-card">
+                        <h3>Actividad de importaciones</h3>
+                        <p id="importStatsResumen" class="hint">Sin datos</p>
+                        <div id="importRecentList" class="dashboard-list"></div>
+                    </div>
+                    <div class="dashboard-card">
+                        <h3>Estado de base activa</h3>
+                        <p id="dbResumen" class="hint">Sin datos</p>
+                        <div id="dbInfoList" class="dashboard-list"></div>
+                    </div>
+                    <div class="dashboard-card">
+                        <h3>Agentes recientes</h3>
+                        <p id="recentAgentsSummary" class="hint">Sin datos</p>
+                        <div id="recentAgentsList" class="dashboard-list"></div>
+                    </div>
+                    <div class="dashboard-card dashboard-card-wide">
+                        <h3>Actividad de 7 días</h3>
+                        <p id="activitySummary" class="hint">Sin datos</p>
+                        <div id="activityChart" class="activity-chart"></div>
+                    </div>
+                    <div class="dashboard-card">
+                        <h3>Acciones rápidas</h3>
+                        <p class="hint">Atajos operativos directos</p>
+                        <div class="dashboard-actions">
+                            <button type="button" class="btn" onclick="loadSection('importar')">Importar Archivo</button>
+                            <button type="button" class="btn btn-secondary" onclick="loadSection('datos')">Ver Datos</button>
+                            <button type="button" class="btn btn-secondary" onclick="loadSection('altasAgentes')">Alta de Agente</button>
+                            <button type="button" class="btn btn-secondary" onclick="loadSection('qr')">Pagos y QR</button>
+                            <button type="button" class="btn btn-secondary" onclick="loadSection('databases')">SQL y Estructura</button>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -151,9 +216,21 @@
                         <option value="">-- Base de datos --</option>
                     </select>
                     <input type="text" id="searchInput" placeholder="Buscar..." onkeyup="buscarDatos()">
+                    <select id="datosOrderBy" onchange="cargarTodosLosDatos()">
+                        <option value="id">Ordenar por ID</option>
+                        <option value="nombre">Ordenar por Nombre</option>
+                        <option value="fecha_creacion" selected>Ordenar por Fecha</option>
+                        <option value="telefono">Ordenar por Teléfono</option>
+                        <option value="email">Ordenar por Email</option>
+                    </select>
+                    <select id="datosOrderDir" onchange="cargarTodosLosDatos()">
+                        <option value="desc" selected>Descendente</option>
+                        <option value="asc">Ascendente</option>
+                    </select>
                     <input type="text" id="singleSearchInput" placeholder="ID o UUID exacto">
                     <button onclick="consultarUnDato()" class="btn btn-secondary">Consultar Uno</button>
                     <button onclick="cargarTodosLosDatos()" class="btn">Ver Todos</button>
+                    <button id="purgeInactiveBtn" onclick="purgarDatosInactivos()" class="btn btn-danger" style="display:none;">Purgar Inactivos</button>
                     <select id="tablasSelect" onchange="cambiarTabla()">
                         <option value="">-- Selecciona tabla --</option>
                     </select>
@@ -168,6 +245,19 @@
                 <div class="db-actions">
                     <button onclick="cargarDatabases()" class="btn">Cargar Bases de Datos</button>
                     <button onclick="abrirQueryPanel()" class="btn btn-secondary">Herramientas SQL Avanzadas</button>
+                    <button onclick="cargarResumenMantenimiento()" class="btn btn-secondary">Depurar Esquema</button>
+                </div>
+                <div id="dbMaintenancePanel" class="card" style="display:none;margin-top:16px;padding:14px;border:1px solid #d8e6f4;border-radius:12px;background:#f9fcff;color:#173049;">
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                        <select id="maintenanceDatabaseSelect">
+                            <option value="">-- Base de datos para mantenimiento --</option>
+                        </select>
+                        <button type="button" class="btn" onclick="cargarResumenMantenimiento()">Analizar</button>
+                        <button type="button" class="btn btn-secondary" onclick="crearVistasUtilesUI()">Crear Vistas Útiles</button>
+                        <button type="button" class="btn btn-danger" onclick="depurarObjetosTemporales()">Eliminar Temporales</button>
+                    </div>
+                    <p class="hint" style="margin-top:10px;">La depuración automática solo elimina objetos temporales/de prueba claramente identificados. No toca tablas operativas base y solo puede ejecutarse desde la máquina servidor.</p>
+                    <div id="dbMaintenanceResult" style="margin-top:12px;"></div>
                 </div>
                 <div id="databasesContainer" class="table-responsive"></div>
                 
@@ -257,7 +347,6 @@
                         <input type="text" id="agenteFpInput" placeholder="FP">
                         <input type="text" id="agenteFcInput" placeholder="FC">
                         <input type="text" id="agenteGrupoInput" placeholder="Grupo">
-                        <input type="text" id="agenteEmpresaInput" placeholder="Empresa">
                     </div>
                     <div class="search-bar" style="margin-top:8px;">
                         <select id="agenteModoAsignacion" onchange="cambiarModoAsignacionAgente()">
@@ -320,7 +409,7 @@
                 <p class="hint">Esta pantalla concentra mantenimiento operativo: busca un agente activo, corrige datos, libera líneas si hace falta, revisa su QR y aplica la baja suave sin salir del flujo.</p>
 
                 <div class="search-bar">
-                    <input type="text" id="gestionAgenteSearch" placeholder="Buscar por nombre, empresa o teléfono" onkeyup="cargarAgentesGestion(false)">
+                    <input type="text" id="gestionAgenteSearch" placeholder="Buscar por nombre o teléfono" onkeyup="cargarAgentesGestion(false)">
                     <button type="button" class="btn" onclick="cargarAgentesGestion()">Buscar / Refrescar</button>
                 </div>
 
@@ -340,7 +429,6 @@
                             <input type="text" id="editarAgenteFp" placeholder="FP">
                             <input type="text" id="editarAgenteFc" placeholder="FC">
                             <input type="text" id="editarAgenteGrupo" placeholder="Grupo">
-                            <input type="text" id="editarAgenteEmpresa" placeholder="Empresa">
                         </div>
                         <div class="search-bar" style="margin-top:8px;">
                             <input type="text" id="editarAgenteVoip" placeholder="VoIP">
@@ -443,7 +531,6 @@
                 <div class="search-bar">
                     <input type="date" id="reporteSemanaInput">
                     <input type="text" id="reporteAgenteInput" placeholder="Filtrar por agente">
-                    <input type="text" id="reporteEmpresaInput" placeholder="Filtrar por empresa">
                     <button type="button" class="btn" onclick="cargarReporteSemanal()">Ver Reporte</button>
                     <button type="button" class="btn btn-secondary" onclick="procesarAlertasPagoManual()">Procesar Alertas</button>
                     <button type="button" class="btn btn-secondary" onclick="generarBackupManual()">Respaldar Base</button>
@@ -482,7 +569,21 @@
                 <div class="user-actions">
                     <button onclick="mostrarCrearUsuario()" class="btn">Crear Usuario</button>
                     <button onclick="cargarUsuarios()" class="btn btn-secondary">Actualizar Lista</button>
+                    <button onclick="cargarMantenimientoUsuarios()" class="btn btn-secondary">Analizar Depuración</button>
+                    <button onclick="depurarUsuariosTemporales()" class="btn btn-danger">Purgar Temporales</button>
+                    <select id="usuariosOrderBy" onchange="cargarUsuarios()">
+                        <option value="fecha_creacion" selected>Fecha</option>
+                        <option value="username">Usuario</option>
+                        <option value="rol">Rol</option>
+                        <option value="es_activo">Activo</option>
+                    </select>
+                    <select id="usuariosOrderDir" onchange="cargarUsuarios()">
+                        <option value="desc" selected>Descendente</option>
+                        <option value="asc">Ascendente</option>
+                    </select>
                 </div>
+                <div id="usuariosMaintenanceContainer" class="table-responsive" style="margin-top: 10px;"></div>
+                <p class="hint" style="margin-top:8px;">La depuración de usuarios temporales solo está permitida desde la máquina servidor.</p>
                 <div id="usuariosContainer" class="table-responsive"></div>
             </section>
 
@@ -522,7 +623,12 @@
                             </div>
                         </div>
                         <div class="form-group">
-                            <label><input type="checkbox" id="usuarioEsAdmin"> Administrador</label>
+                            <label>Rol:</label>
+                            <select id="usuarioRol">
+                                <option value="viewer">Solo consulta</option>
+                                <option value="capture">Altas únicamente</option>
+                                <option value="admin">Control total</option>
+                            </select>
                         </div>
                         <div class="form-group">
                             <label><input type="checkbox" id="usuarioEsActivo" checked> Activo</label>
@@ -580,9 +686,28 @@
         <p>&copy; 2026 Database Manager. Versión 1.0.0 - PRODUCCIÓN</p>
     </footer>
 
+    <button type="button" id="scrollTopBtn" class="scroll-top-btn" onclick="scrollToTop()" aria-label="Volver arriba" title="Volver arriba">
+        ↑
+    </button>
+
     <!-- Librerías externas -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode.js/1.5.3/qrcode.min.js"></script>
-    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <!-- QR Code Library - Multiple CDNs for fallback -->
+    <script>
+        // Intentar cargar desde múltiples CDNs
+        var qrcodeLoaded = false;
+        window.QRCode = window.QRCode || null;
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode.js/1.5.3/qrcode.min.js" onload="qrcodeLoaded=true;"></script>
+    <script>
+        // Fallback si el primer CDN falla
+        if (!window.QRCode) {
+            var script = document.createElement('script');
+            script.src = 'https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js';
+            script.onload = function() { qrcodeLoaded = true; };
+            document.head.appendChild(script);
+        }
+    </script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8" type="text/javascript"></script>
     
     <script src="js/api-client.js"></script>
     <script src="js/main.js"></script>

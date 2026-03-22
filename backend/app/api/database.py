@@ -1,10 +1,10 @@
 """Endpoints para gestión de bases de datos."""
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, UploadFile, File, Form, Request
 from sqlalchemy import text, inspect
 from sqlalchemy.orm import Session
 from app.database.orm import get_db
-from app.security import get_current_user
+from app.security import get_current_user, require_admin_role, require_capture_role, require_server_machine_request
 import logging
 import json
 import csv
@@ -14,6 +14,8 @@ import re
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/databases", tags=["Database Management"])
+
+TEMP_OBJECT_PREFIXES = ("tmp_", "temp_", "test_", "ui_temp_", "debug_", "backup_tmp_")
 
 
 def _safe_ident(name: str, field: str = "identificador") -> str:
@@ -84,6 +86,8 @@ async def get_table_data(
     table_name: str,
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    order_by: str | None = Query(None),
+    direction: str = Query("asc"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -98,9 +102,14 @@ async def get_table_data(
         # Obtener estructura de la tabla
         result = db.execute(text(f"DESCRIBE `{table_name}`"))
         columns = [row[0] for row in result.fetchall()]
+
+        direction_value = (direction or "asc").strip().lower()
+        direction_sql = "DESC" if direction_value == "desc" else "ASC"
+        safe_order = order_by if order_by in columns else None
+        order_sql = f" ORDER BY `{safe_order}` {direction_sql}" if safe_order else ""
         
         # Obtener datos
-        result = db.execute(text(f"SELECT * FROM `{table_name}` LIMIT {limit} OFFSET {offset}"))
+        result = db.execute(text(f"SELECT * FROM `{table_name}`{order_sql} LIMIT {limit} OFFSET {offset}"))
         rows = [dict(zip(columns, row)) for row in result.fetchall()]
         
         # Contar total de registros
@@ -116,7 +125,9 @@ async def get_table_data(
             "data": rows,
             "total": total,
             "limit": limit,
-            "offset": offset
+            "offset": offset,
+            "order_by": safe_order,
+            "direction": direction_sql.lower(),
         }
     except Exception as e:
         logger.error(f"Error obteniendo datos de tabla {table_name}: {e}")
@@ -144,6 +155,12 @@ async def execute_query(
                 detail="Debe enviar una consulta SQL"
             )
 
+        is_select = str(sql_query).strip().upper().startswith("SELECT")
+        if is_select:
+            pass
+        else:
+            require_admin_role(current_user, "Solo administradores pueden ejecutar SQL de modificación")
+
         logger.info(f"Usuario {current_user['username']} ejecutando query en BD {db_name}: {str(sql_query)[:100]}...")
         
         # Cambiar a la base de datos
@@ -153,7 +170,7 @@ async def execute_query(
         result = db.execute(text(sql_query))
         
         # Si es SELECT, devolver resultados
-        if sql_query.strip().upper().startswith("SELECT"):
+        if is_select:
             columns = result.keys()
             rows = [dict(zip(columns, row)) for row in result.fetchall()]
             logger.info(f"Query SELECT ejecutada, {len(rows)} filas retornadas")
@@ -174,6 +191,9 @@ async def execute_query(
                 "query": sql_query,
                 "message": "Query ejecutada exitosamente"
             }
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         logger.error(f"Error ejecutando query: {e}")
         db.rollback()
@@ -194,6 +214,7 @@ async def create_table(
     """Crear una nueva tabla."""
     db_name = _safe_ident(db_name, "Base de datos")
     table_name = _safe_ident(table_name, "Tabla")
+    require_admin_role(current_user, "Solo administradores pueden crear tablas")
     try:
         logger.info(f"Usuario {current_user['username']} creando tabla {table_name} en BD {db_name}")
         
@@ -230,6 +251,7 @@ async def drop_table(
     """Eliminar una tabla."""
     db_name = _safe_ident(db_name, "Base de datos")
     table_name = _safe_ident(table_name, "Tabla")
+    require_admin_role(current_user, "Solo administradores pueden eliminar tablas")
     try:
         logger.info(f"Usuario {current_user['username']} eliminando tabla {table_name} en BD {db_name}")
         
@@ -273,6 +295,7 @@ async def import_file_to_database(
     db: Session = Depends(get_db)
 ):
     """Importar CSV/TXT/DAT/TSV a una tabla en la base de datos indicada."""
+    require_capture_role(current_user)
     # Validate file extension
     fname = file.filename or ''
     ext = os.path.splitext(fname.lower())[1]
@@ -400,11 +423,7 @@ async def drop_database(
 ):
     """Eliminar una base de datos completa (solo administradores)."""
     db_name = _safe_ident(db_name, "Base de datos")
-    if not current_user.get('es_admin', False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Solo administradores pueden eliminar bases de datos"
-        )
+    require_admin_role(current_user, "Solo administradores pueden eliminar bases de datos")
 
     from app.config import config as app_config
     if db_name.lower() in _PROTECTED_DATABASES or db_name == app_config.DB_NAME:
@@ -466,6 +485,7 @@ async def create_view(
 ):
     """Crear una vista SQL (temporal de trabajo) en la BD indicada."""
     db_name = _safe_ident(db_name, "Base de datos")
+    require_admin_role(current_user, "Solo administradores pueden crear vistas")
     view_name = _safe_ident((payload or {}).get("view_name", ""), "Vista")
     select_query = str((payload or {}).get("select_query", "")).strip()
     or_replace = bool((payload or {}).get("or_replace", True))
@@ -504,6 +524,7 @@ async def drop_view(
     """Eliminar una vista de una base de datos específica."""
     db_name = _safe_ident(db_name, "Base de datos")
     view_name = _safe_ident(view_name, "Vista")
+    require_admin_role(current_user, "Solo administradores pueden eliminar vistas")
     try:
         db.execute(text(f"USE `{db_name}`"))
         db.execute(text(f"DROP VIEW `{view_name}`"))
@@ -519,3 +540,156 @@ async def drop_view(
         db.rollback()
         logger.error(f"Error eliminando vista {db_name}.{view_name}: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error eliminando vista: {str(e)}")
+
+
+@router.get("/{db_name}/maintenance/overview")
+async def maintenance_overview(
+    db_name: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Resumen de depuración de tablas y vistas para administradores."""
+    db_name = _safe_ident(db_name, "Base de datos")
+    require_admin_role(current_user, "Solo administradores pueden depurar el esquema")
+    db.execute(text(f"USE `{db_name}`"))
+
+    objects = db.execute(
+        text(
+            """
+            SELECT table_name, table_type
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+            ORDER BY table_type, table_name
+            """
+        )
+    ).mappings().all()
+    protected = {
+        "usuarios", "datos_importados", "import_logs", "auditoria_acciones", "config_sistema",
+        "pagos_semanales", "lineas_telefonicas", "agente_linea_asignaciones", "alertas_pago",
+        "ladas_catalogo", "agente_lada_preferencias", "esquemas_base_datos"
+    }
+    recommendations = []
+    rows = []
+    for item in objects:
+        name = item["table_name"]
+        table_type = item["table_type"]
+        row_count = None
+        if table_type == "BASE TABLE":
+            try:
+                row_count = int(db.execute(text(f"SELECT COUNT(*) FROM `{name}`")).scalar() or 0)
+            except Exception:
+                row_count = None
+        is_temp = name.lower().startswith(TEMP_OBJECT_PREFIXES)
+        is_protected = name in protected or name.startswith("vw_")
+        rows.append({
+            "name": name,
+            "type": table_type,
+            "row_count": row_count,
+            "is_protected": is_protected,
+            "is_temp_candidate": bool(is_temp),
+        })
+        if is_temp and not is_protected:
+            recommendations.append(f"Eliminar objeto temporal: {name}")
+
+    useful_views = ["vw_agentes_qr_estado", "vw_usuarios_roles", "vw_pagos_pendientes"]
+    return {
+        "status": "success",
+        "database": db_name,
+        "objects": rows,
+        "recommended_actions": recommendations,
+        "useful_views_expected": useful_views,
+    }
+
+
+@router.post("/{db_name}/maintenance/useful-views")
+async def create_useful_views(
+    db_name: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Crear o refrescar vistas operativas utiles."""
+    db_name = _safe_ident(db_name, "Base de datos")
+    require_admin_role(current_user, "Solo administradores pueden crear vistas útiles")
+    try:
+        db.execute(text(f"USE `{db_name}`"))
+        statements = {
+            "vw_agentes_qr_estado": """
+                CREATE OR REPLACE VIEW `vw_agentes_qr_estado` AS
+                SELECT id, uuid, nombre, telefono, COALESCE(es_activo, 1) AS es_activo,
+                       CASE WHEN qr_filename IS NOT NULL AND qr_filename <> '' THEN 1 ELSE 0 END AS tiene_qr,
+                       fecha_creacion
+                FROM datos_importados
+            """,
+            "vw_usuarios_roles": """
+                CREATE OR REPLACE VIEW `vw_usuarios_roles` AS
+                SELECT id, username, email, nombre_completo, rol, es_activo, fecha_creacion, fecha_ultima_sesion
+                FROM usuarios
+            """,
+            "vw_pagos_pendientes": """
+                CREATE OR REPLACE VIEW `vw_pagos_pendientes` AS
+                SELECT p.id, p.agente_id, d.nombre, p.telefono, p.numero_voip, p.semana_inicio, p.monto, p.pagado,
+                       p.fecha_pago, CASE WHEN a.id IS NULL THEN 0 ELSE 1 END AS alerta_emitida
+                FROM pagos_semanales p
+                LEFT JOIN datos_importados d ON d.id = p.agente_id
+                LEFT JOIN alertas_pago a ON a.agente_id = p.agente_id AND a.semana_inicio = p.semana_inicio AND a.atendida = 0
+                WHERE COALESCE(p.pagado, 0) = 0
+            """,
+        }
+        created = []
+        for name, sql in statements.items():
+            db.execute(text(sql))
+            created.append(name)
+        db.commit()
+        return {"status": "success", "database": db_name, "views": created, "message": "Vistas útiles creadas/actualizadas"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creando vistas útiles: {str(e)}")
+
+
+@router.post("/{db_name}/maintenance/purge-temporary")
+async def purge_temporary_objects(
+    db_name: str,
+    request: Request,
+    include_empty: bool = Query(False),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Eliminar tablas y vistas temporales o de prueba detectadas de forma segura."""
+    db_name = _safe_ident(db_name, "Base de datos")
+    require_admin_role(current_user, "Solo administradores pueden depurar tablas y vistas")
+    require_server_machine_request(request)
+    db.execute(text(f"USE `{db_name}`"))
+    objects = db.execute(
+        text(
+            """
+            SELECT table_name, table_type
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+            ORDER BY table_type, table_name
+            """
+        )
+    ).mappings().all()
+
+    dropped = []
+    for item in objects:
+        name = item["table_name"]
+        table_type = item["table_type"]
+        lower_name = name.lower()
+        should_drop = lower_name.startswith(TEMP_OBJECT_PREFIXES)
+        if include_empty and table_type == "BASE TABLE" and not should_drop:
+            row_count = int(db.execute(text(f"SELECT COUNT(*) FROM `{name}`")).scalar() or 0)
+            should_drop = row_count == 0 and lower_name not in {
+                "usuarios", "datos_importados", "import_logs", "auditoria_acciones", "config_sistema",
+                "pagos_semanales", "lineas_telefonicas", "agente_linea_asignaciones", "alertas_pago",
+                "ladas_catalogo", "agente_lada_preferencias", "esquemas_base_datos"
+            }
+        if not should_drop:
+            continue
+        if table_type == "VIEW":
+            db.execute(text(f"DROP VIEW `{name}`"))
+        else:
+            db.execute(text(f"DROP TABLE `{name}`"))
+        dropped.append(name)
+
+    db.commit()
+    return {"status": "success", "database": db_name, "dropped": dropped, "message": f"Se eliminaron {len(dropped)} objetos temporales"}

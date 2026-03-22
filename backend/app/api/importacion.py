@@ -15,7 +15,7 @@ from app.database.repositorios import RepositorioImportLog, RepositorioDatoImpor
 from app.models import ImportLog
 from app.importers import CSVImporter, ExcelImporter, TextImporter
 from app.qr import QRGenerator
-from app.security import get_current_user
+from app.security import get_current_user, require_capture_role
 from app.config import config
 
 logger = logging.getLogger(__name__)
@@ -205,6 +205,7 @@ async def importar_csv(
     request: Request = None
 ):
     """Importar archivo CSV."""
+    require_capture_role(current_user)
     try:
         archivo_subido = archivo or file
         if not archivo_subido:
@@ -267,6 +268,7 @@ async def importar_excel(
     db: Session = Depends(get_db)
 ):
     """Importar archivo Excel."""
+    require_capture_role(current_user)
     try:
         archivo_subido = archivo or file
         if not archivo_subido:
@@ -328,6 +330,7 @@ async def importar_txt(
     db: Session = Depends(get_db)
 ):
     """Importar archivo TXT delimitado."""
+    require_capture_role(current_user)
     archivo_subido = archivo or file
     if not archivo_subido:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Debe enviar un archivo")
@@ -371,6 +374,7 @@ async def importar_dat(
     db: Session = Depends(get_db)
 ):
     """Importar archivo DAT delimitado."""
+    require_capture_role(current_user)
     return await importar_txt(
         archivo=archivo,
         file=file,

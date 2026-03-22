@@ -6,6 +6,7 @@ from sqlalchemy.pool import StaticPool
 import logging
 from app.config import config
 from app.models import Base
+from app.security import ROLE_ADMIN, ROLE_VIEWER
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +25,78 @@ def init_db():
     """Crear todas las tablas."""
     try:
         Base.metadata.create_all(bind=engine)
+        _ensure_core_schema_updates()
         logger.info("Tablas de base de datos creadas/verificadas")
     except Exception as e:
         logger.error(f"Error creando tablas: {e}")
         raise
+
+
+def _ensure_core_schema_updates():
+    """Aplicar ajustes de esquema ligeros requeridos por nuevas funciones."""
+    with engine.begin() as connection:
+        role_column_exists = connection.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'usuarios'
+                  AND column_name = 'rol'
+                """
+            )
+        ).scalar()
+        if not role_column_exists:
+            connection.execute(text("ALTER TABLE `usuarios` ADD COLUMN `rol` VARCHAR(20) NOT NULL DEFAULT 'viewer'"))
+            connection.execute(text("CREATE INDEX `ix_usuarios_rol` ON `usuarios` (`rol`)"))
+
+        connection.execute(
+            text(
+                """
+                UPDATE usuarios
+                SET rol = CASE
+                    WHEN COALESCE(es_admin, 0) = 1 THEN :admin_role
+                    WHEN rol IS NULL OR rol = '' THEN :viewer_role
+                    ELSE LOWER(rol)
+                END
+                """
+            ),
+            {"admin_role": ROLE_ADMIN, "viewer_role": ROLE_VIEWER},
+        )
+
+        connection.execute(
+            text(
+                """
+                CREATE OR REPLACE VIEW vw_agentes_qr_estado AS
+                SELECT
+                    id,
+                    uuid,
+                    nombre,
+                    telefono,
+                    COALESCE(es_activo, 1) AS es_activo,
+                    CASE WHEN qr_filename IS NOT NULL AND qr_filename <> '' THEN 1 ELSE 0 END AS tiene_qr,
+                    fecha_creacion
+                FROM datos_importados
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE OR REPLACE VIEW vw_usuarios_roles AS
+                SELECT
+                    id,
+                    username,
+                    email,
+                    nombre_completo,
+                    rol,
+                    es_activo,
+                    fecha_creacion,
+                    fecha_ultima_sesion
+                FROM usuarios
+                """
+            )
+        )
 
 
 def get_db() -> Session:

@@ -20,6 +20,7 @@ class Usuario(Base):
     nombre_completo = Column(String(255))
     es_activo = Column(Boolean, default=True)
     es_admin = Column(Boolean, default=False)
+    rol = Column(String(20), default="viewer", nullable=False, index=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
     fecha_ultima_sesion = Column(DateTime)
     

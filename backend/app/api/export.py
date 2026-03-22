@@ -1,4 +1,4 @@
-"""Endpoints for data export, schema management, and PBX integration."""
+"""Endpoints for data export, schema management, and backup management."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -19,10 +19,6 @@ from app.utils.exports import (
     export_datos_importados_to_csv,
     export_to_excel,
     export_schema_to_json,
-)
-from app.utils.pbx_integration import (
-    get_pbx_extensions,
-    sync_extensions_to_line_catalog,
 )
 from app.utils.backup_manager import BackupManager
 
@@ -299,57 +295,6 @@ def _compare_schemas(prev: dict, curr: dict) -> dict:
             })
     
     return changes
-
-
-# ===== INTEGRACIÓN CON PBX =====
-
-@router.get("/pbx/extensions")
-async def list_pbx_extensions(
-    pbx_db: str = Query("asterisk"),
-    search: Optional[str] = Query(None),
-    limit: int = Query(100, ge=1, le=1000),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """List available extensions from PBX database."""
-    try:
-        logger.info(f"Listing PBX extensions from {pbx_db}")
-        
-        extensions = await get_pbx_extensions(db, pbx_db, search, limit)
-        
-        return {
-            "status": "success",
-            "pbx_db": pbx_db,
-            "data": extensions,
-            "count": len(extensions),
-        }
-    
-    except Exception as e:
-        logger.error(f"Error listing PBX extensions: {e}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-
-@router.post("/pbx/sync-extensions")
-async def sync_pbx_extensions(
-    pbx_db: str = Query("asterisk"),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Sync PBX extensions into lineas_telefonicas table."""
-    try:
-        logger.info(f"{current_user['username']} syncing extensions from {pbx_db}")
-        
-        result = sync_extensions_to_line_catalog(db, pbx_db)
-        
-        return {
-            "status": "success",
-            "data": result,
-            "message": f"Sync completed: {result['created']} created, {result['updated']} updated, {result['skipped']} skipped",
-        }
-    
-    except Exception as e:
-        logger.error(f"Error syncing extensions: {e}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 # ===== GESTIÓN AVANZADA DE BACKUPS =====

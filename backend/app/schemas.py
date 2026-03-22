@@ -12,6 +12,7 @@ class UsuarioBase(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: EmailStr
     nombre_completo: Optional[str] = Field(None, max_length=255)
+    rol: str = Field("viewer", pattern="^(viewer|capture|admin)$")
 
 
 class UsuarioCrear(UsuarioBase):
@@ -19,6 +20,15 @@ class UsuarioCrear(UsuarioBase):
     password: str = Field(..., min_length=8, max_length=100)
     es_admin: bool = False
     es_activo: bool = True
+
+    @validator('rol', pre=True, always=True)
+    def normalize_role_for_create(cls, value, values):
+        role = str(value or "").strip().lower()
+        if not role:
+            role = "admin" if values.get('es_admin') else "viewer"
+        if role not in {"viewer", "capture", "admin"}:
+            raise ValueError('Rol inválido')
+        return role
 
     @validator('password')
     def password_strength(cls, v):
@@ -39,6 +49,16 @@ class UsuarioActualizar(BaseModel):
     nombre_completo: Optional[str] = Field(None, max_length=255)
     es_activo: Optional[bool] = None
     es_admin: Optional[bool] = None
+    rol: Optional[str] = Field(None, pattern="^(viewer|capture|admin)$")
+
+    @validator('rol')
+    def normalize_role_for_update(cls, value):
+        if value is None:
+            return value
+        role = str(value).strip().lower()
+        if role not in {"viewer", "capture", "admin"}:
+            raise ValueError('Rol inválido')
+        return role
 
 
 class Usuario(UsuarioBase):

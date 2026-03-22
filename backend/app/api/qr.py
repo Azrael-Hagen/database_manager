@@ -22,7 +22,7 @@ from app.models import (
     PagoSemanal,
 )
 from app.schemas import PagoSemanalCrear, PagoSemanalRespuesta
-from app.security import get_current_user
+from app.security import get_current_user, require_admin_role, require_capture_role
 from app.qr import QRGenerator
 from app.config import config
 from app.utils.backups import (
@@ -561,6 +561,7 @@ async def crear_agente_manual(
     db: Session = Depends(get_db),
 ):
     """Crear agente manualmente y asignar linea de forma opcional."""
+    require_capture_role(current_user)
     nombre = str((payload or {}).get("nombre") or "").strip()
     if not nombre:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nombre es requerido")
@@ -691,6 +692,7 @@ async def crear_o_reactivar_lada(
     db: Session = Depends(get_db),
 ):
     """Crear o reactivar una lada de catalogo."""
+    require_capture_role(current_user)
     codigo = _normalize_lada((payload or {}).get("codigo"))
     nombre_region = str((payload or {}).get("nombre_region") or "").strip() or None
 
@@ -781,6 +783,7 @@ async def crear_linea(
     db: Session = Depends(get_db),
 ):
     """Crear o reactivar una linea en inventario."""
+    require_capture_role(current_user)
     numero = _safe_line_number((payload or {}).get("numero", ""))
     tipo = str((payload or {}).get("tipo", "VOIP") or "VOIP").strip().upper()[:30] or "VOIP"
     descripcion = str((payload or {}).get("descripcion", "") or "").strip() or None
@@ -809,11 +812,15 @@ async def asignar_linea_a_agente(
     db: Session = Depends(get_db),
 ):
     """Asignar una linea a un agente y marcarla ocupada."""
+    require_capture_role(current_user)
     agente_id = int((payload or {}).get("agente_id") or 0)
     if agente_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Debe enviar agente_id")
 
-    linea = db.query(LineaTelefonica).filter(LineaTelefonica.id == linea_id, LineaTelefonica.es_activa.is_(True)).first()
+    linea = db.query(LineaTelefonica).filter(
+        LineaTelefonica.id == linea_id,
+        LineaTelefonica.es_activa.is_(True),
+    ).first()
     if not linea:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linea no encontrada")
 
@@ -854,6 +861,7 @@ async def liberar_linea(
     db: Session = Depends(get_db),
 ):
     """Liberar linea ocupada (deja historial de asignacion)."""
+    require_admin_role(current_user, "Solo administradores pueden liberar lineas")
     agente_id = int((payload or {}).get("agente_id") or 0)
 
     query = db.query(AgenteLineaAsignacion).filter(
@@ -887,6 +895,7 @@ async def desactivar_linea(
     db: Session = Depends(get_db),
 ):
     """Desactivar una linea del inventario (no elimina historial)."""
+    require_admin_role(current_user, "Solo administradores pueden desactivar lineas")
     linea = db.query(LineaTelefonica).filter(LineaTelefonica.id == linea_id, LineaTelefonica.es_activa.is_(True)).first()
     if not linea:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linea no encontrada")
@@ -919,8 +928,7 @@ async def actualizar_cuota(
     db: Session = Depends(get_db),
 ):
     """Actualizar cuota semanal configurable."""
-    if not current_user.get("es_admin", False):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admin puede modificar cuota")
+    require_admin_role(current_user, "Solo admin puede modificar cuota")
 
     cuota = payload.get("cuota_semanal")
     if cuota is None:
@@ -942,6 +950,7 @@ async def procesar_alertas_pago(
     db: Session = Depends(get_db),
 ):
     """Procesar alertas de miercoles pendientes (manual)."""
+    require_admin_role(current_user, "Solo administradores pueden procesar alertas")
     resultado = generar_alertas_miercoles_pendientes(db)
     return {"status": "success", "data": resultado}
 
@@ -997,8 +1006,7 @@ async def generar_respaldo_manual(
     db: Session = Depends(get_db),
 ):
     """Generar respaldo semanal manual de la base de datos."""
-    if not current_user.get("es_admin", False):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admin puede generar respaldo")
+    require_admin_role(current_user, "Solo admin puede generar respaldo")
     backup_dir = (payload or {}).get("backup_dir")
     result = create_weekly_backup(db, force=True, backup_dir=backup_dir)
     if result.get("status") == "error":
@@ -1012,8 +1020,7 @@ async def obtener_configuracion_respaldo(
     db: Session = Depends(get_db),
 ):
     """Consultar ruta configurada de respaldos."""
-    if not current_user.get("es_admin", False):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admin puede consultar la configuración de respaldos")
+    require_admin_role(current_user, "Solo admin puede consultar la configuración de respaldos")
     return {"status": "success", "data": get_backup_settings(db)}
 
 
@@ -1024,8 +1031,7 @@ async def actualizar_configuracion_respaldo(
     db: Session = Depends(get_db),
 ):
     """Guardar ruta persistente de respaldos."""
-    if not current_user.get("es_admin", False):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admin puede modificar la configuración de respaldos")
+    require_admin_role(current_user, "Solo admin puede modificar la configuración de respaldos")
     backup_dir = str((payload or {}).get("backup_dir") or "").strip()
     if not backup_dir:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Debes indicar una ruta de respaldo")
@@ -1053,8 +1059,7 @@ async def restaurar_respaldo(
     db: Session = Depends(get_db),
 ):
     """Restaurar un respaldo seleccionado."""
-    if not current_user.get("es_admin", False):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admin puede restaurar respaldos")
+    require_admin_role(current_user, "Solo admin puede restaurar respaldos")
     filename = payload.get("filename")
     if not filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Debe enviar filename")

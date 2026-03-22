@@ -346,8 +346,13 @@ class APIClient {
         return this.request('GET', `/databases/${database}/tables`);
     }
 
-    async getTableData(database, table, limit = 50) {
-        return this.request('GET', `/databases/${database}/tables/${table}?limit=${limit}`);
+    async getTableData(database, table, limit = 50, offset = 0, orderBy = '', direction = 'asc') {
+        const params = new URLSearchParams();
+        params.append('limit', String(limit));
+        params.append('offset', String(offset));
+        if (orderBy) params.append('order_by', orderBy);
+        if (direction) params.append('direction', direction);
+        return this.request('GET', `/databases/${database}/tables/${table}?${params.toString()}`);
     }
 
     async executeQuery(database, query) {
@@ -372,6 +377,18 @@ class APIClient {
 
     async deleteView(database, viewName) {
         return this.request('DELETE', `/databases/${encodeURIComponent(database)}/views/${encodeURIComponent(viewName)}`);
+    }
+
+    async getMaintenanceOverview(database) {
+        return this.request('GET', `/databases/${encodeURIComponent(database)}/maintenance/overview`);
+    }
+
+    async createUsefulViews(database) {
+        return this.request('POST', `/databases/${encodeURIComponent(database)}/maintenance/useful-views`, {});
+    }
+
+    async purgeTemporaryObjects(database, includeEmpty = false) {
+        return this.request('POST', `/databases/${encodeURIComponent(database)}/maintenance/purge-temporary?include_empty=${includeEmpty ? 'true' : 'false'}`, {});
     }
 
     async deleteDatabase(dbName) {
@@ -403,8 +420,11 @@ class APIClient {
     }
 
     // === GESTIÓN DE USUARIOS ===
-    async getUsuarios() {
-        return this.request('GET', '/usuarios/');
+    async getUsuarios(orderBy = 'fecha_creacion', direction = 'desc') {
+        const params = new URLSearchParams();
+        params.append('ordenar_por', orderBy);
+        params.append('direccion', direction);
+        return this.request('GET', `/usuarios/?${params.toString()}`);
     }
 
     async getUsuario(id) {
@@ -423,13 +443,38 @@ class APIClient {
         return this.request('PUT', `/usuarios/${id}/password`, { password });
     }
 
-    async eliminarUsuario(id) {
-        return this.request('DELETE', `/usuarios/${id}`);
+    async eliminarUsuario(id, hardDelete = false) {
+        const qs = hardDelete ? '?hard_delete=true' : '';
+        return this.request('DELETE', `/usuarios/${id}${qs}`);
+    }
+
+    async getUsuariosMaintenanceOverview() {
+        return this.request('GET', '/usuarios/maintenance/overview');
+    }
+
+    async reclassifyUsuariosBulk(updates) {
+        return this.request('POST', '/usuarios/maintenance/reclassify', { updates });
+    }
+
+    async purgeTemporaryUsuarios(includeInactiveStale = true) {
+        return this.request('POST', `/usuarios/maintenance/purge-temporary?include_inactive_stale=${includeInactiveStale ? 'true' : 'false'}`, {});
+    }
+
+    async hardDeleteDato(id) {
+        return this.request('DELETE', `/datos/${id}/hard-delete`);
+    }
+
+    async purgeInactiveDatos() {
+        return this.request('DELETE', '/datos/purge/inactivos');
     }
 
     // === HEALTH CHECK ===
     async health() {
         return this.request('GET', '/health');
+    }
+
+    async getDashboardSummary() {
+        return this.request('GET', '/dashboard/summary');
     }
 
     async getLocalNetworkInfo() {

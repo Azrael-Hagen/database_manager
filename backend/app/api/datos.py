@@ -3,9 +3,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from app.database.orm import get_db
+from app.models import DatoImportado as DatoImportadoModel
 from app.database.repositorios import RepositorioDatoImportado, RepositorioAuditoria
 from app.schemas import DatoImportado, DatoImportadoCrear, DatoImportadoActualizar, RespuestaPaginada
-from app.security import get_current_user
+from app.security import ROLE_CAPTURE, get_current_user, require_admin_role, require_capture_role, require_server_machine_request
 from fastapi import Request
 import logging
 import json
@@ -26,21 +27,36 @@ async def listar_datos(
     db: Session = Depends(get_db)
 ):
     """Listar datos importados con paginación y búsqueda."""
-    repo = RepositorioDatoImportado(db)
-    
+    allowed_fields = {
+        "id": DatoImportadoModel.id,
+        "nombre": DatoImportadoModel.nombre,
+        "email": DatoImportadoModel.email,
+        "telefono": DatoImportadoModel.telefono,
+        "ciudad": DatoImportadoModel.ciudad,
+        "pais": DatoImportadoModel.pais,
+        "fecha_creacion": DatoImportadoModel.fecha_creacion,
+        "fecha_modificacion": DatoImportadoModel.fecha_modificacion,
+        "uuid": DatoImportadoModel.uuid,
+    }
+    order_field = allowed_fields.get((ordenar_por or "").strip(), DatoImportadoModel.fecha_creacion)
+    direction_value = (direccion or "desc").strip().lower()
+    order_clause = order_field.desc() if direction_value != "asc" else order_field.asc()
+
+    query = db.query(DatoImportadoModel).filter(DatoImportadoModel.es_activo.is_(True))
+    if buscar:
+        term = f"%{buscar}%"
+        query = query.filter(
+            (DatoImportadoModel.nombre.ilike(term)) |
+            (DatoImportadoModel.email.ilike(term)) |
+            (DatoImportadoModel.telefono.ilike(term)) |
+            (DatoImportadoModel.ciudad.ilike(term)) |
+            (DatoImportadoModel.pais.ilike(term))
+        )
+
+    total = query.count()
     skip = 0 if todos else (pagina - 1) * por_pagina
-
-    if todos:
-        _, total = repo.buscar(buscar=buscar, skip=0, limit=1)
-        effective_limit = max(total, 1)
-    else:
-        effective_limit = por_pagina
-
-    registros, total = repo.buscar(
-        buscar=buscar,
-        skip=skip,
-        limit=effective_limit
-    )
+    effective_limit = max(total, 1) if todos else por_pagina
+    registros = query.order_by(order_clause, DatoImportadoModel.id.desc()).offset(skip).limit(effective_limit).all()
     
     respuesta_por_pagina = total if todos else por_pagina
     total_paginas = 1 if todos else (total + por_pagina - 1) // por_pagina
@@ -101,6 +117,7 @@ async def crear_dato(
     request: Request = None
 ):
     """Crear nuevo dato."""
+    require_capture_role(current_user)
     repo = RepositorioDatoImportado(db)
     repo_auditoria = RepositorioAuditoria(db)
     
@@ -131,6 +148,7 @@ async def actualizar_dato(
     db: Session = Depends(get_db)
 ):
     """Actualizar dato existente."""
+    require_admin_role(current_user, "Solo administradores pueden modificar registros existentes")
     repo = RepositorioDatoImportado(db)
     repo_auditoria = RepositorioAuditoria(db)
     
@@ -173,6 +191,7 @@ async def eliminar_dato(
     db: Session = Depends(get_db)
 ):
     """Eliminar (soft delete) dato."""
+    require_admin_role(current_user, "Solo administradores pueden eliminar registros")
     repo = RepositorioDatoImportado(db)
     repo_auditoria = RepositorioAuditoria(db)
     
@@ -196,3 +215,53 @@ async def eliminar_dato(
     )
     
     return {"status": "success", "mensaje": "Dato eliminado"}
+
+
+@router.delete("/{dato_id}/hard-delete")
+async def eliminar_dato_definitivo(
+    dato_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Eliminar definitivamente un dato y sus dependencias operativas."""
+    require_admin_role(current_user, "Solo administradores pueden eliminar definitivamente registros")
+
+    repo = RepositorioDatoImportado(db)
+    repo_auditoria = RepositorioAuditoria(db)
+    dato = repo.obtener_por_id(dato_id)
+    if not dato:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dato no encontrado")
+
+    repo.eliminar_definitivo(dato_id)
+    repo_auditoria.registrar_accion(
+        usuario_id=current_user['id'],
+        tipo_accion="ELIMINAR",
+        tabla="datos_importados",
+        registro_id=dato_id,
+        descripcion=f"Dato eliminado definitivamente: {dato.nombre}",
+        resultado="SUCCESS"
+    )
+    return {"status": "success", "mensaje": "Dato eliminado definitivamente"}
+
+
+@router.delete("/purge/inactivos")
+async def purgar_datos_inactivos(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Eliminar definitivamente todos los datos marcados como inactivos."""
+    require_admin_role(current_user, "Solo administradores pueden purgar registros")
+    require_server_machine_request(request)
+
+    repo = RepositorioDatoImportado(db)
+    repo_auditoria = RepositorioAuditoria(db)
+    deleted = repo.purgar_inactivos()
+    repo_auditoria.registrar_accion(
+        usuario_id=current_user['id'],
+        tipo_accion="ELIMINAR",
+        tabla="datos_importados",
+        descripcion=f"Purgados definitivamente {deleted} registros inactivos",
+        resultado="SUCCESS"
+    )
+    return {"status": "success", "mensaje": f"Se eliminaron definitivamente {deleted} registros inactivos", "deleted": deleted}

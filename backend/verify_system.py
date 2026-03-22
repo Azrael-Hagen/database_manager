@@ -65,7 +65,6 @@ class SystemVerifier:
                 AuditoriaAccion, EsquemaBaseDatos
             )
             from app.utils.exports import export_table_to_csv, export_to_excel
-            from app.utils.pbx_integration import get_pbx_extensions
             from app.utils.backup_manager import BackupManager
             from app.api.export import router as export_router
             
@@ -152,7 +151,7 @@ class SystemVerifier:
             
             db = SessionLocal()
             try:
-                inspector = inspect(db.engine)
+                inspector = inspect(db.get_bind())
                 tables = inspector.get_table_names()
                 
                 critical_tables = ['usuarios', 'datos_importados', 'lineas_telefonicas']
@@ -183,7 +182,6 @@ class SystemVerifier:
         utilities_to_check = {
             "Exportación CSV": lambda: self._check_exports(),
             "Gestor de Backups": lambda: self._check_backup_manager(),
-            "Integración PBX": lambda: self._check_pbx_integration(),
         }
         
         for util_name, check_func in utilities_to_check.items():
@@ -220,14 +218,6 @@ class SystemVerifier:
         assert hasattr(BackupManager, 'get_backup_paths')
         assert hasattr(BackupManager, 'enable_auto_backup')
     
-    def _check_pbx_integration(self):
-        """Verificar integración PBX."""
-        from app.utils.pbx_integration import (
-            get_pbx_extensions, sync_extensions_to_line_catalog
-        )
-        assert callable(get_pbx_extensions)
-        assert callable(sync_extensions_to_line_catalog)
-    
     async def check_api_endpoints(self):
         """Verificar que los endpoints de API estén registrados."""
         logger.info("✓ Verificando endpoints de API...")
@@ -246,7 +236,6 @@ class SystemVerifier:
                 '/api/export/table/',
                 '/api/export/agentes',
                 '/api/export/schemas/',
-                '/api/export/pbx/extensions',
                 '/api/export/backup/paths',
             ]
             

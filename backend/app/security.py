@@ -1,6 +1,9 @@
 """Utilidades de seguridad y autenticación."""
 
 from datetime import datetime, timedelta
+from functools import lru_cache
+import ipaddress
+import socket
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request
@@ -18,6 +21,47 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 security = HTTPBearer()
+
+ROLE_VIEWER = "viewer"
+ROLE_CAPTURE = "capture"
+ROLE_ADMIN = "admin"
+
+
+def normalize_role(role: str | None, es_admin: bool = False) -> str:
+    """Normalizar rol y mantener compatibilidad con es_admin legacy."""
+    value = str(role or "").strip().lower()
+    if value not in {ROLE_VIEWER, ROLE_CAPTURE, ROLE_ADMIN}:
+        value = ROLE_ADMIN if es_admin else ROLE_VIEWER
+    if es_admin:
+        return ROLE_ADMIN
+    return value
+
+
+def role_rank(role: str | None) -> int:
+    value = normalize_role(role)
+    return {
+        ROLE_VIEWER: 1,
+        ROLE_CAPTURE: 2,
+        ROLE_ADMIN: 3,
+    }[value]
+
+
+def has_minimum_role(current_user: dict, required_role: str) -> bool:
+    current_role = normalize_role(current_user.get("rol"), bool(current_user.get("es_admin")))
+    return role_rank(current_role) >= role_rank(required_role)
+
+
+def require_minimum_role(current_user: dict, required_role: str, detail: str):
+    if not has_minimum_role(current_user, required_role):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+
+def require_capture_role(current_user: dict, detail: str = "No tienes permisos para realizar altas"):
+    require_minimum_role(current_user, ROLE_CAPTURE, detail)
+
+
+def require_admin_role(current_user: dict, detail: str = "Solo administradores pueden realizar esta acción"):
+    require_minimum_role(current_user, ROLE_ADMIN, detail)
 
 
 def hash_password(password: str) -> str:
@@ -55,10 +99,12 @@ def verify_token(token: str) -> dict:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token inválido"
             )
+        role = normalize_role(payload.get("rol"), bool(payload.get("es_admin", False)))
         return {
             "username": username,
             "id": payload.get("id"),
-            "es_admin": payload.get("es_admin", False),
+            "es_admin": role == ROLE_ADMIN,
+            "rol": role,
             "email": payload.get("email")
         }
     except JWTError:
@@ -79,3 +125,39 @@ def get_client_ip(request: Request) -> str:
     if request.client:
         return request.client.host
     return "unknown"
+
+
+@lru_cache(maxsize=1)
+def _server_machine_addresses() -> set[str]:
+    """Resolver direcciones IP locales válidas para la máquina servidor."""
+    addresses = {"127.0.0.1", "::1", "localhost"}
+    try:
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None):
+            ip = info[4][0]
+            addresses.add(ip)
+    except Exception:
+        # En caso de fallo DNS local, mantenemos solo loopback.
+        pass
+    return addresses
+
+
+def is_server_machine_request(request: Request) -> bool:
+    """Validar que la petición viene desde la máquina donde corre el backend."""
+    client_ip = get_client_ip(request)
+    if client_ip in _server_machine_addresses():
+        return True
+    try:
+        parsed = ipaddress.ip_address(client_ip)
+        return parsed.is_loopback
+    except ValueError:
+        return False
+
+
+def require_server_machine_request(
+    request: Request,
+    detail: str = "Esta acción de depuración solo se permite desde la máquina servidor"
+):
+    """Restringir acciones de depuración a ejecución local en el servidor."""
+    if not is_server_machine_request(request):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.database.orm import get_db
 from app.database.repositorios import RepositorioUsuario, RepositorioAuditoria
 from app.schemas import UsuarioCrear, UsuarioAuth, Usuario, Token
-from app.security import create_access_token, get_current_user, get_client_ip, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.security import create_access_token, get_current_user, get_client_ip, ACCESS_TOKEN_EXPIRE_MINUTES, normalize_role
 from datetime import timedelta
 from fastapi import Request
 import logging
@@ -83,7 +83,12 @@ async def login(credenciales: UsuarioAuth, db: Session = Depends(get_db), reques
     # Crear token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": usuario.username, "id": usuario.id, "es_admin": usuario.es_admin},
+        data={
+            "sub": usuario.username,
+            "id": usuario.id,
+            "es_admin": usuario.es_admin,
+            "rol": normalize_role(usuario.rol, usuario.es_admin),
+        },
         expires_delta=access_token_expires
     )
     

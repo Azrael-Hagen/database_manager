@@ -22,6 +22,7 @@ let brandingManageEnabled = false;
 let currentAgentManagementRows = [];
 let currentEditingAgentId = null;
 let currentBackupDir = '';
+let currentTableBrowserState = { database: '', table: '', orderBy: 'id', direction: 'desc', limit: 50 };
 const DEFAULT_AGENT_DATABASE = 'registro_agentes';
 const BRANDING_DEFAULTS = {
     appName: 'Database Manager',
@@ -90,6 +91,144 @@ async function fetchJson(url, options = {}) {
     return response.json();
 }
 
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function updateScrollTopButton() {
+    const btn = document.getElementById('scrollTopBtn');
+    if (!btn) return;
+    if (window.scrollY > 420) {
+        btn.classList.add('visible');
+    } else {
+        btn.classList.remove('visible');
+    }
+}
+
+function scrollToTop() {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function getCurrentRole() {
+    const role = String(currentUser?.rol || '').trim().toLowerCase();
+    if (role === 'admin' || currentUser?.es_admin) return 'admin';
+    if (role === 'capture') return 'capture';
+    return 'viewer';
+}
+
+function canCapture() {
+    return getCurrentRole() === 'capture' || getCurrentRole() === 'admin';
+}
+
+function canAdmin() {
+    return getCurrentRole() === 'admin';
+}
+
+function canAccessSection(section) {
+    const role = getCurrentRole();
+    if (role === 'admin') return true;
+    if (role === 'capture') {
+        return ['dashboard', 'datos', 'importar', 'altasAgentes'].includes(section);
+    }
+    return ['dashboard', 'datos'].includes(section);
+}
+
+function applyRoleBasedUI() {
+    const role = getCurrentRole();
+    const roleLabel = role === 'admin' ? 'Administrador' : role === 'capture' ? 'Altas' : 'Consulta';
+    const userNameEl = document.getElementById('userName');
+    if (userNameEl) {
+        userNameEl.textContent = `${currentUser?.username || 'Usuario'} · ${roleLabel}`;
+    }
+
+    const menuRules = {
+        dashboard: true,
+        datos: true,
+        databases: canAdmin(),
+        importar: canCapture(),
+        altasAgentes: canCapture(),
+        cambiosBajas: canAdmin(),
+        qr: canAdmin(),
+        usuarios: canAdmin(),
+        auditoria: canAdmin(),
+    };
+    Object.entries(menuRules).forEach(([section, visible]) => {
+        const item = document.querySelector(`.menu-item[onclick*="'${section}'"]`);
+        if (item) {
+            item.style.display = visible ? '' : 'none';
+        }
+    });
+
+    const purgeBtn = document.getElementById('purgeInactiveBtn');
+    if (purgeBtn) purgeBtn.style.display = canAdmin() ? '' : 'none';
+    const maintenancePanel = document.getElementById('dbMaintenancePanel');
+    if (maintenancePanel) maintenancePanel.style.display = canAdmin() ? 'block' : 'none';
+}
+
+function getDatosSortConfig() {
+    return {
+        orderBy: document.getElementById('datosOrderBy')?.value || 'fecha_creacion',
+        direction: document.getElementById('datosOrderDir')?.value || 'desc',
+    };
+}
+
+function formatRelativeAge(seconds) {
+    const numeric = Number(seconds);
+    if (!Number.isFinite(numeric) || numeric < 0) {
+        return 'sin registro';
+    }
+    if (numeric < 60) {
+        return 'hace menos de 1 min';
+    }
+    if (numeric < 3600) {
+        return `hace ${Math.floor(numeric / 60)} min`;
+    }
+    if (numeric < 86400) {
+        return `hace ${Math.floor(numeric / 3600)} h`;
+    }
+    return `hace ${Math.floor(numeric / 86400)} d`;
+}
+
+function renderActivityChart(series) {
+    if (!Array.isArray(series) || !series.length) {
+        return '<p class="hint">Sin actividad reciente.</p>';
+    }
+
+    const maxValue = Math.max(
+        1,
+        ...series.map(item => Math.max(
+            Number(item.registros || 0),
+            Number(item.qr || 0),
+            Number(item.importaciones || 0)
+        ))
+    );
+
+    return series.map(item => {
+        const registros = Number(item.registros || 0);
+        const qr = Number(item.qr || 0);
+        const importaciones = Number(item.importaciones || 0);
+        const fallidas = Number(item.fallidas || 0);
+        const registrosHeight = Math.max(registros > 0 ? 18 : 6, Math.round((registros / maxValue) * 88));
+        const qrHeight = Math.max(qr > 0 ? 18 : 6, Math.round((qr / maxValue) * 88));
+        const importHeight = Math.max(importaciones > 0 ? 18 : 6, Math.round((importaciones / maxValue) * 88));
+        const title = `${item.label}: registros ${registros}, QR ${qr}, importaciones ${importaciones}, fallidas ${fallidas}`;
+        return `<div class="activity-day" title="${escapeHtml(title)}">
+            <div class="activity-bars">
+                <span class="activity-bar records" style="height:${registrosHeight}px"></span>
+                <span class="activity-bar qr" style="height:${qrHeight}px"></span>
+                <span class="activity-bar imports" style="height:${importHeight}px"></span>
+            </div>
+            <strong>${escapeHtml(item.label || '')}</strong>
+            <span>R ${registros} · Q ${qr} · I ${importaciones}</span>
+        </div>`;
+    }).join('');
+}
+
 // === INICIALIZACIÓN ===
 document.addEventListener('DOMContentLoaded', () => {
     const enabledSaved = localStorage.getItem('realtimeEnabled');
@@ -112,6 +251,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('scroll', updateScrollTopButton, { passive: true });
+    updateScrollTopButton();
     setDefaultWeeklyDates();
     loadBrandingConfig();
 });
@@ -248,7 +389,7 @@ function showApp() {
     document.querySelector('.navbar').style.display = 'flex';
     document.querySelector('.sidebar').style.display = 'block';
     document.querySelector('footer').style.display = 'block';
-    document.getElementById('userName').textContent = currentUser?.username || 'Usuario';
+    applyRoleBasedUI();
     cargarAccesoServidorLocal();
     cargarPermisosBrandingAdmin();
     syncRealtimeControls();
@@ -538,6 +679,10 @@ function aplicarConfigTiempoReal() {
 
 // === NAVEGACIÓN ===
 function loadSection(section, eventRef = null) {
+    if (!canAccessSection(section)) {
+        alert('Tu rol no tiene acceso a esta sección.');
+        section = 'dashboard';
+    }
     currentSection = section;
     // Ocultar todas las secciones
     document.getElementById('dashboardSection').style.display = 'none';
@@ -625,17 +770,139 @@ function isAgentDataTableContext(dbName, tableName) {
 // === DASHBOARD ===
 async function loadDashboardData(showErrors = true) {
     try {
-        const datos = await fetchJson(`${API_URL}/datos?pagina=1&por_pagina=1`, {
-            headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        document.getElementById('totalRegistros').textContent = datos.total || 0;
-        document.getElementById('totalImportaciones').textContent = '0';
-        document.getElementById('totalQR').textContent = '0';
-        try {
-            const usuarios = await apiClient.getUsuarios();
-            document.getElementById('totalUsuarios').textContent = usuarios.length || 0;
-        } catch (_) {
-            document.getElementById('totalUsuarios').textContent = 'N/A';
+        const summary = await apiClient.getDashboardSummary();
+        const totals = summary.totals || {};
+        const db = summary.database || {};
+        const alerts = Array.isArray(summary.alerts) ? summary.alerts : [];
+        const onlineUsers = Array.isArray(summary.online_users) ? summary.online_users : [];
+        const imports = Array.isArray(summary.recent_imports) ? summary.recent_imports : [];
+        const recentAgents = Array.isArray(summary.recent_agents) ? summary.recent_agents : [];
+        const activitySeries = Array.isArray(summary.activity_7_days) ? summary.activity_7_days : [];
+
+        document.getElementById('totalRegistros').textContent = totals.registros ?? 0;
+        document.getElementById('totalActivos').textContent = totals.registros_activos ?? 0;
+        document.getElementById('totalImportaciones').textContent = totals.importaciones ?? 0;
+        document.getElementById('totalQR').textContent = totals.qr_generados ?? 0;
+        document.getElementById('totalUsuariosOnline').textContent = totals.usuarios_online ?? 0;
+        document.getElementById('totalInactivos').textContent = totals.registros_inactivos ?? 0;
+        document.getElementById('totalQrPendientes').textContent = totals.qr_pendientes ?? 0;
+        document.getElementById('totalAlertasPago').textContent = totals.alertas_pago_pendientes ?? 0;
+
+        const alertSummary = document.getElementById('alertSummary');
+        if (alertSummary) {
+            alertSummary.textContent = alerts.length
+                ? `${alerts.length} alertas operativas activas`
+                : 'Sin alertas operativas abiertas';
+        }
+
+        const alertsList = document.getElementById('alertsList');
+        if (alertsList) {
+            if (!alerts.length) {
+                alertsList.innerHTML = '<p class="hint">No hay alertas accionables en este momento.</p>';
+            } else {
+                alertsList.innerHTML = alerts.map(item => {
+                    const targetSection = item.action_section ? String(item.action_section) : '';
+                    const actionButton = targetSection
+                        ? `<button type="button" class="btn btn-small btn-secondary" onclick="loadSection('${escapeHtml(targetSection)}')">Ir</button>`
+                        : '';
+                    return `<div class="dashboard-alert ${escapeHtml(item.level || 'info')}">
+                        <div>
+                            <strong>${escapeHtml(item.title || 'Alerta')}</strong>
+                            <span>${escapeHtml(item.detail || '')}</span>
+                        </div>
+                        ${actionButton}
+                    </div>`;
+                }).join('');
+            }
+        }
+
+        const onlineSummary = document.getElementById('usuariosOnlineResumen');
+        if (onlineSummary) {
+            onlineSummary.textContent = `${totals.usuarios_online ?? 0} conectados recientemente de ${totals.usuarios ?? 0} usuarios activos`;
+        }
+
+        const onlineList = document.getElementById('usuariosOnlineList');
+        if (onlineList) {
+            if (!onlineUsers.length) {
+                onlineList.innerHTML = '<p class="hint">No hay sesiones recientes.</p>';
+            } else {
+                const html = onlineUsers.map(u => {
+                    const role = u.es_admin ? 'admin' : 'usuario';
+                    const recency = formatRelativeAge(u.seconds_since_last_session);
+                    const status = u.is_online ? 'Online' : 'Reciente';
+                    return `<div class="dashboard-item">
+                        <strong>${escapeHtml(u.username || 'N/A')}</strong>
+                        <span>${escapeHtml(role)} · ${escapeHtml(status)} · ${escapeHtml(recency)}</span>
+                    </div>`;
+                }).join('');
+                onlineList.innerHTML = html;
+            }
+        }
+
+        const importSummary = document.getElementById('importStatsResumen');
+        if (importSummary) {
+            importSummary.textContent = `OK: ${totals.importaciones_exitosas ?? 0} · Fallidas: ${totals.importaciones_fallidas ?? 0} · Pagos pendientes semana: ${totals.pagos_pendientes_semana ?? 0}`;
+        }
+
+        const importList = document.getElementById('importRecentList');
+        if (importList) {
+            if (!imports.length) {
+                importList.innerHTML = '<p class="hint">Sin importaciones recientes.</p>';
+            } else {
+                importList.innerHTML = imports.map(i => `<div class="dashboard-item">
+                    <strong>${escapeHtml(i.archivo_nombre || 'archivo')}</strong>
+                    <span>${escapeHtml(i.estado || 'N/A')} · ${escapeHtml(i.tabla_destino || '-')} · +${i.registros_importados ?? 0} / -${i.registros_fallidos ?? 0}</span>
+                </div>`).join('');
+            }
+        }
+
+        const dbSummary = document.getElementById('dbResumen');
+        if (dbSummary) {
+            dbSummary.textContent = `BD activa: ${db.name || 'N/A'} · Fuente agentes: ${db.agent_source || 'N/A'}`;
+        }
+
+        const dbInfo = document.getElementById('dbInfoList');
+        if (dbInfo) {
+            dbInfo.innerHTML = `<div class="dashboard-item"><strong>Tablas</strong><span>${db.tables ?? 0}</span></div>
+                <div class="dashboard-item"><strong>Vistas</strong><span>${db.views ?? 0}</span></div>
+                <div class="dashboard-item"><strong>Líneas activas</strong><span>${totals.lineas_activas ?? 0} · asignadas ${totals.lineas_asignadas_activas ?? 0}</span></div>
+                <div class="dashboard-item"><strong>Agentes activos</strong><span>${totals.registros_activos ?? 0} / ${totals.registros ?? 0}</span></div>
+                <div class="dashboard-item"><strong>Generado</strong><span>${summary.generated_at ? new Date(summary.generated_at).toLocaleString() : '-'}</span></div>`;
+        }
+
+        const recentAgentsSummary = document.getElementById('recentAgentsSummary');
+        if (recentAgentsSummary) {
+            recentAgentsSummary.textContent = `${recentAgents.length} registros recientes desde ${db.agent_source || 'BD principal'}`;
+        }
+
+        const recentAgentsList = document.getElementById('recentAgentsList');
+        if (recentAgentsList) {
+            if (!recentAgents.length) {
+                recentAgentsList.innerHTML = '<p class="hint">No hay altas recientes.</p>';
+            } else {
+                recentAgentsList.innerHTML = recentAgents.map(agent => {
+                    const status = agent.es_activo ? 'Activo' : 'Inactivo';
+                    const qr = agent.has_qr ? 'Con QR' : 'Sin QR';
+                    const created = agent.fecha_creacion ? new Date(agent.fecha_creacion).toLocaleString() : 'Sin fecha';
+                    return `<div class="dashboard-item">
+                        <strong>${escapeHtml(agent.nombre || 'Agente')}</strong>
+                        <span>ID ${agent.id ?? '-'} · ${escapeHtml(status)} · ${escapeHtml(qr)}</span>
+                        <span>${escapeHtml(created)}</span>
+                    </div>`;
+                }).join('');
+            }
+        }
+
+        const activitySummary = document.getElementById('activitySummary');
+        if (activitySummary) {
+            const totalSeriesRegistros = activitySeries.reduce((acc, item) => acc + Number(item.registros || 0), 0);
+            const totalSeriesImports = activitySeries.reduce((acc, item) => acc + Number(item.importaciones || 0), 0);
+            activitySummary.textContent = `Últimos 7 días: ${totalSeriesRegistros} registros nuevos y ${totalSeriesImports} importaciones ejecutadas`;
+        }
+
+        const activityChart = document.getElementById('activityChart');
+        if (activityChart) {
+            activityChart.innerHTML = renderActivityChart(activitySeries);
         }
     } catch (error) {
         if (showErrors) {
@@ -726,7 +993,8 @@ async function cargarTodosLosDatos() {
         }
 
         const search = document.getElementById('searchInput').value.trim();
-        const data = await apiClient.getTableData(dbName, tableName, 500);
+        const sort = getDatosSortConfig();
+        const data = await apiClient.getTableData(dbName, tableName, 500, 0, sort.orderBy, sort.direction);
         let rows = data.data || [];
         if (search) {
             const s = search.toLowerCase();
@@ -766,10 +1034,93 @@ async function consultarUnDato() {
             alert('No se encontró un registro exacto con ese valor en la tabla seleccionada.');
             return;
         }
+        
+        // Mostrar los datos
         mostrarDatos(rows);
+        
+        // Si es una tabla de agentes (datos_importados) y tiene QR, mostrarlo
+        const registro = rows[0];
+        if (tableName === 'datos_importados' && registro.id && registro.qr_filename) {
+            setTimeout(() => {
+                mostrarQrParaAgente(registro.id, registro.nombre || 'Agente');
+            }, 500);
+        }
     } catch (error) {
         console.error('Error:', error);
         alert('No se encontró el registro: ' + error.message);
+    }
+}
+
+async function mostrarQrParaAgente(agenteId, agenteName) {
+    /**
+     * Muestra el QR de un agente consultado individualmente
+     */
+    try {
+        const result = await apiClient.getQrAgente(agenteId);
+        const data = result.data || {};
+        
+        // Crear modal o panel para mostrar el QR
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay-qr';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            animation: fadeIn 0.3s ease-in;
+        `;
+        
+        const content = document.createElement('div');
+        content.className = 'modal-content-qr';
+        content.style.cssText = `
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            position: relative;
+            animation: slideUp 0.3s ease-out;
+        `;
+        
+        content.innerHTML = `
+            <button type="button" class="close-modal-qr" onclick="this.closest('.modal-overlay-qr').remove()" 
+                    style="position: absolute; top: 12px; right: 12px; background: none; border: none; font-size: 28px; cursor: pointer; color: #999;">
+                ✕
+            </button>
+            <h2 style="margin-top: 0; color: #333; text-align: center;">QR del Agente</h2>
+            <p style="text-align: center; color: #666; margin: 10px 0;">
+                <strong>${agenteName}</strong><br>
+                <span style="font-size: 0.9em; color: #999;">ID: ${agenteId}</span>
+            </p>
+            <div id="qr-preview-container" style="text-align: center; margin: 20px 0; padding: 20px; background: #f9f9f9; border-radius: 8px;"></div>
+            <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                <button type="button" class="btn btn-secondary" onclick="descargarQrAgente(${agenteId})">
+                    📥 Descargar PNG
+                </button>
+                <button type="button" class="btn" onclick="navigator.clipboard.writeText('${data.public_url}'); alert('URL copiada');">
+                    📋 Copiar URL
+                </button>
+            </div>
+            <p style="text-align: center; font-size: 0.85em; color: #999; margin-top: 15px;">
+                ${data.public_url ? `<a href="${data.public_url}" target="_blank" style="color: #0066cc; text-decoration: none;">Abrir en navegador ↗</a>` : 'URL no disponible'}
+            </p>
+        `;
+        
+        modal.appendChild(content);
+        document.body.appendChild(modal);
+        
+        // Renderizar QR en el contenedor
+        renderSimpleQR(data.public_url, 'qr-preview-container');
+        
+    } catch (error) {
+        console.error('Error mostrando QR:', error);
     }
 }
 
@@ -783,7 +1134,8 @@ async function buscarDatos() {
             return;
         }
 
-        const data = await apiClient.getTableData(dbName, tableName, 500);
+        const sort = getDatosSortConfig();
+        const data = await apiClient.getTableData(dbName, tableName, 500, 0, sort.orderBy, sort.direction);
         let rows = data.data || [];
         const term = (search || '').trim().toLowerCase();
         if (term) {
@@ -798,14 +1150,16 @@ async function buscarDatos() {
 function mostrarDatos(datos) {
     const container = document.getElementById('datosContainer');
     if (datos.length === 0) {
-        container.innerHTML = '<p>No hay datos disponibles</p>';
+        container.innerHTML = '<p style="padding: 20px; text-align: center; color: #999;">No hay datos disponibles</p>';
         return;
     }
 
-    const columnas = Object.keys(datos[0]);
+    const columnas = Object.keys(datos[0]).filter(col => col.toLowerCase() !== 'empresa');
     const dbName = document.getElementById('datosDatabaseSelect')?.value || '';
     const tableName = document.getElementById('tablasSelect')?.value || '';
     const editableContext = isAgentDataTableContext(dbName, tableName);
+    const isAgentTable = tableName === 'datos_importados' || tableName === 'registro_agentes';
+    
     let html = '<table class="data-table"><thead><tr>';
 
     columnas.forEach(col => {
@@ -816,16 +1170,41 @@ function mostrarDatos(datos) {
     datos.forEach(fila => {
         html += '<tr>';
         columnas.forEach(col => {
-            html += `<td>${fila[col] ?? ''}</td>`;
+            const valor = fila[col] ?? '';
+            // Resaltar si es texto importante
+            const isName = col.toLowerCase() === 'nombre';
+            const cellStyle = isName ? 'style="font-weight: 600; color: #0f4567;"' : '';
+            html += `<td ${cellStyle}>${valor}</td>`;
         });
+        
+        // Indicador de QR y acciones
+        let hasQr = fila.qr_filename !== null && fila.qr_filename !== undefined && fila.qr_filename !== '';
+        let qrIndicator = hasQr ? '🔷' : '⭕';
+        let qrTitle = hasQr ? 'QR disponible - Click para ver' : 'Sin QR';
+        
         if (editableContext && Number.isFinite(Number(fila.id))) {
-            html += `<td>
-                <button onclick="editarDato(${fila.id})" class="btn btn-small">Editar</button>
-                <button onclick="generarQrIndividual(${fila.id})" class="btn btn-small btn-secondary">QR</button>
-                <button onclick="eliminarDato(${fila.id})" class="btn btn-small">Eliminar</button>
-            </td></tr>`;
+            let actionHtml = `<td style="display: flex; gap: 4px; flex-wrap: wrap;">`;
+            if (canAdmin()) {
+                actionHtml += `<button onclick="editarDato(${fila.id})" class="btn btn-small" title="Editar registro">✏️ Editar</button>`;
+            }
+            
+            // Si es agente y tiene QR, mostrar botón para verlo
+            if (isAgentTable) {
+                if (hasQr) {
+                    actionHtml += `<button onclick="mostrarQrParaAgente(${fila.id}, '${(fila.nombre || 'Agente').replace(/'/g, "\\'")}'); return false;" class="btn btn-small btn-secondary" title="${qrTitle}"><span title="${qrTitle}">${qrIndicator}</span> QR</button>`;
+                } else {
+                    actionHtml += `<button onclick="previsualizarQrAlta(${fila.id})" class="btn btn-small btn-secondary" title="Generar QR">⭕ QR</button>`;
+                }
+            }
+            
+            if (canAdmin()) {
+                actionHtml += `<button onclick="eliminarDato(${fila.id})" class="btn btn-small" title="Eliminar registro">🗑️</button>`;
+                actionHtml += `<button onclick="eliminarDatoDefinitivo(${fila.id})" class="btn btn-small btn-danger" title="Eliminar definitivamente">🔥</button>`;
+            }
+            actionHtml += `</td></tr>`;
+            html += actionHtml;
         } else {
-            html += '<td><span class="hint">Solo lectura</span></td></tr>';
+            html += `<td><span class="hint">Solo lectura</span></td></tr>`;
         }
     });
 
@@ -834,6 +1213,10 @@ function mostrarDatos(datos) {
 }
 
 async function editarDato(id) {
+    if (!canAdmin()) {
+        alert('Solo administradores pueden editar registros existentes.');
+        return;
+    }
     const nuevoValor = prompt('Nuevo valor:');
     if (!nuevoValor) return;
 
@@ -856,6 +1239,38 @@ async function editarDato(id) {
     }
 }
 
+async function eliminarDatoDefinitivo(id) {
+    if (!canAdmin()) {
+        alert('Solo administradores pueden eliminar definitivamente.');
+        return;
+    }
+    if (!confirm('Esto eliminará el registro y sus dependencias de forma permanente. ¿Continuar?')) return;
+    try {
+        await apiClient.hardDeleteDato(id);
+        alert('Registro eliminado definitivamente.');
+        cargarTodosLosDatos();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error eliminando definitivamente: ' + error.message);
+    }
+}
+
+async function purgarDatosInactivos() {
+    if (!canAdmin()) {
+        alert('Solo administradores pueden purgar registros.');
+        return;
+    }
+    if (!confirm('Se eliminarán definitivamente todos los registros inactivos. ¿Continuar?')) return;
+    try {
+        const result = await apiClient.purgeInactiveDatos();
+        alert(result.mensaje || 'Purgado completado.');
+        cargarTodosLosDatos();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error purgando inactivos: ' + error.message);
+    }
+}
+
 async function generarQrIndividual(agenteId) {
     return generarQrIndividualEnContexto(agenteId, {
         resultContainerId: 'qrVerificationResult',
@@ -875,7 +1290,12 @@ async function generarQrIndividualEnContexto(agenteId, options = {}) {
     try {
         const result = await apiClient.getQrAgente(agenteId);
         const data = result.data || {};
-        renderSimpleQR(data.public_url, qrContainerId);
+        // Intentar generar QR con librería disponible
+        if (typeof QRCode === 'undefined' || !QRCode) {
+            generarQrDesdeApiExterna(data.public_url, qrContainerId);
+        } else {
+            renderSimpleQR(data.public_url, qrContainerId);
+        }
         if (navigateSection) {
             loadSection(navigateSection);
         }
@@ -1071,7 +1491,6 @@ function resetGestionAgentePanel() {
         'editarAgenteFp',
         'editarAgenteFc',
         'editarAgenteGrupo',
-        'editarAgenteEmpresa',
         'editarAgenteVoip',
     ];
     ids.forEach(id => {
@@ -1089,7 +1508,7 @@ function renderGestionAgentes(agentes) {
     }
 
     let html = '<table class="data-table"><thead><tr>';
-    html += '<th>ID</th><th>Nombre</th><th>Alias</th><th>Teléfono</th><th>Empresa</th><th>Líneas</th><th>Ladas</th><th>Acciones</th>';
+    html += '<th>ID</th><th>Nombre</th><th>Alias</th><th>Teléfono</th><th>Líneas</th><th>Ladas</th><th>Acciones</th>';
     html += '</tr></thead><tbody>';
 
     agentes.forEach(agent => {
@@ -1102,7 +1521,6 @@ function renderGestionAgentes(agentes) {
             <td>${agent.nombre || '-'}</td>
             <td>${extras.alias || '-'}</td>
             <td>${agent.telefono || '-'}</td>
-            <td>${agent.empresa || '-'}</td>
             <td>${lineText}</td>
             <td>${ladas}</td>
             <td>
@@ -1126,6 +1544,8 @@ async function cargarAgentesGestion(showErrors = true) {
         renderGestionAgentes(currentAgentManagementRows);
     } catch (error) {
         console.error('Error:', error);
+        currentAgentManagementRows = [];
+        renderGestionAgentes([]);
         if (showErrors) {
             alert('Error cargando agentes: ' + error.message);
         }
@@ -1149,7 +1569,6 @@ async function editarAgenteGestion(agenteId) {
     document.getElementById('editarAgenteFp').value = extras.fp || '';
     document.getElementById('editarAgenteFc').value = extras.fc || '';
     document.getElementById('editarAgenteGrupo').value = extras.grupo || '';
-    document.getElementById('editarAgenteEmpresa').value = agent.empresa || '';
     document.getElementById('editarAgenteVoip').value = extras.numero_voip || '';
     const panel = document.getElementById('editarAgentePanel');
     if (panel) {
@@ -1175,7 +1594,6 @@ async function guardarCambiosAgente(e) {
     const payload = {
         nombre: document.getElementById('editarAgenteNombre')?.value.trim() || null,
         telefono: document.getElementById('editarAgenteTelefono')?.value.trim() || null,
-        empresa: document.getElementById('editarAgenteEmpresa')?.value.trim() || null,
         datos_adicionales: {
             ...extras,
             alias: document.getElementById('editarAgenteAlias')?.value.trim() || null,
@@ -1364,7 +1782,6 @@ async function crearAgenteManual(e) {
         fp: document.getElementById('agenteFpInput')?.value.trim() || null,
         fc: document.getElementById('agenteFcInput')?.value.trim() || null,
         grupo: document.getElementById('agenteGrupoInput')?.value.trim() || null,
-        empresa: document.getElementById('agenteEmpresaInput')?.value.trim() || null,
         modo_asignacion: modo,
         lada_objetivo: document.getElementById('agenteLadaObjetivoSelect')?.value || null
     };
@@ -1400,7 +1817,6 @@ async function crearAgenteManual(e) {
             'agenteFpInput',
             'agenteFcInput',
             'agenteGrupoInput',
-            'agenteEmpresaInput',
             'agenteLineaManualInput'
         ].forEach(id => {
             const el = document.getElementById(id);
@@ -1581,6 +1997,12 @@ async function generarQR(e) {
     }
 
     try {
+        // Verificar que QRCode esté disponible
+        if (typeof QRCode === 'undefined') {
+            alert('Error: Librería QRCode no disponible. Recarga la página.');
+            return;
+        }
+        
         // Usar librería QRCode.js (se debe agregar en HTML)
         const container = document.getElementById('qrContainer');
         container.innerHTML = '';
@@ -1591,7 +2013,7 @@ async function generarQR(e) {
             height: 200,
             colorDark: "#000000",
             colorLight: "#ffffff",
-            correctLevel: QRCode.CorrectLevel.H
+            correctLevel: 'H'  // Changed from QRCode.CorrectLevel.H
         });
 
         const canvas = container.querySelector('canvas');
@@ -1614,17 +2036,69 @@ function mostrarQR(data) {
 
 function renderSimpleQR(text, containerId = 'qrContainer') {
     const container = document.getElementById(containerId);
-    if (!container) return;
+    if (!container) {
+        console.warn(`Container with ID ${containerId} not found`);
+        return;
+    }
     container.innerHTML = '';
-    // QRCode global from qrcode.js loaded in index.html
-    new QRCode(container, {
-        text,
-        width: 220,
-        height: 220,
-        colorDark: '#000000',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.H
-    });
+    
+    // Verificar que QRCode esté disponible
+    if (typeof QRCode === 'undefined') {
+        console.warn('QRCode library not loaded, using external API');
+        generarQrDesdeApiExterna(text, containerId);
+        return;
+    }
+    
+    try {
+        // QRCode global from qrcode.js loaded in index.html
+        new QRCode(container, {
+            text,
+            width: 220,
+            height: 220,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: 'H'  // Changed from QRCode.CorrectLevel.H
+        });
+    } catch (e) {
+        console.error('Error rendering QR with QRCode.js:', e);
+        // Fallback a API externa si hay error
+        container.innerHTML = '';
+        generarQrDesdeApiExterna(text, containerId);
+    }
+}
+
+function generarQrDesdeApiExterna(text, containerId = 'qrContainer') {
+    const container = document.getElementById(containerId);
+    if (!container) {
+        console.warn(`Container with ID ${containerId} not found`);
+        return;
+    }
+    container.innerHTML = '';
+    
+    try {
+        // Usar QR Server API como fallback
+        const encodedText = encodeURIComponent(text);
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodedText}`;
+        
+        const img = document.createElement('img');
+        img.src = qrUrl;
+        img.alt = 'QR Code';
+        img.style.cssText = 'max-width: 220px; height: auto; border: 1px solid #ccc; border-radius: 4px; padding: 8px; background: #fff;';
+        
+        img.onerror = function() {
+            container.innerHTML = '<p style="color: red; padding: 12px; background: #ffe6e6; border-radius: 4px;">Error cargando QR. Intenta más tarde.</p>';
+            console.error('Error loading QR from external API');
+        };
+        
+        img.onload = function() {
+            console.log('QR loaded successfully from external API');
+        };
+        
+        container.appendChild(img);
+    } catch (e) {
+        console.error('Error in generarQrDesdeApiExterna:', e);
+        container.innerHTML = '<p style="color: red; padding: 12px; background: #ffe6e6; border-radius: 4px;">Error generando QR: ' + e.message + '</p>';
+    }
 }
 
 function prepararPagoDesdeVerificacion(agente, verificacion) {
@@ -1714,8 +2188,7 @@ async function registrarPagoSemanal(e) {
             semana_inicio: payload.semana_inicio,
             monto: Number(pago.monto ?? payload.monto ?? 0),
             fecha_pago: pago.fecha_pago || new Date().toISOString(),
-            estado: payload.pagado ? 'PAGADO' : 'PENDIENTE',
-            empresa: currentVerificationData?.agente?.empresa || ''
+            estado: payload.pagado ? 'PAGADO' : 'PENDIENTE'
         };
         renderReciboPago(lastReceiptData);
         alert('Pago semanal guardado correctamente.');
@@ -1737,7 +2210,6 @@ function renderReciboPago(data) {
             <h4 style="margin-bottom:10px;">Comprobante de Pago</h4>
             <p><strong>Agente:</strong> ${data.nombre || ''}</p>
             <p><strong>ID:</strong> ${data.agente_id || ''}</p>
-            <p><strong>Empresa:</strong> ${data.empresa || '-'}</p>
             <p><strong>Teléfono:</strong> ${data.telefono || '-'}</p>
             <p><strong>VoIP:</strong> ${data.numero_voip || '-'}</p>
             <p><strong>Semana:</strong> ${data.semana_inicio || '-'}</p>
@@ -1772,7 +2244,6 @@ function imprimirReciboPago() {
                 <h1>Comprobante de Pago</h1>
                 <p><strong>Agente:</strong> ${lastReceiptData.nombre || ''}</p>
                 <p><strong>ID:</strong> ${lastReceiptData.agente_id || ''}</p>
-                <p><strong>Empresa:</strong> ${lastReceiptData.empresa || '-'}</p>
                 <p><strong>Teléfono:</strong> ${lastReceiptData.telefono || '-'}</p>
                 <p><strong>VoIP:</strong> ${lastReceiptData.numero_voip || '-'}</p>
                 <p><strong>Semana:</strong> ${lastReceiptData.semana_inicio || '-'}</p>
@@ -1806,8 +2277,7 @@ function generarReciboDesdeReporte(index) {
         semana_inicio: document.getElementById('reporteSemanaInput')?.value || mondayISO(),
         monto: row.monto_pagado || row.cuota || 0,
         fecha_pago: row.fecha_pago,
-        estado: row.pagado ? 'PAGADO' : 'PENDIENTE',
-        empresa: row.empresa || ''
+        estado: row.pagado ? 'PAGADO' : 'PENDIENTE'
     };
     renderReciboPago(lastReceiptData);
 }
@@ -1847,9 +2317,8 @@ async function guardarCuotaSemanal(e) {
 async function cargarReporteSemanal() {
     const semana = document.getElementById('reporteSemanaInput')?.value || '';
     const agente = document.getElementById('reporteAgenteInput')?.value.trim() || '';
-    const empresa = document.getElementById('reporteEmpresaInput')?.value.trim() || '';
     try {
-        const reporte = await apiClient.getReporteSemanal(semana, agente, empresa);
+        const reporte = await apiClient.getReporteSemanal(semana, agente);
         const resumen = document.getElementById('reporteSemanalResumen');
         const container = document.getElementById('reporteSemanalContainer');
         const cuota = Number(reporte.cuota_semanal || 300).toFixed(2);
@@ -1871,14 +2340,13 @@ async function cargarReporteSemanal() {
             container.innerHTML = '<p>No hay agentes activos para esta semana.</p>';
         } else {
             let html = '<table class="data-table"><thead><tr>';
-            html += '<th>ID</th><th>Nombre</th><th>Telefono</th><th>Empresa</th><th>Pagado</th><th>Monto</th><th>Saldo</th><th>Alerta</th>';
+            html += '<th>ID</th><th>Nombre</th><th>Telefono</th><th>Pagado</th><th>Monto</th><th>Saldo</th><th>Alerta</th>';
             html += '</tr></thead><tbody>';
             filas.forEach((f, index) => {
                 html += `<tr>
                     <td>${f.agente_id}</td>
                     <td>${f.nombre || ''}</td>
                     <td>${f.telefono || ''}</td>
-                    <td>${f.empresa || ''}</td>
                     <td>${f.pagado ? 'SI' : 'NO'}</td>
                     <td>$${Number(f.monto_pagado || 0).toFixed(2)}</td>
                     <td>$${Number(f.saldo || 0).toFixed(2)}</td>
@@ -2099,6 +2567,16 @@ async function cargarDatabases() {
         
         if (data.status === 'success') {
             mostrarDatabases(data.data);
+            const maintenanceSelect = document.getElementById('maintenanceDatabaseSelect');
+            if (maintenanceSelect) {
+                maintenanceSelect.innerHTML = '<option value="">-- Base de datos para mantenimiento --</option>';
+                (data.data || []).forEach(db => {
+                    maintenanceSelect.innerHTML += `<option value="${db}">${db}</option>`;
+                });
+                if (!maintenanceSelect.value && data.data?.length) {
+                    maintenanceSelect.value = pickPreferredDatabase(data.data) || data.data[0];
+                }
+            }
         } else {
             alert('Error al cargar bases de datos');
         }
@@ -2112,6 +2590,7 @@ function mostrarDatabases(databases) {
     const container = document.getElementById('databasesContainer');
     const hiddenCount = hiddenDatabases.length;
     const displayList = databases.filter(db => showHiddenDatabases || !hiddenDatabases.includes(db));
+    const adminMode = canAdmin();
 
     let html = `<div style="margin-bottom:12px">
         <button onclick="toggleMostrarOcultas()" class="btn btn-secondary btn-small">
@@ -2128,10 +2607,10 @@ function mostrarDatabases(databases) {
         if (!isHidden) {
             html += `
                 <button onclick="verTablas('${db}')" class="btn btn-small">Ver Tablas</button>
-                <button onclick="abrirImportBD('${db}')" class="btn btn-small">Importar</button>
-                <button onclick="abrirQueryPanel('${db}')" class="btn btn-small btn-secondary">Query</button>
+                ${canCapture() ? `<button onclick="abrirImportBD('${db}')" class="btn btn-small">Importar</button>` : ''}
+                ${adminMode ? `<button onclick="abrirQueryPanel('${db}')" class="btn btn-small btn-secondary">Query</button>` : ''}
                 <button onclick="ocultarDatabase('${db}')" class="btn btn-small btn-secondary">Ocultar</button>
-                <button onclick="eliminarDatabase('${db}')" class="btn btn-small btn-danger">Eliminar</button>`;
+                ${adminMode ? `<button onclick="eliminarDatabase('${db}')" class="btn btn-small btn-danger">Eliminar</button>` : ''}`;
         } else {
             html += `<button onclick="mostrarDatabase('${db}')" class="btn btn-small">Mostrar</button>`;
         }
@@ -2203,12 +2682,15 @@ async function verTablas(database) {
 
 function mostrarTablas(database, tables) {
     const container = document.getElementById('databasesContainer');
+    const adminMode = canAdmin();
+    const captureMode = canCapture();
     
     let html = `<div style="margin-bottom:12px">
         <button onclick="cargarDatabases()" class="btn btn-secondary btn-small">← Bases de Datos</button>
-        <button onclick="abrirImportBD('${database}')" class="btn btn-small" style="margin-left:8px">Importar archivo</button>
+        ${captureMode ? `<button onclick="abrirImportBD('${database}')" class="btn btn-small" style="margin-left:8px">Importar archivo</button>` : ''}
+        ${adminMode ? `<button onclick="eliminarTablasPruebaUI('${database}')" class="btn btn-small btn-danger" style="margin-left:8px">Eliminar Tablas de Prueba</button>` : ''}
         <button onclick="verVistas('${database}')" class="btn btn-small btn-secondary" style="margin-left:8px">Vistas</button>
-        <button onclick="crearVistaTemporal('${database}')" class="btn btn-small btn-secondary" style="margin-left:8px">Crear Vista</button>
+        ${adminMode ? `<button onclick="crearVistaTemporal('${database}')" class="btn btn-small btn-secondary" style="margin-left:8px">Crear Vista</button>` : ''}
     </div>
     <h3>Tablas en ${database}</h3>
     <table class="data-table">
@@ -2221,8 +2703,8 @@ function mostrarTablas(database, tables) {
                 <td>${table}</td>
                 <td>
                     <button onclick="verDatosTabla('${database}', '${table}')" class="btn btn-small">Ver Datos</button>
-                    <button onclick="abrirImportBD('${database}', '${table}')" class="btn btn-small">Importar</button>
-                    <button onclick="eliminarTabla('${database}', '${table}')" class="btn btn-small btn-danger">Eliminar</button>
+                    ${captureMode ? `<button onclick="abrirImportBD('${database}', '${table}')" class="btn btn-small">Importar</button>` : ''}
+                    ${adminMode ? `<button onclick="eliminarTabla('${database}', '${table}')" class="btn btn-small btn-danger">Eliminar</button>` : ''}
                 </td>
             </tr>
         `;
@@ -2230,6 +2712,49 @@ function mostrarTablas(database, tables) {
     
     html += '</tbody></table>';
     container.innerHTML = html;
+}
+
+async function eliminarTablasPruebaUI(database) {
+    if (!canAdmin()) {
+        alert('Solo administradores pueden eliminar tablas de prueba.');
+        return;
+    }
+    if (!confirm(`Se eliminarán tablas de prueba en ${database} con prefijos tmp_, temp_, test_, ui_temp_ o debug_. ¿Continuar?`)) {
+        return;
+    }
+
+    try {
+        const query = `
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = '${database}'
+              AND table_type = 'BASE TABLE'
+              AND (
+                table_name LIKE 'tmp_%' OR
+                table_name LIKE 'temp_%' OR
+                table_name LIKE 'test_%' OR
+                table_name LIKE 'ui_temp_%' OR
+                table_name LIKE 'debug_%'
+              )
+        `;
+        const result = await apiClient.executeQuery(database, query);
+        const rows = result.data || [];
+        if (!rows.length) {
+            alert('No se encontraron tablas de prueba para eliminar.');
+            return;
+        }
+
+        for (const row of rows) {
+            const tableName = row.table_name;
+            await apiClient.deleteTable(database, tableName);
+        }
+
+        alert(`Se eliminaron ${rows.length} tabla(s) de prueba.`);
+        await verTablas(database);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error eliminando tablas de prueba: ' + error.message);
+    }
 }
 
 async function verVistas(database) {
@@ -2242,9 +2767,10 @@ async function verVistas(database) {
 
         const views = data.data || [];
         const container = document.getElementById('databasesContainer');
+        const adminMode = canAdmin();
         let html = `<div style="margin-bottom:12px">
             <button onclick="verTablas('${database}')" class="btn btn-secondary btn-small">← Tablas</button>
-            <button onclick="crearVistaTemporal('${database}')" class="btn btn-small" style="margin-left:8px">Crear Vista</button>
+            ${adminMode ? `<button onclick="crearVistaTemporal('${database}')" class="btn btn-small" style="margin-left:8px">Crear Vista</button>` : ''}
         </div>
         <h3>Vistas en ${database}</h3>`;
 
@@ -2260,7 +2786,7 @@ async function verVistas(database) {
                 <td>${view}</td>
                 <td>
                     <button onclick="verDatosTabla('${database}', '${view}')" class="btn btn-small">Consultar</button>
-                    <button onclick="eliminarVista('${database}', '${view}')" class="btn btn-small btn-danger">Eliminar</button>
+                    ${adminMode ? `<button onclick="eliminarVista('${database}', '${view}')" class="btn btn-small btn-danger">Eliminar</button>` : ''}
                 </td>
             </tr>`;
         });
@@ -2302,7 +2828,21 @@ async function eliminarVista(database, viewName) {
 
 async function verDatosTabla(database, table) {
     try {
-        const data = await apiClient.getTableData(database, table, 50);
+        currentTableBrowserState = {
+            database,
+            table,
+            orderBy: currentTableBrowserState.table === table ? currentTableBrowserState.orderBy : 'id',
+            direction: currentTableBrowserState.table === table ? currentTableBrowserState.direction : 'desc',
+            limit: 50,
+        };
+        const data = await apiClient.getTableData(
+            database,
+            table,
+            currentTableBrowserState.limit,
+            0,
+            currentTableBrowserState.orderBy,
+            currentTableBrowserState.direction
+        );
         
         if (data.status === 'success') {
             mostrarDatosTabla(database, table, data);
@@ -2315,11 +2855,125 @@ async function verDatosTabla(database, table) {
     }
 }
 
+async function cargarResumenMantenimiento() {
+    if (!canAdmin()) return;
+    const database = document.getElementById('maintenanceDatabaseSelect')?.value || document.getElementById('queryDatabase')?.value || '';
+    if (!database) {
+        alert('Selecciona una base de datos para mantenimiento.');
+        return;
+    }
+    try {
+        const result = await apiClient.getMaintenanceOverview(database);
+        const target = document.getElementById('dbMaintenanceResult');
+        const objects = result.objects || [];
+        const actions = result.recommended_actions || [];
+        let html = `<p><strong>${database}</strong>: ${objects.length} objetos analizados.</p>`;
+        html += `<p>Acciones sugeridas: ${actions.length ? actions.join(' | ') : 'Sin objetos temporales detectados.'}</p>`;
+        html += '<table class="data-table"><thead><tr><th>Objeto</th><th>Tipo</th><th>Filas</th><th>Estado</th></tr></thead><tbody>';
+        objects.forEach(item => {
+            const flags = [];
+            if (item.is_protected) flags.push('Protegido');
+            if (item.is_temp_candidate) flags.push('Temporal');
+            html += `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.type)}</td><td>${item.row_count ?? '-'}</td><td>${escapeHtml(flags.join(' · ') || 'Normal')}</td></tr>`;
+        });
+        html += '</tbody></table>';
+        target.innerHTML = html;
+        document.getElementById('dbMaintenancePanel').style.display = 'block';
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error analizando esquema: ' + error.message);
+    }
+}
+
+async function crearVistasUtilesUI() {
+    if (!canAdmin()) return;
+    const database = document.getElementById('maintenanceDatabaseSelect')?.value || '';
+    if (!database) {
+        alert('Selecciona una base de datos para crear vistas.');
+        return;
+    }
+    try {
+        const result = await apiClient.createUsefulViews(database);
+        alert(result.message || 'Vistas útiles creadas.');
+        cargarResumenMantenimiento();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error creando vistas útiles: ' + error.message);
+    }
+}
+
+async function depurarObjetosTemporales() {
+    if (!canAdmin()) return;
+    const database = document.getElementById('maintenanceDatabaseSelect')?.value || '';
+    if (!database) {
+        alert('Selecciona una base de datos para depurar.');
+        return;
+    }
+    if (!confirm('Se eliminarán objetos temporales o de prueba detectados automáticamente. ¿Continuar?')) return;
+    try {
+        const result = await apiClient.purgeTemporaryObjects(database, false);
+        alert(result.message || 'Depuración completada.');
+        cargarResumenMantenimiento();
+        verTablas(database);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error depurando objetos temporales: ' + error.message);
+    }
+}
+
+async function refrescarDatosTablaNavegador() {
+    if (!currentTableBrowserState.database || !currentTableBrowserState.table) return;
+    try {
+        const data = await apiClient.getTableData(
+            currentTableBrowserState.database,
+            currentTableBrowserState.table,
+            currentTableBrowserState.limit,
+            0,
+            currentTableBrowserState.orderBy,
+            currentTableBrowserState.direction
+        );
+        if (data.status === 'success') {
+            mostrarDatosTabla(currentTableBrowserState.database, currentTableBrowserState.table, data);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error refrescando tabla: ' + error.message);
+    }
+}
+
+function cambiarOrdenTablaNavegador() {
+    const orderBy = document.getElementById('dbTableOrderBy')?.value || 'id';
+    const direction = document.getElementById('dbTableOrderDir')?.value || 'desc';
+    currentTableBrowserState.orderBy = orderBy;
+    currentTableBrowserState.direction = direction;
+    refrescarDatosTablaNavegador();
+}
+
 function mostrarDatosTabla(database, table, data) {
     const container = document.getElementById('databasesContainer');
+    const columns = data.columns || [];
+    const orderBy = data.order_by || currentTableBrowserState.orderBy || 'id';
+    const direction = (data.direction || currentTableBrowserState.direction || 'desc').toLowerCase();
+    currentTableBrowserState = {
+        database,
+        table,
+        orderBy,
+        direction,
+        limit: currentTableBrowserState.limit || 50,
+    };
     
     let html = `<h3>Datos de ${table} en ${database}</h3>`;
     html += `<p>Total de registros: ${data.total}</p>`;
+    html += `<div class="search-bar" style="margin-bottom:10px;max-width:760px;">
+        <select id="dbTableOrderBy" onchange="cambiarOrdenTablaNavegador()">
+            ${columns.map(col => `<option value="${col}" ${col === orderBy ? 'selected' : ''}>Ordenar por ${col}</option>`).join('')}
+        </select>
+        <select id="dbTableOrderDir" onchange="cambiarOrdenTablaNavegador()">
+            <option value="desc" ${direction === 'desc' ? 'selected' : ''}>Descendente</option>
+            <option value="asc" ${direction === 'asc' ? 'selected' : ''}>Ascendente</option>
+        </select>
+        <button type="button" class="btn btn-secondary" onclick="refrescarDatosTablaNavegador()">Refrescar</button>
+    </div>`;
     
     if (data.data.length === 0) {
         html += '<p>No hay datos</p>';
@@ -2328,14 +2982,14 @@ function mostrarDatosTabla(database, table, data) {
     }
     
     html += '<table class="data-table"><thead><tr>';
-    data.columns.forEach(col => {
+    columns.forEach(col => {
         html += `<th>${col}</th>`;
     });
     html += '</tr></thead><tbody>';
     
     data.data.forEach(row => {
         html += '<tr>';
-        data.columns.forEach(col => {
+        columns.forEach(col => {
             html += `<td>${row[col] || ''}</td>`;
         });
         html += '</tr>';
@@ -2475,8 +3129,13 @@ async function importarABD(e) {
 // === GESTIÓN DE USUARIOS ===
 async function cargarUsuarios() {
     try {
-        const usuarios = await apiClient.getUsuarios();
+        const orderBy = document.getElementById('usuariosOrderBy')?.value || 'fecha_creacion';
+        const direction = document.getElementById('usuariosOrderDir')?.value || 'desc';
+        const usuarios = await apiClient.getUsuarios(orderBy, direction);
         mostrarUsuarios(usuarios);
+        if (canAdmin()) {
+            cargarMantenimientoUsuarios(false);
+        }
     } catch (error) {
         console.error('Error:', error);
         alert('Error al cargar usuarios: ' + error.message);
@@ -2494,7 +3153,7 @@ function mostrarUsuarios(usuarios) {
                     <th>Usuario</th>
                     <th>Email</th>
                     <th>Nombre</th>
-                    <th>Admin</th>
+                    <th>Rol</th>
                     <th>Activo</th>
                     <th>Acciones</th>
                 </tr>
@@ -2509,12 +3168,13 @@ function mostrarUsuarios(usuarios) {
                 <td>${user.username}</td>
                 <td>${user.email}</td>
                 <td>${user.nombre_completo || ''}</td>
-                <td>${user.es_admin ? 'Sí' : 'No'}</td>
+                <td>${user.rol || (user.es_admin ? 'admin' : 'viewer')}</td>
                 <td>${user.es_activo ? 'Sí' : 'No'}</td>
                 <td>
                     <button onclick="editarUsuario(${user.id})" class="btn btn-small">Editar</button>
                     <button onclick="cambiarPassword(${user.id})" class="btn btn-small btn-secondary">Contraseña</button>
-                    <button onclick="eliminarUsuario(${user.id})" class="btn btn-small btn-danger">Eliminar</button>
+                    <button onclick="eliminarUsuario(${user.id}, false)" class="btn btn-small btn-danger">Desactivar</button>
+                    <button onclick="eliminarUsuario(${user.id}, true)" class="btn btn-small btn-danger">Eliminar Definitivo</button>
                 </td>
             </tr>
         `;
@@ -2524,15 +3184,106 @@ function mostrarUsuarios(usuarios) {
     container.innerHTML = html;
 }
 
+async function cargarMantenimientoUsuarios(showErrors = true) {
+    if (!canAdmin()) return;
+    const container = document.getElementById('usuariosMaintenanceContainer');
+    if (!container) return;
+    try {
+        const result = await apiClient.getUsuariosMaintenanceOverview();
+        const summary = result.summary || {};
+        const candidates = result.candidates || [];
+
+        let html = `<div class="card" style="padding:12px;border:1px solid #d8e6f4;border-radius:10px;background:#f9fcff;color:#173049;">
+            <strong>Resumen:</strong>
+            Total ${summary.total ?? 0} · Activos ${summary.activos ?? 0} · Inactivos ${summary.inactivos ?? 0} ·
+            Viewer ${summary.viewers ?? 0} · Capture ${summary.captures ?? 0} · Admin ${summary.admins ?? 0}<br>
+            <strong>Candidatos a depurar:</strong> ${summary.candidatos_depurar ?? 0}
+            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+                <button type="button" class="btn btn-secondary" onclick="aplicarReclasificacionMasiva()">Aplicar Cambios de Rol</button>
+            </div>
+        </div>`;
+
+        if (!candidates.length) {
+            html += '<p class="hint" style="margin-top:8px;">No hay usuarios temporales u obsoletos detectados.</p>';
+            container.innerHTML = html;
+            return;
+        }
+
+        html += '<table class="data-table" style="margin-top:8px;"><thead><tr><th>Aplicar</th><th>ID</th><th>Usuario</th><th>Rol Nuevo</th><th>Activo</th><th>Temp</th><th>Obsoleto</th></tr></thead><tbody>';
+        candidates.forEach(user => {
+            html += `<tr>
+                <td><input type="checkbox" class="bulk-user-check" data-user-id="${user.id}" checked></td>
+                <td>${user.id}</td>
+                <td>${escapeHtml(user.username)}</td>
+                <td>
+                    <select class="bulk-user-role" data-user-id="${user.id}">
+                        <option value="viewer" ${user.rol === 'viewer' ? 'selected' : ''}>viewer</option>
+                        <option value="capture" ${user.rol === 'capture' ? 'selected' : ''}>capture</option>
+                        <option value="admin" ${user.rol === 'admin' ? 'selected' : ''}>admin</option>
+                    </select>
+                </td>
+                <td><input type="checkbox" class="bulk-user-active" data-user-id="${user.id}" ${user.es_activo ? 'checked' : ''}></td>
+                <td>${user.is_temp_name ? 'Sí' : 'No'}</td>
+                <td>${user.is_stale ? 'Sí' : 'No'}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (error) {
+        if (showErrors) {
+            console.error('Error:', error);
+            alert('Error cargando mantenimiento de usuarios: ' + error.message);
+        }
+    }
+}
+
+async function aplicarReclasificacionMasiva() {
+    if (!canAdmin()) return;
+    const checks = Array.from(document.querySelectorAll('.bulk-user-check')).filter(el => el.checked);
+    if (!checks.length) {
+        alert('Selecciona al menos un usuario en la lista de mantenimiento.');
+        return;
+    }
+    const updates = checks.map(el => {
+        const userId = Number(el.getAttribute('data-user-id'));
+        const role = document.querySelector(`.bulk-user-role[data-user-id="${userId}"]`)?.value || 'viewer';
+        const active = document.querySelector(`.bulk-user-active[data-user-id="${userId}"]`)?.checked ?? true;
+        return { id: userId, rol: role, es_activo: active };
+    });
+
+    try {
+        const result = await apiClient.reclassifyUsuariosBulk(updates);
+        alert(`Reclasificación aplicada a ${result.count || 0} usuarios.`);
+        cargarUsuarios();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error en reclasificación masiva: ' + error.message);
+    }
+}
+
+async function depurarUsuariosTemporales() {
+    if (!canAdmin()) return;
+    if (!confirm('Se eliminarán definitivamente usuarios temporales/obsoletos (excepto admins). ¿Continuar?')) return;
+    try {
+        const result = await apiClient.purgeTemporaryUsuarios(true);
+        alert(`Depuración completada. Eliminados: ${result.count || 0}`);
+        cargarUsuarios();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error depurando usuarios temporales: ' + error.message);
+    }
+}
+
 function mostrarCrearUsuario() {
     document.getElementById('usuarioId').value = '';
     document.getElementById('usuarioUsername').value = '';
     document.getElementById('usuarioEmail').value = '';
     document.getElementById('usuarioNombreCompleto').value = '';
     document.getElementById('usuarioPassword').value = '';
-    document.getElementById('usuarioEsAdmin').checked = false;
+    document.getElementById('usuarioRol').value = 'viewer';
     document.getElementById('usuarioEsActivo').checked = true;
     document.getElementById('passwordGroup').style.display = 'block';
+    document.getElementById('usuarioPassword').required = true;
     document.getElementById('modalTitle').textContent = 'Crear Usuario';
     document.getElementById('usuarioModal').style.display = 'block';
 }
@@ -2545,9 +3296,11 @@ async function editarUsuario(userId) {
         document.getElementById('usuarioUsername').value = user.username;
         document.getElementById('usuarioEmail').value = user.email;
         document.getElementById('usuarioNombreCompleto').value = user.nombre_completo || '';
-        document.getElementById('usuarioEsAdmin').checked = user.es_admin;
+        document.getElementById('usuarioRol').value = user.rol || (user.es_admin ? 'admin' : 'viewer');
         document.getElementById('usuarioEsActivo').checked = user.es_activo;
         document.getElementById('passwordGroup').style.display = 'none';
+        document.getElementById('usuarioPassword').required = false;
+        document.getElementById('usuarioPassword').value = '';
         document.getElementById('modalTitle').textContent = 'Editar Usuario';
         document.getElementById('usuarioModal').style.display = 'block';
     } catch (error) {
@@ -2564,11 +3317,13 @@ async function guardarUsuario(e) {
     e.preventDefault();
     
     const userId = document.getElementById('usuarioId').value;
+    const role = document.getElementById('usuarioRol').value;
     const userData = {
         username: document.getElementById('usuarioUsername').value,
         email: document.getElementById('usuarioEmail').value,
         nombre_completo: document.getElementById('usuarioNombreCompleto').value,
-        es_admin: document.getElementById('usuarioEsAdmin').checked,
+        rol: role,
+        es_admin: role === 'admin',
         es_activo: document.getElementById('usuarioEsActivo').checked
     };
     
@@ -2607,12 +3362,15 @@ async function cambiarPassword(userId) {
     }
 }
 
-async function eliminarUsuario(userId) {
-    if (!confirm('¿Estás seguro de eliminar este usuario?')) return;
+async function eliminarUsuario(userId, hardDelete = false) {
+    const message = hardDelete
+        ? '¿Eliminar definitivamente este usuario y depurar sus dependencias controladas?'
+        : '¿Desactivar este usuario?';
+    if (!confirm(message)) return;
     
     try {
-        await apiClient.eliminarUsuario(userId);
-        alert('Usuario eliminado');
+        await apiClient.eliminarUsuario(userId, hardDelete);
+        alert(hardDelete ? 'Usuario eliminado definitivamente' : 'Usuario desactivado');
         cargarUsuarios();
     } catch (error) {
         console.error('Error:', error);

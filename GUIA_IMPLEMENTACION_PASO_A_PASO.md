@@ -75,15 +75,14 @@ curl -X GET "http://localhost:8000/api/export/agentes?format=csv" \
   -H "Authorization: Bearer {token}"
 
 # 4. Verificar integración en UI
-# - Agregar secciones HTML de INTEGRACION_FRONTEND_UI.html
 # - Probar botones de exportación
 ```
 
 ### Fase 2: Integración Frontend (Semana 1)
-1. Copiar código JavaScript de `FRONTEND_API_INTEGRATION.js` a `web/js/api-client.js`
-2. Agregar secciones HTML de `INTEGRACION_FRONTEND_UI.html` a `web/index.html`
-3. Agregar CSS de estilos
-4. Actualizar el menú para incluir nuevas secciones
+1. Verificar que `web/js/api-client.js` incluye métodos de exportación y mantenimiento
+2. Verificar que `web/index.html` incluye las secciones activas requeridas
+3. Revisar estilos de `web/css/style.css`
+4. Validar menú por rol y permisos
 5. Probar cada función en navegador
 
 ### Fase 3: Configuración de Backups (Semana 1-2)
@@ -163,8 +162,8 @@ Sin openpyxl solo funciona CSV.
 |-----------|-----------|-----------|
 | RESUMEN_IMPLEMENTACION.md | Visión general de lo completado | Raíz |
 | ANALISIS_BD_RECOMENDACIONES.md | Análisis y mejoras progetadas | Raíz |
-| FRONTEND_API_INTEGRATION.js | Métodos JavaScript para API | Raíz |
-| INTEGRACION_FRONTEND_UI.html | Componentes HTML/CSS UI | Raíz |
+| web/js/api-client.js | Métodos JavaScript para API | web/js |
+| web/index.html | Componentes UI activos | web |
 | IMPLEMENTACION_GUIA_PASO_A_PASO.md | Este documento | Raíz |
 
 ---

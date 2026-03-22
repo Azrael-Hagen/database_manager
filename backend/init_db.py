@@ -6,6 +6,7 @@ from app.database.orm import SessionLocal, init_db
 from app.database.repositorios import RepositorioUsuario
 from app.schemas import UsuarioCrear
 from app.config import config
+from app.security import ROLE_ADMIN
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,6 +38,7 @@ def create_admin_user():
         
         admin = repo.crear(admin_data)
         admin.es_admin = True
+        admin.rol = ROLE_ADMIN
         db.add(admin)
         db.commit()
         
