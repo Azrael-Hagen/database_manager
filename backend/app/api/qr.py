@@ -1,14 +1,19 @@
 """Endpoints de verificacion QR para agentes y pagos semanales."""
 
 from datetime import date, datetime, timedelta
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, FileResponse
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database.orm import get_db
@@ -20,8 +25,9 @@ from app.models import (
     LadaCatalogo,
     LineaTelefonica,
     PagoSemanal,
+    ReciboPago,
 )
-from app.schemas import PagoSemanalCrear, PagoSemanalRespuesta
+from app.schemas import PagoSemanalCrear
 from app.security import get_current_user, require_admin_role, require_capture_role
 from app.qr import QRGenerator
 from app.config import config
@@ -44,6 +50,296 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/qr", tags=["QR Verificacion"])
 
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+SYNCED_EXTENSION_TYPE = "EXT_PBX"
+SYNCED_EXTENSION_PREFIX = "SYNC extensions_pbx"
+
+
+def _utcnow() -> datetime:
+    return datetime.utcnow()
+
+
+def _base64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _base64url_decode(raw: str) -> bytes:
+    padded = raw + "=" * (-len(raw) % 4)
+    return base64.urlsafe_b64decode(padded.encode("utf-8"))
+
+
+def _sign_secure_payload(payload_b64: str) -> str:
+    secret = str(config.SECRET_KEY or "change-me-in-production").encode("utf-8")
+    digest = hmac.new(secret, payload_b64.encode("utf-8"), hashlib.sha256).digest()
+    return _base64url_encode(digest)
+
+
+def _build_secure_qr_token(*, agente_id: int, linea_id: int, linea_numero: str | None) -> str:
+    issued_at = _utcnow()
+    expires_at = issued_at + timedelta(hours=max(1, int(config.QR_TOKEN_TTL_HOURS or 1)))
+    payload = {
+        "agente_id": int(agente_id),
+        "linea_id": int(linea_id),
+        "linea_numero": str(linea_numero or ""),
+        "nonce": secrets.token_hex(8),
+        "iat": issued_at.isoformat(),
+        "exp": expires_at.isoformat(),
+    }
+    payload_b64 = _base64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    signature = _sign_secure_payload(payload_b64)
+    return f"{payload_b64}.{signature}"
+
+
+def _decode_secure_qr_token(token: str) -> dict:
+    raw_token = str(token or "").strip()
+    if "." not in raw_token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token QR invalido")
+    payload_b64, provided_signature = raw_token.split(".", 1)
+    expected_signature = _sign_secure_payload(payload_b64)
+    if not hmac.compare_digest(provided_signature, expected_signature):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Firma QR invalida")
+
+    try:
+        payload = json.loads(_base64url_decode(payload_b64).decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token QR malformado") from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token QR malformado")
+
+    for required in ("agente_id", "linea_id", "exp"):
+        if required not in payload:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token QR incompleto")
+
+    try:
+        expires_at = datetime.fromisoformat(str(payload["exp"]))
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fecha de expiracion invalida") from exc
+    if _utcnow() > expires_at:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="QR expirado")
+    return payload
+
+
+def _active_assignment_for_agent(db: Session, agente_id: int) -> AgenteLineaAsignacion | None:
+    return db.query(AgenteLineaAsignacion).filter(
+        AgenteLineaAsignacion.agente_id == agente_id,
+        AgenteLineaAsignacion.es_activa.is_(True),
+    ).order_by(AgenteLineaAsignacion.fecha_asignacion.desc()).first()
+
+
+def _validate_secure_qr_token(db: Session, token: str, *, require_current: bool = True) -> tuple[DatoImportado, LineaTelefonica | None, dict]:
+    payload = _decode_secure_qr_token(token)
+    agente_id = int(payload.get("agente_id") or 0)
+    linea_id = int(payload.get("linea_id") or 0)
+
+    agente = db.query(DatoImportado).filter(
+        DatoImportado.id == agente_id,
+        DatoImportado.es_activo.is_(True),
+    ).first()
+    if not agente:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agente no encontrado")
+
+    linea = None
+    if linea_id > 0:
+        linea = db.query(LineaTelefonica).filter(
+            LineaTelefonica.id == linea_id,
+            LineaTelefonica.es_activa.is_(True),
+        ).first()
+    if linea_id > 0 and not linea:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Linea del QR ya no esta activa")
+
+    active_assignment = _active_assignment_for_agent(db, agente.id)
+    if require_current and (not active_assignment or active_assignment.linea_id != linea_id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="QR invalido para la linea actualmente asignada")
+
+    if require_current:
+        stored_payload = _safe_json_object(agente.contenido_qr)
+        current_token = str(stored_payload.get("secure_token") or "").strip()
+        if current_token and current_token != str(token).strip():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="QR reemplazado por una version mas reciente")
+
+    return agente, linea, payload
+
+
+def _cleanup_expired_receipts(db: Session) -> None:
+    db.query(ReciboPago).filter(ReciboPago.expira_en < _utcnow()).delete(synchronize_session=False)
+
+
+def _build_receipt_payload(*, pago: PagoSemanal, agente: DatoImportado, linea: LineaTelefonica | None) -> dict:
+    return {
+        "pago_id": pago.id,
+        "agente_id": agente.id,
+        "agente_nombre": agente.nombre,
+        "linea_id": linea.id if linea else None,
+        "linea_numero": linea.numero if linea else None,
+        "telefono": pago.telefono,
+        "numero_voip": pago.numero_voip,
+        "semana_inicio": pago.semana_inicio.isoformat() if pago.semana_inicio else None,
+        "monto": float(pago.monto or 0),
+        "pagado": bool(pago.pagado),
+        "fecha_pago": pago.fecha_pago.isoformat() if pago.fecha_pago else None,
+        "observaciones": pago.observaciones,
+    }
+
+
+def _upsert_payment_receipt(db: Session, *, pago: PagoSemanal, agente: DatoImportado, linea: LineaTelefonica | None) -> ReciboPago:
+    _cleanup_expired_receipts(db)
+    retention_days = max(1, int(config.RECEIPT_RETENTION_DAYS or 1))
+    expires_at = _utcnow() + timedelta(days=retention_days)
+    payload = _build_receipt_payload(pago=pago, agente=agente, linea=linea)
+    existing = db.query(ReciboPago).filter(ReciboPago.pago_id == pago.id).first()
+    if existing:
+        existing.agente_id = agente.id
+        existing.linea_id = linea.id if linea else None
+        existing.linea_numero = linea.numero if linea else None
+        existing.contenido_json = json.dumps(payload, ensure_ascii=False)
+        existing.expira_en = expires_at
+        return existing
+
+    row = ReciboPago(
+        pago_id=pago.id,
+        agente_id=agente.id,
+        linea_id=linea.id if linea else None,
+        linea_numero=linea.numero if linea else None,
+        token_recibo=secrets.token_urlsafe(24),
+        contenido_json=json.dumps(payload, ensure_ascii=False),
+        expira_en=expires_at,
+    )
+    db.add(row)
+    return row
+
+
+def _safe_sql_identifier(raw: str | None, fallback: str) -> str:
+    value = str(raw or "").strip() or fallback
+    if not re.match(r"^[0-9A-Za-z_]+$", value):
+        return fallback
+    return value
+
+
+def _managed_extension_description() -> str:
+    return (
+        f"{SYNCED_EXTENSION_PREFIX} "
+        f"{_safe_sql_identifier(config.PBX_DB_NAME, 'registro_agentes')}."
+        f"{_safe_sql_identifier(config.PBX_EXTENSIONS_TABLE, 'extensions_pbx')}"
+    )
+
+
+def _managed_extension_filter():
+    return LineaTelefonica.descripcion.ilike(f"{SYNCED_EXTENSION_PREFIX}%")
+
+
+def _fetch_extension_source_numbers(db: Session) -> list[str]:
+    source_db = _safe_sql_identifier(config.PBX_DB_NAME, "registro_agentes")
+    source_table = _safe_sql_identifier(config.PBX_EXTENSIONS_TABLE, "extensions_pbx")
+    rows = db.execute(
+        text(
+            f"SELECT CAST(`Extension` AS CHAR) AS extension "
+            f"FROM `{source_db}`.`{source_table}`"
+        )
+    ).mappings().all()
+
+    numbers: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        raw_value = row.get("extension")
+        if raw_value in (None, ""):
+            continue
+        try:
+            numero = _safe_line_number(str(raw_value))
+        except HTTPException:
+            continue
+        if numero in seen:
+            continue
+        seen.add(numero)
+        numbers.append(numero)
+    return numbers
+
+
+def _sync_extensions_inventory(db: Session) -> dict[str, int]:
+    desired_description = _managed_extension_description()
+    source_numbers = _fetch_extension_source_numbers(db)
+    source_set = set(source_numbers)
+    existing_lines = {row.numero: row for row in db.query(LineaTelefonica).all()}
+    now = datetime.utcnow()
+    created = 0
+    updated = 0
+    deactivated = 0
+
+    for numero in source_numbers:
+        row = existing_lines.get(numero)
+        if row is None:
+            db.add(
+                LineaTelefonica(
+                    numero=numero,
+                    tipo=SYNCED_EXTENSION_TYPE,
+                    descripcion=desired_description,
+                    es_activa=True,
+                )
+            )
+            created += 1
+            continue
+
+        changed = False
+        if not row.es_activa:
+            row.es_activa = True
+            changed = True
+        if row.tipo != SYNCED_EXTENSION_TYPE:
+            row.tipo = SYNCED_EXTENSION_TYPE
+            changed = True
+        if row.descripcion != desired_description:
+            row.descripcion = desired_description
+            changed = True
+        if changed:
+            row.fecha_actualizacion = now
+            updated += 1
+
+    managed_rows = db.query(LineaTelefonica).filter(_managed_extension_filter()).all()
+    for row in managed_rows:
+        if row.numero in source_set or not row.es_activa:
+            continue
+        row.es_activa = False
+        row.fecha_actualizacion = now
+        deactivated += 1
+        active_assignments = db.query(AgenteLineaAsignacion).filter(
+            AgenteLineaAsignacion.linea_id == row.id,
+            AgenteLineaAsignacion.es_activa.is_(True),
+        ).all()
+        for assignment in active_assignments:
+            assignment.es_activa = False
+            assignment.fecha_liberacion = now
+            assignment.observaciones = (
+                assignment.observaciones or "Liberada por sincronizacion extensions_pbx"
+            )
+
+    ladas_created = 0
+    ladas_reactivated = 0
+    ladas_known = {row.codigo: row for row in db.query(LadaCatalogo).all()}
+    source_ladas = sorted({numero[:3] for numero in source_numbers if len(numero) >= 3})
+    for lada_code in source_ladas:
+        existing_lada = ladas_known.get(lada_code)
+        if existing_lada is None:
+            db.add(LadaCatalogo(codigo=lada_code, nombre_region=None, es_activa=True))
+            ladas_created += 1
+            continue
+        if not existing_lada.es_activa:
+            existing_lada.es_activa = True
+            ladas_reactivated += 1
+
+    db.flush()
+    return {
+        "source": len(source_numbers),
+        "created": created,
+        "updated": updated,
+        "deactivated": deactivated,
+        "ladas_created": ladas_created,
+        "ladas_reactivated": ladas_reactivated,
+    }
+
+
+def _get_managed_active_line_query(db: Session):
+    return db.query(LineaTelefonica).filter(
+        LineaTelefonica.es_activa.is_(True),
+        _managed_extension_filter(),
+    )
 
 
 def _render_public_status_page(payload: dict) -> HTMLResponse:
@@ -162,6 +458,9 @@ def _extract_identifier_from_code(raw_code: str) -> tuple[str, str]:
         try:
             parsed = urlparse(code)
             path = (parsed.path or "").rstrip("/")
+            secure_match = re.search(r"/api/qr/public/verify-secure/([^/]+)$", path)
+            if secure_match:
+                return "secure_token", secure_match.group(1)
             uuid_match = re.search(r"/api/qr/public/verify/([^/]+)$", path)
             if uuid_match:
                 return "uuid", uuid_match.group(1)
@@ -188,6 +487,13 @@ def _find_agent_by_scanned_code(db: Session, code: str) -> DatoImportado | None:
     kind, value = _extract_identifier_from_code(code)
     if not value:
         return None
+
+    if kind == "secure_token":
+        try:
+            agente, _linea, _payload = _validate_secure_qr_token(db, value, require_current=True)
+            return agente
+        except HTTPException:
+            return None
 
     if kind == "uuid":
         return db.query(DatoImportado).filter(
@@ -277,11 +583,11 @@ def _extract_lada_from_number(number: str, known_codes: list[str]) -> str | None
 
 
 def _resolve_or_create_line_for_manual_assignment(db: Session, payload: dict) -> LineaTelefonica:
+    _sync_extensions_inventory(db)
     linea_id = int((payload or {}).get("linea_id") or 0)
     if linea_id > 0:
-        linea = db.query(LineaTelefonica).filter(
+        linea = _get_managed_active_line_query(db).filter(
             LineaTelefonica.id == linea_id,
-            LineaTelefonica.es_activa.is_(True),
         ).first()
         if not linea:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linea no encontrada")
@@ -289,28 +595,19 @@ def _resolve_or_create_line_for_manual_assignment(db: Session, payload: dict) ->
 
     raw_number = (payload or {}).get("numero_linea_manual")
     numero = _safe_line_number(raw_number)
-    tipo = str((payload or {}).get("tipo_linea") or "VOIP").strip().upper()[:30] or "VOIP"
-    descripcion = str((payload or {}).get("descripcion_linea") or "").strip() or None
-
-    existing = db.query(LineaTelefonica).filter(LineaTelefonica.numero == numero).first()
-    if existing:
-        existing.es_activa = True
-        if tipo:
-            existing.tipo = tipo
-        if descripcion is not None:
-            existing.descripcion = descripcion
-        db.flush()
-        return existing
-
-    line = LineaTelefonica(numero=numero, tipo=tipo, descripcion=descripcion, es_activa=True)
-    db.add(line)
-    db.flush()
-    return line
+    existing = _get_managed_active_line_query(db).filter(LineaTelefonica.numero == numero).first()
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La linea indicada no existe en el inventario sincronizado desde extensions_pbx",
+        )
+    return existing
 
 
 def _choose_free_line_automatically(db: Session, lada_objetivo: str | None = None) -> LineaTelefonica | None:
+    _sync_extensions_inventory(db)
     active_assignments = _active_line_assignments_map(db)
-    lineas = db.query(LineaTelefonica).filter(LineaTelefonica.es_activa.is_(True)).order_by(LineaTelefonica.numero.asc()).all()
+    lineas = _get_managed_active_line_query(db).order_by(LineaTelefonica.numero.asc()).all()
     available = [l for l in lineas if l.id not in active_assignments]
     if not available:
         return None
@@ -343,7 +640,7 @@ def _set_agent_lada_preference(db: Session, agente_id: int, lada_code: str | Non
     db.add(AgenteLadaPreferencia(agente_id=agente_id, lada_id=lada.id, prioridad=1))
 
 
-@router.post("/pagos", response_model=PagoSemanalRespuesta)
+@router.post("/pagos")
 async def registrar_pago_semanal(
     pago_in: PagoSemanalCrear,
     current_user: dict = Depends(get_current_user),
@@ -397,8 +694,29 @@ async def registrar_pago_semanal(
     db.commit()
     db.refresh(pago)
 
+    active_assignment = _active_assignment_for_agent(db, agente.id)
+    linea = active_assignment.linea if active_assignment and active_assignment.linea else None
+    recibo = _upsert_payment_receipt(db, pago=pago, agente=agente, linea=linea)
+    db.commit()
+    db.refresh(recibo)
+
     logger.info("Usuario %s registró pago semanal para agente %s", current_user.get("username"), pago_in.agente_id)
-    return pago
+    return {
+        "id": pago.id,
+        "agente_id": pago.agente_id,
+        "telefono": pago.telefono,
+        "numero_voip": pago.numero_voip,
+        "semana_inicio": pago.semana_inicio.isoformat() if pago.semana_inicio else None,
+        "monto": float(pago.monto or 0),
+        "pagado": bool(pago.pagado),
+        "fecha_pago": pago.fecha_pago.isoformat() if pago.fecha_pago else None,
+        "observaciones": pago.observaciones,
+        "recibo": {
+            "token": recibo.token_recibo,
+            "expira_en": recibo.expira_en.isoformat() if recibo.expira_en else None,
+            "linea_numero": recibo.linea_numero,
+        },
+    }
 
 
 @router.get("/verificar/{agente_id}")
@@ -542,7 +860,6 @@ async def listar_agentes_qr(
                 "uuid": a.uuid,
                 "nombre": a.nombre,
                 "telefono": a.telefono,
-                "empresa": a.empresa,
                 "datos_adicionales": _safe_json_object(a.datos_adicionales),
                 "ladas_preferidas": [
                     pref.lada.codigo for pref in sorted(a.ladas_preferidas, key=lambda x: x.prioridad) if pref.lada and pref.lada.es_activa
@@ -566,7 +883,6 @@ async def crear_agente_manual(
     if not nombre:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nombre es requerido")
 
-    telefono = str((payload or {}).get("telefono") or "").strip() or None
     email = str((payload or {}).get("email") or "").strip() or None
     empresa = str((payload or {}).get("empresa") or "").strip() or None
     ciudad = str((payload or {}).get("ciudad") or "").strip() or None
@@ -593,7 +909,7 @@ async def crear_agente_manual(
     agente = DatoImportado(
         nombre=nombre,
         email=email,
-        telefono=telefono,
+        telefono=None,
         empresa=empresa,
         ciudad=ciudad,
         pais=pais,
@@ -651,7 +967,6 @@ async def crear_agente_manual(
             "agente_id": agente.id,
             "uuid": agente.uuid,
             "nombre": agente.nombre,
-            "telefono": agente.telefono,
             "modo_asignacion": modo,
             "asignacion": asignacion_resumen,
             "lineas": _agent_active_lines(db, agente.id),
@@ -736,7 +1051,8 @@ async def listar_lineas(
     db: Session = Depends(get_db),
 ):
     """Listar lineas con estado ocupada/libre y agente asignado."""
-    query = db.query(LineaTelefonica).filter(LineaTelefonica.es_activa.is_(True))
+    _sync_extensions_inventory(db)
+    query = _get_managed_active_line_query(db)
     if search:
         term = f"%{search.strip()}%"
         query = query.filter(
@@ -782,26 +1098,45 @@ async def crear_linea(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Crear o reactivar una linea en inventario."""
+    """Sincronizar/activar una linea del inventario fuente extensions_pbx."""
     require_capture_role(current_user)
     numero = _safe_line_number((payload or {}).get("numero", ""))
-    tipo = str((payload or {}).get("tipo", "VOIP") or "VOIP").strip().upper()[:30] or "VOIP"
-    descripcion = str((payload or {}).get("descripcion", "") or "").strip() or None
-
-    existing = db.query(LineaTelefonica).filter(LineaTelefonica.numero == numero).first()
-    if existing:
-        existing.tipo = tipo
-        existing.descripcion = descripcion
-        existing.es_activa = True
-        db.commit()
-        db.refresh(existing)
-        return {"status": "success", "data": {"id": existing.id, "numero": existing.numero, "tipo": existing.tipo, "reactivada": True}}
-
-    row = LineaTelefonica(numero=numero, tipo=tipo, descripcion=descripcion, es_activa=True)
-    db.add(row)
+    sync_result = _sync_extensions_inventory(db)
+    row = _get_managed_active_line_query(db).filter(LineaTelefonica.numero == numero).first()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La linea indicada no existe en registro_agentes.extensions_pbx",
+        )
     db.commit()
     db.refresh(row)
-    return {"status": "success", "data": {"id": row.id, "numero": row.numero, "tipo": row.tipo, "reactivada": False}}
+    return {
+        "status": "success",
+        "data": {
+            "id": row.id,
+            "numero": row.numero,
+            "tipo": row.tipo,
+            "sincronizadas": sync_result["source"],
+            "ladas_creadas": sync_result.get("ladas_created", 0),
+            "ladas_reactivadas": sync_result.get("ladas_reactivated", 0),
+        },
+    }
+
+
+@router.post("/lineas/sync")
+async def sincronizar_lineas_pbx(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Sincronizar inventario operativo desde registro_agentes.extensions_pbx."""
+    require_capture_role(current_user)
+    sync_result = _sync_extensions_inventory(db)
+    db.commit()
+    return {
+        "status": "success",
+        "message": "Inventario de lineas sincronizado desde extensions_pbx",
+        "data": sync_result,
+    }
 
 
 @router.post("/lineas/{linea_id}/asignar")
@@ -817,9 +1152,9 @@ async def asignar_linea_a_agente(
     if agente_id <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Debe enviar agente_id")
 
-    linea = db.query(LineaTelefonica).filter(
+    _sync_extensions_inventory(db)
+    linea = _get_managed_active_line_query(db).filter(
         LineaTelefonica.id == linea_id,
-        LineaTelefonica.es_activa.is_(True),
     ).first()
     if not linea:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linea no encontrada")
@@ -863,6 +1198,11 @@ async def liberar_linea(
     """Liberar linea ocupada (deja historial de asignacion)."""
     require_admin_role(current_user, "Solo administradores pueden liberar lineas")
     agente_id = int((payload or {}).get("agente_id") or 0)
+    _sync_extensions_inventory(db)
+
+    linea = _get_managed_active_line_query(db).filter(LineaTelefonica.id == linea_id).first()
+    if not linea:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linea no encontrada")
 
     query = db.query(AgenteLineaAsignacion).filter(
         AgenteLineaAsignacion.linea_id == linea_id,
@@ -896,7 +1236,8 @@ async def desactivar_linea(
 ):
     """Desactivar una linea del inventario (no elimina historial)."""
     require_admin_role(current_user, "Solo administradores pueden desactivar lineas")
-    linea = db.query(LineaTelefonica).filter(LineaTelefonica.id == linea_id, LineaTelefonica.es_activa.is_(True)).first()
+    _sync_extensions_inventory(db)
+    linea = _get_managed_active_line_query(db).filter(LineaTelefonica.id == linea_id).first()
     if not linea:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linea no encontrada")
 
@@ -999,6 +1340,166 @@ async def reporte_semanal(
     return {"status": "success", **data}
 
 
+@router.get("/agentes/estado-pago")
+async def listar_agentes_extension_estado_pago(
+    semana: date | None = Query(None),
+    search: str | None = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Vista operativa de agentes con linea activa y estado de pago."""
+    if semana is None:
+        params = {}
+        where_sql = ""
+        if search:
+            where_sql = " WHERE nombre LIKE :term OR extension_numero LIKE :term "
+            params["term"] = f"%{search.strip()}%"
+        rows = db.execute(
+            text(
+                "SELECT * FROM vw_agentes_extensiones_pago_actual"
+                f"{where_sql}"
+                " ORDER BY nombre ASC"
+            ),
+            params,
+        ).mappings().all()
+        week_label = monday_of_week(date.today()).isoformat()
+    else:
+        semana_ref = monday_of_week(semana)
+        params = {"week_ref": semana_ref}
+        where_parts = []
+        if search:
+            where_parts.append("(d.nombre LIKE :term OR l.numero LIKE :term)")
+            params["term"] = f"%{search.strip()}%"
+        where_clause = f" AND {' AND '.join(where_parts)}" if where_parts else ""
+        rows = db.execute(
+            text(
+                """
+                SELECT
+                    d.id AS agente_id,
+                    d.uuid,
+                    d.nombre,
+                    COALESCE(d.es_activo, 1) AS es_activo,
+                    l.id AS linea_id,
+                    l.numero AS extension_numero,
+                    l.tipo AS extension_tipo,
+                    p.semana_inicio,
+                    COALESCE(p.pagado, 0) AS pagado_semana,
+                    COALESCE(p.monto, 0) AS monto_semana,
+                    p.fecha_pago,
+                    CASE
+                        WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'DEBE'
+                        ELSE 'PAGADO'
+                    END AS estado_pago
+                FROM datos_importados d
+                LEFT JOIN agente_linea_asignaciones ala
+                    ON ala.agente_id = d.id AND ala.es_activa = 1
+                LEFT JOIN lineas_telefonicas l
+                    ON l.id = ala.linea_id AND COALESCE(l.es_activa, 1) = 1
+                LEFT JOIN pagos_semanales p
+                    ON p.agente_id = d.id AND p.semana_inicio = :week_ref
+                WHERE COALESCE(d.es_activo, 1) = 1
+                """
+                + where_clause
+                + " ORDER BY d.nombre ASC"
+            ),
+            params,
+        ).mappings().all()
+        week_label = semana_ref.isoformat()
+
+    data = []
+    for row in rows:
+        data.append({
+            "agente_id": row.get("agente_id"),
+            "uuid": row.get("uuid"),
+            "nombre": row.get("nombre"),
+            "linea_id": row.get("linea_id"),
+            "extension_numero": row.get("extension_numero"),
+            "extension_tipo": row.get("extension_tipo"),
+            "semana_inicio": row.get("semana_inicio").isoformat() if row.get("semana_inicio") else week_label,
+            "pagado": bool(row.get("pagado_semana")),
+            "monto": float(row.get("monto_semana") or 0),
+            "fecha_pago": row.get("fecha_pago").isoformat() if row.get("fecha_pago") else None,
+            "estado_pago": row.get("estado_pago") or "DEBE",
+        })
+
+    return {
+        "status": "success",
+        "semana_inicio": week_label,
+        "data": data,
+    }
+
+
+@router.get("/recibos")
+async def listar_recibos_pago(
+    agente_id: int | None = Query(None),
+    include_expired: bool = Query(False),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Listar recibos persistidos para reimpresion."""
+    _cleanup_expired_receipts(db)
+    db.commit()
+    query = db.query(ReciboPago)
+    if agente_id:
+        query = query.filter(ReciboPago.agente_id == agente_id)
+    if not include_expired:
+        query = query.filter(ReciboPago.expira_en >= _utcnow())
+
+    rows = query.order_by(ReciboPago.generado_en.desc()).limit(300).all()
+    data = []
+    for row in rows:
+        payload = _safe_json_object(row.contenido_json)
+        data.append({
+            "token": row.token_recibo,
+            "agente_id": row.agente_id,
+            "agente_nombre": payload.get("agente_nombre"),
+            "linea_numero": row.linea_numero,
+            "semana_inicio": payload.get("semana_inicio"),
+            "monto": payload.get("monto"),
+            "pagado": bool(payload.get("pagado", False)),
+            "fecha_pago": payload.get("fecha_pago"),
+            "generado_en": row.generado_en.isoformat() if row.generado_en else None,
+            "expira_en": row.expira_en.isoformat() if row.expira_en else None,
+            "impresiones": int(row.impresiones_count or 0),
+        })
+    return {"status": "success", "data": data}
+
+
+@router.get("/recibos/{token_recibo}")
+async def obtener_recibo_pago(
+    token_recibo: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Obtener recibo puntual para mostrar/reimprimir."""
+    _cleanup_expired_receipts(db)
+    row = db.query(ReciboPago).filter(ReciboPago.token_recibo == token_recibo).first()
+    if not row:
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recibo no encontrado")
+    if row.expira_en < _utcnow():
+        db.delete(row)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Recibo expirado")
+
+    row.impresiones_count = int(row.impresiones_count or 0) + 1
+    row.ultima_impresion = _utcnow()
+    db.commit()
+    payload = _safe_json_object(row.contenido_json)
+    return {
+        "status": "success",
+        "data": {
+            **payload,
+            "token": row.token_recibo,
+            "linea_numero": row.linea_numero,
+            "generado_en": row.generado_en.isoformat() if row.generado_en else None,
+            "expira_en": row.expira_en.isoformat() if row.expira_en else None,
+            "impresiones": int(row.impresiones_count or 0),
+            "ultima_impresion": row.ultima_impresion.isoformat() if row.ultima_impresion else None,
+        },
+    }
+
+
 @router.post("/backup")
 async def generar_respaldo_manual(
     payload: dict | None = None,
@@ -1076,7 +1577,7 @@ async def obtener_qr_agente(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Obtener payload y URL pública del QR independiente de un agente."""
+    """Obtener payload y URL pública de QR firmado ligado a agente + linea activa."""
     agente = db.query(DatoImportado).filter(
         DatoImportado.id == agente_id,
         DatoImportado.es_activo.is_(True)
@@ -1084,8 +1585,21 @@ async def obtener_qr_agente(
     if not agente:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agente no encontrado")
 
+    active_assignment = _active_assignment_for_agent(db, agente.id)
+    if not active_assignment or not active_assignment.linea or not active_assignment.linea.es_activa:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El agente no tiene una linea activa para emitir QR seguro",
+        )
+    linea = active_assignment.linea
+
     public_base_url = config.get_public_base_url(request)
-    public_url = f"{public_base_url}/api/qr/public/verify/{agente.uuid}"
+    secure_token = _build_secure_qr_token(
+        agente_id=agente.id,
+        linea_id=linea.id,
+        linea_numero=linea.numero,
+    )
+    public_url = f"{public_base_url}/api/qr/public/verify-secure/{secure_token}"
     lineas_agente = _agent_active_lines(db, agente.id)
     payload = {
         "agente_id": agente.id,
@@ -1095,11 +1609,17 @@ async def obtener_qr_agente(
         "numero_voip": _extract_voip(agente),
         "tiene_asignacion": _has_assignment(agente) or bool(lineas_agente),
         "lineas": lineas_agente,
+        "linea_activa": {
+            "linea_id": linea.id,
+            "numero": linea.numero,
+            "tipo": linea.tipo,
+        },
+        "secure_token": secure_token,
         "public_url": public_url,
     }
 
     generator = QRGenerator()
-    filename = f"agente_{agente.id}_{agente.uuid}.png"
+    filename = f"agente_{agente.id}_linea_{linea.id}_{agente.uuid}.png"
     filepath = generator.generate_qr_from_text(public_url, filename)
     agente.qr_filename = filename
     agente.contenido_qr = json.dumps(payload, ensure_ascii=False)
@@ -1122,6 +1642,39 @@ async def descargar_qr_agente(
     if not path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="QR no disponible")
     return FileResponse(path, media_type="image/png", filename=os.path.basename(path))
+
+
+@router.get("/public/verify-secure/{token}", response_class=HTMLResponse)
+async def verificar_publico_qr_seguro(
+    token: str,
+    semana: date | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Verificacion publica de QR firmado y ligado a agente + linea activa."""
+    agente, linea, _payload = _validate_secure_qr_token(db, token, require_current=True)
+
+    semana_ref = monday_of_week(semana or date.today())
+    pago = db.query(PagoSemanal).filter(
+        PagoSemanal.agente_id == agente.id,
+        PagoSemanal.semana_inicio == semana_ref,
+    ).first()
+
+    payload = {
+        "status": "success",
+        "agente": {
+            "id": agente.id,
+            "uuid": agente.uuid,
+            "nombre": agente.nombre,
+            "telefono": agente.telefono,
+            "tiene_asignacion": True,
+            "linea": linea.numero if linea else None,
+        },
+        "semana_inicio": semana_ref.isoformat(),
+        "pagado": bool(pago.pagado) if pago else False,
+        "monto": float(pago.monto) if pago else 0.0,
+        "fecha_pago": pago.fecha_pago.isoformat() if pago and pago.fecha_pago else None,
+    }
+    return _render_public_status_page(payload)
 
 
 @router.get("/public/verify/{uuid}", response_class=HTMLResponse)

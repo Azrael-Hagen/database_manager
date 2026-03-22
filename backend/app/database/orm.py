@@ -97,6 +97,38 @@ def _ensure_core_schema_updates():
                 """
             )
         )
+        connection.execute(
+            text(
+                """
+                CREATE OR REPLACE VIEW vw_agentes_extensiones_pago_actual AS
+                SELECT
+                    d.id AS agente_id,
+                    d.uuid,
+                    d.nombre,
+                    COALESCE(d.es_activo, 1) AS es_activo,
+                    l.id AS linea_id,
+                    l.numero AS extension_numero,
+                    l.tipo AS extension_tipo,
+                    p.semana_inicio,
+                    COALESCE(p.pagado, 0) AS pagado_semana,
+                    COALESCE(p.monto, 0) AS monto_semana,
+                    p.fecha_pago,
+                    CASE
+                        WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'DEBE'
+                        ELSE 'PAGADO'
+                    END AS estado_pago
+                FROM datos_importados d
+                LEFT JOIN agente_linea_asignaciones ala
+                    ON ala.agente_id = d.id AND ala.es_activa = 1
+                LEFT JOIN lineas_telefonicas l
+                    ON l.id = ala.linea_id AND COALESCE(l.es_activa, 1) = 1
+                LEFT JOIN pagos_semanales p
+                    ON p.agente_id = d.id
+                   AND p.semana_inicio = DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
+                WHERE COALESCE(d.es_activo, 1) = 1
+                """
+            )
+        )
 
 
 def get_db() -> Session:

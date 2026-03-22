@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-03-22T07:20:46.967783",
+  "timestamp": "2026-03-22T08:03:51.467824",
   "tests": {
     "Imports B\u00e1sicos": {
       "status": "PASSED",
@@ -11,7 +11,7 @@
     },
     "Modelos ORM": {
       "status": "PASSED",
-      "details": "12 tablas verificadas"
+      "details": "13 tablas verificadas"
     },
     "Estructuras de Tablas": {
       "status": "PASSED",

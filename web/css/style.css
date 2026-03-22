@@ -507,6 +507,61 @@ body {
     background: var(--danger);
 }
 
+.tour-highlight {
+    position: relative;
+    z-index: 2200;
+    outline: 3px solid rgba(30, 211, 255, 0.95);
+    outline-offset: 3px;
+    border-radius: 8px;
+    box-shadow: 0 0 0 6px rgba(30, 211, 255, 0.2), 0 8px 18px rgba(9, 45, 78, 0.35);
+}
+
+.tour-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(4, 14, 28, 0.55);
+    z-index: 2100;
+}
+
+.tour-panel {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: min(460px, calc(100vw - 32px));
+    background: #f7fbff;
+    color: #173049;
+    border: 1px solid #b8d5ea;
+    border-radius: 14px;
+    box-shadow: 0 16px 36px rgba(6, 24, 42, 0.36);
+    z-index: 2300;
+    padding: 14px;
+}
+
+.tour-panel h3 {
+    margin: 0 0 6px;
+    color: #0f4d83;
+}
+
+.tour-panel .tour-body {
+    font-size: 0.95rem;
+    color: #2a4e71;
+    margin-bottom: 10px;
+}
+
+.tour-panel .tour-progress {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.8rem;
+    color: #466482;
+    margin-bottom: 10px;
+}
+
+.tour-panel .tour-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
 .live-strip {
     display: flex;
     align-items: center;

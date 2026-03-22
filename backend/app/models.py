@@ -88,6 +88,7 @@ class PagoSemanal(Base):
     fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     agente = relationship("DatoImportado")
+    recibo = relationship("ReciboPago", back_populates="pago", uselist=False)
 
     def __repr__(self):
         return f"<PagoSemanal agente={self.agente_id} semana={self.semana_inicio} pagado={self.pagado}>"
@@ -198,6 +199,31 @@ class AgenteLadaPreferencia(Base):
 
     def __repr__(self):
         return f"<AgenteLadaPreferencia agente={self.agente_id} lada={self.lada_id} prioridad={self.prioridad}>"
+
+
+class ReciboPago(Base):
+    """Comprobante persistente para reimpresion durante ventana de retencion."""
+
+    __tablename__ = "recibos_pago"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pago_id = Column(Integer, ForeignKey("pagos_semanales.id"), nullable=False, unique=True, index=True)
+    agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
+    linea_id = Column(Integer, ForeignKey("lineas_telefonicas.id"), index=True)
+    linea_numero = Column(String(50), index=True)
+    token_recibo = Column(String(80), nullable=False, unique=True, index=True)
+    contenido_json = Column(Text, nullable=False)
+    generado_en = Column(DateTime, default=datetime.utcnow, index=True)
+    expira_en = Column(DateTime, nullable=False, index=True)
+    impresiones_count = Column(Integer, default=0)
+    ultima_impresion = Column(DateTime)
+
+    pago = relationship("PagoSemanal", back_populates="recibo")
+    agente = relationship("DatoImportado")
+    linea = relationship("LineaTelefonica")
+
+    def __repr__(self):
+        return f"<ReciboPago pago={self.pago_id} token={self.token_recibo}>"
 
 
 class ImportLog(Base):

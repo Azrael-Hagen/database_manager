@@ -325,6 +325,10 @@
             <section id="altasAgentesSection" class="panel" style="display: none;">
                 <h1>Altas de Agentes</h1>
                 <p class="hint">Usa esta pantalla para onboarding: crea catálogo de ladas, da de alta al agente, asigna línea y genera su QR inicial sin mezclarlo con verificación o cobros.</p>
+                <div class="search-bar" style="margin-bottom:10px;">
+                    <button type="button" class="btn btn-secondary" onclick="iniciarGuiaAltas()">Visita Guiada de Altas</button>
+                    <button type="button" class="btn btn-secondary" onclick="reiniciarGuiaAltas()">Reiniciar Guía</button>
+                </div>
 
                 <h3 style="margin-top: 22px;">Catálogo de Ladas</h3>
                 <form onsubmit="crearLadaCatalogo(event)">
@@ -341,7 +345,6 @@
                         <input type="text" id="agenteNombreInput" placeholder="Nombre" required>
                         <input type="text" id="agenteAliasInput" placeholder="Alias">
                         <input type="text" id="agenteUbicacionInput" placeholder="Ubicación">
-                        <input type="text" id="agenteTelefonoInput" placeholder="Teléfono">
                     </div>
                     <div class="search-bar" style="margin-top:8px;">
                         <input type="text" id="agenteFpInput" placeholder="FP">
@@ -375,12 +378,10 @@
                 <div id="altaAgenteQrContainer" style="margin-top: 18px; text-align: center;"></div>
 
                 <h3 style="margin-top: 22px;">Líneas y Asignación</h3>
-                <form onsubmit="crearLineaTelefonica(event)">
+                <form onsubmit="sincronizarLineasPBX(event)">
                     <div class="search-bar">
-                        <input type="text" id="lineaNumeroInput" placeholder="Número de línea (ej: 1001 o 525511223344)" required>
-                        <input type="text" id="lineaTipoInput" placeholder="Tipo (VOIP, MOVIL, FIJA)" value="VOIP">
-                        <input type="text" id="lineaDescripcionInput" placeholder="Descripción opcional">
-                        <button type="submit" class="btn">Crear / Reactivar Línea</button>
+                        <span class="hint" style="flex:1;min-width:280px;">Sincroniza inventario y ladas desde <strong>registro_agentes.extensions_pbx</strong>.</span>
+                        <button type="submit" class="btn">Sincronizar Líneas PBX</button>
                     </div>
                 </form>
                 <form onsubmit="asignarLineaAgente(event)" style="margin-top:10px;">
@@ -396,10 +397,9 @@
                     </div>
                 </form>
                 <div class="search-bar" style="margin-top:10px;">
-                    <select id="lineasLadaFilter">
+                    <select id="lineasLadaFilter" onchange="cargarLineasYAgentes()">
                         <option value="">-- Filtrar líneas por lada --</option>
                     </select>
-                    <button type="button" class="btn btn-secondary" onclick="cargarLineasYAgentes()">Aplicar Filtro</button>
                 </div>
                 <div id="lineasEstadoContainer" class="table-responsive" style="margin-top: 12px;"></div>
             </section>
@@ -546,10 +546,22 @@
                 <div id="alertasPagoContainer" class="table-responsive" style="margin-top: 12px;"></div>
                 <div id="backupsContainer" class="table-responsive" style="margin-top: 12px;"></div>
 
+                <h3 style="margin-top: 22px;">Vista Operativa Agentes + Extensiones + Pago</h3>
+                <div class="search-bar">
+                    <input type="text" id="estadoAgenteSearch" placeholder="Buscar agente o extensión">
+                    <button type="button" class="btn" onclick="cargarVistaAgentesPago()">Cargar Vista</button>
+                </div>
+                <div id="agentesEstadoPagoContainer" class="table-responsive" style="margin-top: 12px;"></div>
+
                 <h3 style="margin-top: 22px;">Comprobante de Pago</h3>
+                <div class="search-bar" style="margin-bottom:10px;">
+                    <input type="number" id="recibosAgenteFiltro" placeholder="Filtrar recibos por ID de agente">
+                    <button type="button" class="btn btn-secondary" onclick="cargarRecibosPersistidos()">Recibos Guardados</button>
+                </div>
                 <div id="reciboPagoContainer" class="table-responsive" style="margin-top: 12px;">
                     <p>No hay comprobante generado todavía.</p>
                 </div>
+                <div id="recibosHistoricosContainer" class="table-responsive" style="margin-top: 12px;"></div>
 
                 <h3 style="margin-top: 22px;">QR Manual</h3>
                 <form onsubmit="generarQR(event)">

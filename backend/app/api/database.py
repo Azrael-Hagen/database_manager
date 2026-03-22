@@ -565,7 +565,7 @@ async def maintenance_overview(
     ).mappings().all()
     protected = {
         "usuarios", "datos_importados", "import_logs", "auditoria_acciones", "config_sistema",
-        "pagos_semanales", "lineas_telefonicas", "agente_linea_asignaciones", "alertas_pago",
+        "pagos_semanales", "lineas_telefonicas", "agente_linea_asignaciones", "alertas_pago", "recibos_pago",
         "ladas_catalogo", "agente_lada_preferencias", "esquemas_base_datos"
     }
     recommendations = []
@@ -591,7 +591,7 @@ async def maintenance_overview(
         if is_temp and not is_protected:
             recommendations.append(f"Eliminar objeto temporal: {name}")
 
-    useful_views = ["vw_agentes_qr_estado", "vw_usuarios_roles", "vw_pagos_pendientes"]
+    useful_views = ["vw_agentes_qr_estado", "vw_usuarios_roles", "vw_pagos_pendientes", "vw_agentes_extensiones_pago_actual"]
     return {
         "status": "success",
         "database": db_name,
@@ -633,6 +633,34 @@ async def create_useful_views(
                 LEFT JOIN datos_importados d ON d.id = p.agente_id
                 LEFT JOIN alertas_pago a ON a.agente_id = p.agente_id AND a.semana_inicio = p.semana_inicio AND a.atendida = 0
                 WHERE COALESCE(p.pagado, 0) = 0
+            """,
+            "vw_agentes_extensiones_pago_actual": """
+                CREATE OR REPLACE VIEW `vw_agentes_extensiones_pago_actual` AS
+                SELECT
+                    d.id AS agente_id,
+                    d.uuid,
+                    d.nombre,
+                    COALESCE(d.es_activo, 1) AS es_activo,
+                    l.id AS linea_id,
+                    l.numero AS extension_numero,
+                    l.tipo AS extension_tipo,
+                    p.semana_inicio,
+                    COALESCE(p.pagado, 0) AS pagado_semana,
+                    COALESCE(p.monto, 0) AS monto_semana,
+                    p.fecha_pago,
+                    CASE
+                        WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'DEBE'
+                        ELSE 'PAGADO'
+                    END AS estado_pago
+                FROM datos_importados d
+                LEFT JOIN agente_linea_asignaciones ala
+                    ON ala.agente_id = d.id AND ala.es_activa = 1
+                LEFT JOIN lineas_telefonicas l
+                    ON l.id = ala.linea_id AND COALESCE(l.es_activa, 1) = 1
+                LEFT JOIN pagos_semanales p
+                    ON p.agente_id = d.id
+                   AND p.semana_inicio = DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
+                WHERE COALESCE(d.es_activo, 1) = 1
             """,
         }
         created = []
@@ -680,7 +708,7 @@ async def purge_temporary_objects(
             row_count = int(db.execute(text(f"SELECT COUNT(*) FROM `{name}`")).scalar() or 0)
             should_drop = row_count == 0 and lower_name not in {
                 "usuarios", "datos_importados", "import_logs", "auditoria_acciones", "config_sistema",
-                "pagos_semanales", "lineas_telefonicas", "agente_linea_asignaciones", "alertas_pago",
+                "pagos_semanales", "lineas_telefonicas", "agente_linea_asignaciones", "alertas_pago", "recibos_pago",
                 "ladas_catalogo", "agente_lada_preferencias", "esquemas_base_datos"
             }
         if not should_drop:

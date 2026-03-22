@@ -23,6 +23,11 @@ let currentAgentManagementRows = [];
 let currentEditingAgentId = null;
 let currentBackupDir = '';
 let currentTableBrowserState = { database: '', table: '', orderBy: 'id', direction: 'desc', limit: 50 };
+let altasTourActive = false;
+let altasTourStepIndex = 0;
+let altasTourBackdrop = null;
+let altasTourPanel = null;
+let altasTourCurrentElement = null;
 const DEFAULT_AGENT_DATABASE = 'registro_agentes';
 const BRANDING_DEFAULTS = {
     appName: 'Database Manager',
@@ -168,6 +173,167 @@ function applyRoleBasedUI() {
     if (purgeBtn) purgeBtn.style.display = canAdmin() ? '' : 'none';
     const maintenancePanel = document.getElementById('dbMaintenancePanel');
     if (maintenancePanel) maintenancePanel.style.display = canAdmin() ? 'block' : 'none';
+}
+
+function getAltasTourStorageKey() {
+    const user = (currentUser?.username || 'anon').trim().toLowerCase() || 'anon';
+    return `altasTourSeen:${user}`;
+}
+
+function getAltasTourSteps() {
+    return [
+        {
+            selector: '#ladaCodigoInput',
+            title: 'Paso 1: Validar Ladas',
+            body: 'Primero confirma que la lada exista. Si falta, crea/reactiva la lada con su código y opcionalmente su región.'
+        },
+        {
+            selector: '#agenteNombreInput',
+            title: 'Paso 2: Datos Básicos del Agente',
+            body: 'Captura el nombre y, si aplica, alias/ubicación/FP/FC/Grupo. Esta alta ya no solicita teléfono en esta pantalla.'
+        },
+        {
+            selector: '#agenteModoAsignacion',
+            title: 'Paso 3: Modo de Asignación',
+            body: 'Elige si el agente inicia sin línea, con asignación automática o manual. Para inserción, lo recomendado es automático o manual con línea válida.'
+        },
+        {
+            selector: '#agenteLadaObjetivoSelect',
+            title: 'Paso 4: Lada Preferida',
+            body: 'Si quieres orientar la autoasignación, selecciona una lada preferida. Esto ayuda a tomar líneas del bloque correcto.'
+        },
+        {
+            selector: '#agenteGenerarQrAlCrear',
+            title: 'Paso 5: Crear Agente',
+            body: 'Activa o desactiva la generación de QR al crear. Luego presiona Crear Agente para guardar el alta.'
+        },
+        {
+            selector: 'form[onsubmit="sincronizarLineasPBX(event)"] button[type="submit"]',
+            title: 'Paso 6: Sincronizar Líneas PBX',
+            body: 'Usa este botón para refrescar inventario de líneas y ladas desde la fuente PBX real antes de asignar.'
+        },
+        {
+            selector: '#lineaAsignarSelect',
+            title: 'Paso 7: Asignar Línea',
+            body: 'Selecciona línea y agente en los combos, después presiona Asignar Línea. Solo se muestran líneas del inventario gestionado.'
+        },
+    ];
+}
+
+function clearAltasTourHighlight() {
+    if (altasTourCurrentElement) {
+        altasTourCurrentElement.classList.remove('tour-highlight');
+        altasTourCurrentElement = null;
+    }
+}
+
+function closeAltasTour() {
+    altasTourActive = false;
+    clearAltasTourHighlight();
+    if (altasTourBackdrop) {
+        altasTourBackdrop.remove();
+        altasTourBackdrop = null;
+    }
+    if (altasTourPanel) {
+        altasTourPanel.remove();
+        altasTourPanel = null;
+    }
+}
+
+function renderAltasTourStep() {
+    const steps = getAltasTourSteps();
+    const step = steps[altasTourStepIndex];
+    if (!step || !altasTourPanel) return;
+
+    clearAltasTourHighlight();
+    const target = document.querySelector(step.selector);
+    if (target) {
+        altasTourCurrentElement = target;
+        target.classList.add('tour-highlight');
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    const progressEl = altasTourPanel.querySelector('.tour-progress');
+    const titleEl = altasTourPanel.querySelector('.tour-title');
+    const bodyEl = altasTourPanel.querySelector('.tour-body');
+    const prevBtn = altasTourPanel.querySelector('[data-tour="prev"]');
+    const nextBtn = altasTourPanel.querySelector('[data-tour="next"]');
+
+    if (titleEl) titleEl.textContent = step.title;
+    if (bodyEl) bodyEl.textContent = step.body;
+    if (progressEl) progressEl.textContent = `Paso ${altasTourStepIndex + 1} de ${steps.length}`;
+    if (prevBtn) prevBtn.disabled = altasTourStepIndex === 0;
+    if (nextBtn) nextBtn.textContent = altasTourStepIndex >= steps.length - 1 ? 'Finalizar' : 'Siguiente';
+}
+
+function startAltasTour(force = false) {
+    if (!canCapture()) return;
+    const alreadySeen = localStorage.getItem(getAltasTourStorageKey()) === '1';
+    if (!force && alreadySeen) return;
+    if (altasTourActive) return;
+
+    altasTourActive = true;
+    altasTourStepIndex = 0;
+
+    altasTourBackdrop = document.createElement('div');
+    altasTourBackdrop.className = 'tour-backdrop';
+    document.body.appendChild(altasTourBackdrop);
+
+    altasTourPanel = document.createElement('div');
+    altasTourPanel.className = 'tour-panel';
+    altasTourPanel.innerHTML = `
+        <h3 class="tour-title"></h3>
+        <div class="tour-progress"></div>
+        <div class="tour-body"></div>
+        <div class="tour-actions">
+            <button type="button" class="btn btn-secondary" data-tour="prev">Anterior</button>
+            <button type="button" class="btn" data-tour="next">Siguiente</button>
+            <button type="button" class="btn btn-secondary" data-tour="close">Cerrar</button>
+        </div>
+    `;
+    document.body.appendChild(altasTourPanel);
+
+    altasTourPanel.querySelector('[data-tour="prev"]')?.addEventListener('click', () => {
+        altasTourStepIndex = Math.max(0, altasTourStepIndex - 1);
+        renderAltasTourStep();
+    });
+
+    altasTourPanel.querySelector('[data-tour="next"]')?.addEventListener('click', () => {
+        const steps = getAltasTourSteps();
+        if (altasTourStepIndex >= steps.length - 1) {
+            localStorage.setItem(getAltasTourStorageKey(), '1');
+            closeAltasTour();
+            return;
+        }
+        altasTourStepIndex += 1;
+        renderAltasTourStep();
+    });
+
+    altasTourPanel.querySelector('[data-tour="close"]')?.addEventListener('click', () => {
+        localStorage.setItem(getAltasTourStorageKey(), '1');
+        closeAltasTour();
+    });
+
+    renderAltasTourStep();
+}
+
+function iniciarGuiaAltas() {
+    if (!canCapture()) {
+        alert('La guía de altas está disponible para usuarios de inserción/captura o administradores.');
+        return;
+    }
+    loadSection('altasAgentes');
+    setTimeout(() => startAltasTour(true), 220);
+}
+
+function reiniciarGuiaAltas() {
+    localStorage.removeItem(getAltasTourStorageKey());
+    iniciarGuiaAltas();
+}
+
+function maybeAutoStartAltasTour() {
+    if (!canCapture()) return;
+    setTimeout(() => startAltasTour(false), 260);
 }
 
 function getDatosSortConfig() {
@@ -684,6 +850,9 @@ function loadSection(section, eventRef = null) {
         section = 'dashboard';
     }
     currentSection = section;
+    if (section !== 'altasAgentes' && altasTourActive) {
+        closeAltasTour();
+    }
     // Ocultar todas las secciones
     document.getElementById('dashboardSection').style.display = 'none';
     document.getElementById('datosSection').style.display = 'none';
@@ -717,6 +886,7 @@ function loadSection(section, eventRef = null) {
         case 'altasAgentes':
             document.getElementById('altasAgentesSection').style.display = 'block';
             cargarLineasYAgentes();
+            maybeAutoStartAltasTour();
             break;
         case 'cambiosBajas':
             document.getElementById('cambiosBajasSection').style.display = 'block';
@@ -727,6 +897,8 @@ function loadSection(section, eventRef = null) {
             cargarCuotaSemanal();
             cargarConfiguracionRespaldos();
             cargarReporteSemanal();
+            cargarVistaAgentesPago();
+            cargarRecibosPersistidos();
             cargarRespaldos();
             cargarLineasYAgentes();
             break;
@@ -1778,7 +1950,6 @@ async function crearAgenteManual(e) {
         nombre: document.getElementById('agenteNombreInput')?.value.trim(),
         alias: document.getElementById('agenteAliasInput')?.value.trim() || null,
         ubicacion: document.getElementById('agenteUbicacionInput')?.value.trim() || null,
-        telefono: document.getElementById('agenteTelefonoInput')?.value.trim() || null,
         fp: document.getElementById('agenteFpInput')?.value.trim() || null,
         fc: document.getElementById('agenteFcInput')?.value.trim() || null,
         grupo: document.getElementById('agenteGrupoInput')?.value.trim() || null,
@@ -1804,7 +1975,7 @@ async function crearAgenteManual(e) {
         const result = await apiClient.crearAgenteManual(payload);
         const data = result.data || {};
         document.getElementById('qrAgenteId').value = data.agente_id || '';
-        document.getElementById('qrTelefono').value = payload.telefono || '';
+        document.getElementById('qrTelefono').value = '';
         const asignacion = data.asignacion || {};
         const lineaText = asignacion.asignada ? `Línea ${asignacion.linea_numero} asignada.` : 'Sin asignación inicial.';
         alert(`Agente creado (ID ${data.agente_id}). ${lineaText}`);
@@ -1813,7 +1984,6 @@ async function crearAgenteManual(e) {
             'agenteNombreInput',
             'agenteAliasInput',
             'agenteUbicacionInput',
-            'agenteTelefonoInput',
             'agenteFpInput',
             'agenteFcInput',
             'agenteGrupoInput',
@@ -1838,25 +2008,16 @@ async function crearAgenteManual(e) {
     }
 }
 
-async function crearLineaTelefonica(e) {
+async function sincronizarLineasPBX(e) {
     e.preventDefault();
-    const numero = document.getElementById('lineaNumeroInput')?.value.trim();
-    const tipo = (document.getElementById('lineaTipoInput')?.value || 'VOIP').trim();
-    const descripcion = document.getElementById('lineaDescripcionInput')?.value.trim() || '';
-    if (!numero) {
-        alert('Ingresa un número de línea.');
-        return;
-    }
-
     try {
-        await apiClient.crearLinea({ numero, tipo, descripcion });
-        alert('Línea creada/reactivada correctamente.');
-        document.getElementById('lineaNumeroInput').value = '';
-        document.getElementById('lineaDescripcionInput').value = '';
+        const response = await apiClient.syncLineas();
+        const data = response.data || {};
+        alert(`Sincronización completada. Fuente: ${data.source || 0}, nuevas: ${data.created || 0}, actualizadas: ${data.updated || 0}, bajas: ${data.deactivated || 0}, ladas nuevas: ${data.ladas_created || 0}.`);
         await cargarLineasYAgentes();
     } catch (error) {
         console.error('Error:', error);
-        alert('Error creando línea: ' + error.message);
+        alert('Error sincronizando líneas PBX: ' + error.message);
     }
 }
 
@@ -2180,15 +2341,19 @@ async function registrarPagoSemanal(e) {
 
     try {
         const pago = await apiClient.registrarPagoSemanal(payload);
+        const recibo = pago.recibo || {};
         lastReceiptData = {
             agente_id: payload.agente_id,
             nombre: currentVerificationData?.agente?.nombre || `Agente ${payload.agente_id}`,
             telefono: payload.telefono,
             numero_voip: payload.numero_voip,
+            linea_numero: recibo.linea_numero || null,
             semana_inicio: payload.semana_inicio,
             monto: Number(pago.monto ?? payload.monto ?? 0),
             fecha_pago: pago.fecha_pago || new Date().toISOString(),
-            estado: payload.pagado ? 'PAGADO' : 'PENDIENTE'
+            estado: payload.pagado ? 'PAGADO' : 'PENDIENTE',
+            recibo_token: recibo.token || null,
+            expira_en: recibo.expira_en || null,
         };
         renderReciboPago(lastReceiptData);
         alert('Pago semanal guardado correctamente.');
@@ -2196,6 +2361,7 @@ async function registrarPagoSemanal(e) {
             await verificarAgenteQR();
         }
         cargarReporteSemanal();
+        cargarRecibosPersistidos();
     } catch (error) {
         console.error('Error:', error);
         alert('Error guardando pago: ' + error.message);
@@ -2212,15 +2378,45 @@ function renderReciboPago(data) {
             <p><strong>ID:</strong> ${data.agente_id || ''}</p>
             <p><strong>Teléfono:</strong> ${data.telefono || '-'}</p>
             <p><strong>VoIP:</strong> ${data.numero_voip || '-'}</p>
+            <p><strong>Línea:</strong> ${data.linea_numero || '-'}</p>
             <p><strong>Semana:</strong> ${data.semana_inicio || '-'}</p>
             <p><strong>Monto:</strong> $${Number(data.monto || 0).toFixed(2)} MXN</p>
             <p><strong>Fecha de pago:</strong> ${data.fecha_pago ? new Date(data.fecha_pago).toLocaleString() : '-'}</p>
             <p><strong>Estado:</strong> ${data.estado || 'PAGADO'}</p>
+            <p><strong>Token recibo:</strong> ${data.recibo_token || '-'}</p>
+            <p><strong>Vence:</strong> ${data.expira_en ? new Date(data.expira_en).toLocaleString() : '-'}</p>
             <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
                 <button type="button" class="btn" onclick="imprimirReciboPago()">Imprimir Comprobante</button>
+                ${data.recibo_token ? `<button type="button" class="btn btn-secondary" onclick="reimprimirReciboPorToken('${data.recibo_token}')">Recargar desde servidor</button>` : ''}
             </div>
         </div>
     `;
+}
+
+async function reimprimirReciboPorToken(token) {
+    try {
+        const res = await apiClient.getReciboPago(token);
+        const data = res.data || {};
+        lastReceiptData = {
+            agente_id: data.agente_id,
+            nombre: data.agente_nombre || `Agente ${data.agente_id || ''}`,
+            telefono: data.telefono || '',
+            numero_voip: data.numero_voip || '',
+            linea_numero: data.linea_numero || null,
+            semana_inicio: data.semana_inicio,
+            monto: Number(data.monto || 0),
+            fecha_pago: data.fecha_pago,
+            estado: data.pagado ? 'PAGADO' : 'PENDIENTE',
+            recibo_token: data.token || token,
+            expira_en: data.expira_en,
+        };
+        renderReciboPago(lastReceiptData);
+        imprimirReciboPago();
+        cargarRecibosPersistidos();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error cargando recibo: ' + error.message);
+    }
 }
 
 function imprimirReciboPago() {
@@ -2246,10 +2442,12 @@ function imprimirReciboPago() {
                 <p><strong>ID:</strong> ${lastReceiptData.agente_id || ''}</p>
                 <p><strong>Teléfono:</strong> ${lastReceiptData.telefono || '-'}</p>
                 <p><strong>VoIP:</strong> ${lastReceiptData.numero_voip || '-'}</p>
+                <p><strong>Línea:</strong> ${lastReceiptData.linea_numero || '-'}</p>
                 <p><strong>Semana:</strong> ${lastReceiptData.semana_inicio || '-'}</p>
                 <p><strong>Monto:</strong> $${Number(lastReceiptData.monto || 0).toFixed(2)} MXN</p>
                 <p><strong>Fecha de pago:</strong> ${lastReceiptData.fecha_pago ? new Date(lastReceiptData.fecha_pago).toLocaleString() : '-'}</p>
                 <p><strong>Estado:</strong> ${lastReceiptData.estado || 'PAGADO'}</p>
+                <p><strong>Token:</strong> ${lastReceiptData.recibo_token || '-'}</p>
             </div>
         </body>
         </html>
@@ -2274,6 +2472,7 @@ function generarReciboDesdeReporte(index) {
         nombre: row.nombre,
         telefono: row.telefono,
         numero_voip: row.numero_voip || '',
+        linea_numero: row.extension_numero || null,
         semana_inicio: document.getElementById('reporteSemanaInput')?.value || mondayISO(),
         monto: row.monto_pagado || row.cuota || 0,
         fecha_pago: row.fecha_pago,
@@ -2359,9 +2558,82 @@ async function cargarReporteSemanal() {
 
         cargarAlertasPago();
         cargarRespaldos();
+        cargarVistaAgentesPago();
     } catch (error) {
         console.error('Error:', error);
         alert('Error cargando reporte semanal: ' + error.message);
+    }
+}
+
+async function cargarVistaAgentesPago() {
+    const semana = document.getElementById('reporteSemanaInput')?.value || '';
+    const search = document.getElementById('estadoAgenteSearch')?.value.trim() || '';
+    const container = document.getElementById('agentesEstadoPagoContainer');
+    if (!container) return;
+
+    try {
+        const res = await apiClient.getAgentesEstadoPago(semana, search);
+        const rows = res.data || [];
+        if (!rows.length) {
+            container.innerHTML = '<p>No hay resultados para la vista operativa.</p>';
+            return;
+        }
+
+        let html = '<table class="data-table"><thead><tr>';
+        html += '<th>ID</th><th>Agente</th><th>Extensión</th><th>Semana</th><th>Estado Pago</th><th>Monto</th><th>Fecha Pago</th>';
+        html += '</tr></thead><tbody>';
+        rows.forEach(row => {
+            html += `<tr>
+                <td>${row.agente_id}</td>
+                <td>${row.nombre || ''}</td>
+                <td>${row.extension_numero || '-'}</td>
+                <td>${row.semana_inicio || '-'}</td>
+                <td><span class="payment-pill ${row.pagado ? 'paid' : 'unpaid'}">${row.estado_pago || (row.pagado ? 'PAGADO' : 'DEBE')}</span></td>
+                <td>$${Number(row.monto || 0).toFixed(2)}</td>
+                <td>${row.fecha_pago ? new Date(row.fecha_pago).toLocaleString() : '-'}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (error) {
+        console.error('Error:', error);
+        container.innerHTML = `<p>Error cargando vista operativa: ${escapeHtml(error.message)}</p>`;
+    }
+}
+
+async function cargarRecibosPersistidos() {
+    const container = document.getElementById('recibosHistoricosContainer');
+    if (!container) return;
+    const agenteIdRaw = document.getElementById('recibosAgenteFiltro')?.value || '';
+    const agenteId = Number(agenteIdRaw);
+
+    try {
+        const res = await apiClient.getRecibosPago(Number.isFinite(agenteId) && agenteId > 0 ? agenteId : '');
+        const rows = res.data || [];
+        if (!rows.length) {
+            container.innerHTML = '<p>No hay recibos vigentes guardados.</p>';
+            return;
+        }
+
+        let html = '<h4>Recibos guardados</h4><table class="data-table"><thead><tr>';
+        html += '<th>Agente</th><th>Línea</th><th>Semana</th><th>Monto</th><th>Estado</th><th>Vence</th><th>Acción</th>';
+        html += '</tr></thead><tbody>';
+        rows.forEach(row => {
+            html += `<tr>
+                <td>${row.agente_nombre || '-'} (ID ${row.agente_id || '-'})</td>
+                <td>${row.linea_numero || '-'}</td>
+                <td>${row.semana_inicio || '-'}</td>
+                <td>$${Number(row.monto || 0).toFixed(2)}</td>
+                <td>${row.pagado ? 'PAGADO' : 'PENDIENTE'}</td>
+                <td>${row.expira_en ? new Date(row.expira_en).toLocaleString() : '-'}</td>
+                <td><button type="button" class="btn btn-small" onclick="reimprimirReciboPorToken('${row.token}')">Reimprimir</button></td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (error) {
+        console.error('Error:', error);
+        container.innerHTML = `<p>Error cargando recibos: ${escapeHtml(error.message)}</p>`;
     }
 }
 
@@ -2514,10 +2786,18 @@ async function generarQRVerificacion(e) {
         return;
     }
 
-    const semana = document.getElementById('qrSemana').value;
-    const verifyUrl = `${window.location.origin}/api/qr/public/verify-by-id/${encodeURIComponent(String(agenteId))}${semana ? `?semana=${encodeURIComponent(semana)}` : ''}`;
-    renderSimpleQR(verifyUrl);
-    alert('QR de verificación generado. Al escanearlo, consulta estado de pago de la semana.');
+    try {
+        const result = await apiClient.getQrAgente(agenteId);
+        const data = result.data || {};
+        if (!data.public_url) {
+            throw new Error('No se pudo generar URL de verificación segura');
+        }
+        renderSimpleQR(data.public_url);
+        alert(`QR seguro generado para línea ${data.linea_activa?.numero || '-'}; queda ligado al agente y su asignación actual.`);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error generando QR de verificación: ' + error.message);
+    }
 }
 
 // === AUDITORÍA ===

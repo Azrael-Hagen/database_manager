@@ -235,6 +235,26 @@ class APIClient {
         return this.request('GET', `/qr/reporte-semanal${qs}`);
     }
 
+    async getAgentesEstadoPago(semana = '', search = '') {
+        const params = new URLSearchParams();
+        if (semana) params.append('semana', semana);
+        if (search) params.append('search', search);
+        const qs = params.toString() ? `?${params.toString()}` : '';
+        return this.request('GET', `/qr/agentes/estado-pago${qs}`);
+    }
+
+    async getRecibosPago(agenteId = '', includeExpired = false) {
+        const params = new URLSearchParams();
+        if (agenteId) params.append('agente_id', String(agenteId));
+        if (includeExpired) params.append('include_expired', 'true');
+        const qs = params.toString() ? `?${params.toString()}` : '';
+        return this.request('GET', `/qr/recibos${qs}`);
+    }
+
+    async getReciboPago(token) {
+        return this.request('GET', `/qr/recibos/${encodeURIComponent(token)}`);
+    }
+
     async procesarAlertasPago() {
         return this.request('POST', '/qr/alertas/procesar', {});
     }
@@ -322,6 +342,10 @@ class APIClient {
 
     async crearLinea(payload) {
         return this.request('POST', '/qr/lineas', payload);
+    }
+
+    async syncLineas() {
+        return this.request('POST', '/qr/lineas/sync', {});
     }
 
     async asignarLinea(lineaId, agenteId) {

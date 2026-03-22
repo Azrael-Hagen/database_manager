@@ -61,7 +61,7 @@ class SystemVerifier:
             from app.models import (
                 Usuario, DatoImportado, PagoSemanal, ConfigSistema,
                 AlertaPago, LineaTelefonica, AgenteLineaAsignacion,
-                LadaCatalogo, AgenteLadaPreferencia, ImportLog,
+                LadaCatalogo, AgenteLadaPreferencia, ReciboPago, ImportLog,
                 AuditoriaAccion, EsquemaBaseDatos
             )
             from app.utils.exports import export_table_to_csv, export_to_excel
@@ -117,7 +117,7 @@ class SystemVerifier:
                 'usuarios', 'datos_importados', 'pagos_semanales',
                 'config_sistema', 'alertas_pago', 'lineas_telefonicas',
                 'agente_linea_asignaciones', 'ladas_catalogo',
-                'agente_lada_preferencias', 'import_logs',
+                'agente_lada_preferencias', 'recibos_pago', 'import_logs',
                 'auditoria_acciones', 'esquemas_base_datos'
             }
             

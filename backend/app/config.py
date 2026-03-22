@@ -16,6 +16,8 @@ class Config:
     DB_PASSWORD = os.getenv("DB_PASSWORD", "")
     DB_NAME = os.getenv("DB_NAME", "database_manager")
     DB_PORT = int(os.getenv("DB_PORT", 3306))
+    PBX_DB_NAME = os.getenv("PBX_DB_NAME", "registro_agentes")
+    PBX_EXTENSIONS_TABLE = os.getenv("PBX_EXTENSIONS_TABLE", "extensions_pbx")
     
     # Conexión String
     DATABASE_URL = f"mysql+mysqlconnector://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -50,6 +52,8 @@ class Config:
     
     # Seguridad
     SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
+    QR_TOKEN_TTL_HOURS = int(os.getenv("QR_TOKEN_TTL_HOURS", 720))
+    RECEIPT_RETENTION_DAYS = int(os.getenv("RECEIPT_RETENTION_DAYS", 90))
     
     # Logging
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
