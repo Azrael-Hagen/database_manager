@@ -54,6 +54,25 @@ python main.py
 - **Panel Web**: http://localhost:8000
 - **MariaDB**: localhost:3306
 
+### Hostname recomendado (LAN, sin puerto)
+
+- **Panel Web LAN**: http://phantom.database.local
+- **API LAN**: http://phantom.database.local/api
+
+Variables sugeridas en `.env`:
+
+```env
+LOCAL_HOSTNAME=phantom.database.local
+PUBLIC_BASE_URL=http://phantom.database.local
+CORS_ORIGINS=["http://phantom.database.local", "http://localhost:8000", "http://127.0.0.1:8000"]
+```
+
+Para Docker, activar proxy local en puerto 80:
+
+```bash
+docker-compose --profile local-host up -d --build
+```
+
 ## 🔐 Autenticación
 
 ### Credenciales por Defecto

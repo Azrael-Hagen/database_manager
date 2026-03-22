@@ -114,7 +114,7 @@ JWT_ALGORITHM=HS256
 - **Rol:** Administrador (es_admin=True)
 
 ### **Base de Datos**
-- **Tablas creadas:** usuarios, datos_importados, import_logs, auditoria_acciones
+- **Tablas creadas:** usuarios, datos_importados, import_logs, auditoria_acciones, pagos_semanales, alertas_pago, config_sistema, lineas_telefonicas, agente_linea_asignaciones
 - **Índices:** Optimizados para búsquedas
 - **Relaciones:** Configuradas correctamente
 
@@ -249,6 +249,10 @@ python main.py
 - ✅ **NUEVO:** CRUD en tablas con SQL personalizado
 - ✅ **NUEVO:** Logging detallado en terminal
 - ✅ **NUEVO:** Cierre graceful con Ctrl+C
+- ✅ **NUEVO:** Selector de base de datos + tabla en Visualizar Datos
+- ✅ **NUEVO:** Relación agente-línea con estado ocupada/libre
+- ✅ **NUEVO:** Lectura QR/código manual + cámara en flujo claro de verificación
+- ✅ **NUEVO:** Endpoints para crear/asignar/liberar/desactivar líneas
 
 ### **Base de Datos**
 - ✅ Conexión estable
@@ -293,6 +297,28 @@ python main.py
 **Compatibilidad:** Windows + Linux
 **Documentación:** Completa en README.md
 **Soporte:** Archivos de log en `backend/logs/`
+
+### Actualización técnica (Mar 2026)
+- FastAPI migrado de `@app.on_event` a `lifespan` para eliminar deprecaciones.
+- Arranque/parada reforzados:
+	- `start.bat` detecta conflictos de puerto y permite detener sesiones activas.
+	- `stop.bat` agregado para cerrar explícitamente procesos en `:8000`.
+- Verificación expandida para escaneo:
+	- Endpoint `POST /api/qr/scan/verify` acepta QR y códigos de barras numéricos.
+	- Frontend preparado para formatos `QR`, `CODE_128`, `CODE_39`, `EAN`, `UPC`.
+- Modelo de líneas y ocupación:
+	- Tabla `lineas_telefonicas` para inventario.
+	- Tabla `agente_linea_asignaciones` para estado de ocupación y trazabilidad.
+	- Endpoints `/api/qr/lineas*` y `/api/qr/agentes` para consulta y operación desde UI.
+- Gestión SQL ampliada con vistas temporales por base de datos (`/api/databases/{db}/views`).
+
+### Validación E2E más reciente
+- Login administrador correcto.
+- Alta temporal de agente de prueba.
+- Creación y asignación de línea temporal.
+- Verificación por escaneo usando número de línea con resultado al agente asignado.
+- Consulta de base/tabla específica y búsqueda exacta por ID.
+- Limpieza ejecutada: liberación y desactivación de línea temporal + eliminación de agente de prueba.
 
 ---
 

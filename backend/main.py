@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from contextlib import asynccontextmanager
 import logging
 import os
 from datetime import datetime
@@ -12,7 +13,7 @@ import signal
 import sys
 
 from app.config import config
-from app.database.orm import init_db, get_db
+from app.database.orm import init_db, get_db, SessionLocal
 from app.api.auth import router as auth_router
 from app.api.datos import router as datos_router
 from app.api.importacion import router as importacion_router
@@ -20,6 +21,8 @@ from app.api.database import router as database_router
 from app.api.usuarios import router as usuarios_router
 from app.api.auditoria import router as auditoria_router
 from app.api.qr import router as qr_router
+from app.utils.pagos import generar_alertas_miercoles_pendientes
+from app.utils.backups import create_weekly_backup
 
 # Configurar logging
 logging.basicConfig(
@@ -36,6 +39,39 @@ logger = logging.getLogger(__name__)
 config.create_directories()
 os.makedirs('logs', exist_ok=True)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Eventos de inicio y apagado usando lifespan (reemplaza on_event)."""
+    logger.info("=" * 60)
+    logger.info("Iniciando Database Manager API - PRODUCCION")
+    logger.info(f"Ambiente: {'DEBUG' if config.API_DEBUG else 'PRODUCCION'}")
+    logger.info(f"BD: {config.DB_HOST}:{config.DB_PORT}/{config.DB_NAME}")
+    logger.info(f"Servidor: {config.API_HOST}:{config.API_PORT}")
+    logger.info("=" * 60)
+
+    try:
+        init_db()
+        logger.info("Base de datos inicializada correctamente")
+
+        db = SessionLocal()
+        try:
+            resumen_alertas = generar_alertas_miercoles_pendientes(db)
+            logger.info(f"Corte semanal de cobro ejecutado: {resumen_alertas}")
+
+            resumen_backup = create_weekly_backup(db)
+            logger.info(f"Respaldo semanal: {resumen_backup}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error inicializando BD: {e}")
+        raise
+
+    try:
+        yield
+    finally:
+        logger.info("Apagando Database Manager API")
+
+
 # Crear aplicación FastAPI
 app = FastAPI(
     title="Database Manager API",
@@ -43,20 +79,21 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    openapi_url="/openapi.json"
+    openapi_url="/openapi.json",
+    lifespan=lifespan,
 )
 
 # MIDDLEWARE
 
 # CORS - Configurar según ambiente
-cors_origins = [
+cors_origins = config.CORS_ORIGINS or [
     "http://localhost:3000",
     "http://localhost:8000",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:8000",
 ]
 
-if not config.API_DEBUG:
+if not config.API_DEBUG and not config.CORS_ORIGINS:
     cors_origins = [
         "https://yourdomain.com",
         "https://www.yourdomain.com",
@@ -128,33 +165,6 @@ async def health_check():
 web_path = os.path.join(os.path.dirname(__file__), "..", "web")
 if os.path.exists(web_path):
     app.mount("/", StaticFiles(directory=web_path, html=True), name="web")
-
-
-# EVENTOS DEL CICLO DE VIDA
-
-@app.on_event("startup")
-async def startup():
-    """Eventos al iniciar la aplicación."""
-    logger.info("=" * 60)
-    logger.info("Iniciando Database Manager API - PRODUCCIÓN")
-    logger.info(f"Ambiente: {'DEBUG' if config.API_DEBUG else 'PRODUCCIÓN'}")
-    logger.info(f"BD: {config.DB_HOST}:{config.DB_PORT}/{config.DB_NAME}")
-    logger.info(f"Servidor: {config.API_HOST}:{config.API_PORT}")
-    logger.info("=" * 60)
-    
-    # Inicializar base de datos
-    try:
-        init_db()
-        logger.info("Base de datos inicializada correctamente")
-    except Exception as e:
-        logger.error(f"Error inicializando BD: {e}")
-        raise
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    """Eventos al apagar la aplicación."""
-    logger.info("Apagando Database Manager API")
 
 
 if __name__ == "__main__":

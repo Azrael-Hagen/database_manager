@@ -130,6 +130,9 @@
             <section id="datosSection" class="panel" style="display: none;">
                 <h1>Visualizar Datos</h1>
                 <div class="search-bar">
+                    <select id="datosDatabaseSelect" onchange="cargarTablas()">
+                        <option value="">-- Base de datos --</option>
+                    </select>
                     <input type="text" id="searchInput" placeholder="Buscar..." onkeyup="buscarDatos()">
                     <input type="text" id="singleSearchInput" placeholder="ID o UUID exacto">
                     <button onclick="consultarUnDato()" class="btn btn-secondary">Consultar Uno</button>
@@ -236,6 +239,41 @@
                     <button type="submit" class="btn">Generar QR Verificación</button>
                 </form>
 
+                <h3 style="margin-top: 22px;">Lectura QR / Código de Barras</h3>
+                <div class="search-bar" style="margin-top: 12px;">
+                    <button type="button" class="btn btn-secondary" onclick="iniciarEscanerQR()">Escanear con Cámara</button>
+                    <button type="button" class="btn btn-secondary" onclick="detenerEscanerQR()">Detener Cámara</button>
+                </div>
+                <div class="search-bar" style="margin-top: 8px;">
+                    <input type="text" id="codigoEscaneadoManual" placeholder="Pega aquí contenido QR/código y presiona Leer">
+                    <button type="button" class="btn" onclick="leerCodigoManual()">Leer Código</button>
+                </div>
+                <p class="hint">La lectura acepta URL QR del sistema, UUID, ID de agente y número de línea.</p>
+                <div id="qrScanner" style="width:100%;max-width:420px;margin-top:12px;"></div>
+
+                <h3 style="margin-top: 22px;">Agentes y Líneas</h3>
+                <form onsubmit="crearLineaTelefonica(event)">
+                    <div class="search-bar">
+                        <input type="text" id="lineaNumeroInput" placeholder="Número de línea (ej: 1001 o 525511223344)" required>
+                        <input type="text" id="lineaTipoInput" placeholder="Tipo (VOIP, MOVIL, FIJA)" value="VOIP">
+                        <input type="text" id="lineaDescripcionInput" placeholder="Descripción opcional">
+                        <button type="submit" class="btn">Crear / Reactivar Línea</button>
+                    </div>
+                </form>
+                <form onsubmit="asignarLineaAgente(event)" style="margin-top:10px;">
+                    <div class="search-bar">
+                        <select id="lineaAsignarSelect" required>
+                            <option value="">-- Línea --</option>
+                        </select>
+                        <select id="agenteAsignarSelect" required>
+                            <option value="">-- Agente --</option>
+                        </select>
+                        <button type="submit" class="btn">Asignar Línea</button>
+                        <button type="button" class="btn btn-secondary" onclick="cargarLineasYAgentes()">Refrescar</button>
+                    </div>
+                </form>
+                <div id="lineasEstadoContainer" class="table-responsive" style="margin-top: 12px;"></div>
+
                 <h3 style="margin-top: 22px;">Registrar Pago Semanal</h3>
                 <form onsubmit="registrarPagoSemanal(event)">
                     <div class="form-group">
@@ -263,6 +301,35 @@
                     </div>
                     <button type="submit" class="btn">Guardar Pago</button>
                 </form>
+
+                <h3 style="margin-top: 22px;">Configuración de Cuota</h3>
+                <form onsubmit="guardarCuotaSemanal(event)">
+                    <div class="form-group">
+                        <label>Cuota semanal (MXN):</label>
+                        <input type="number" id="cuotaSemanalInput" min="1" step="1" value="300" required>
+                    </div>
+                    <button type="submit" class="btn">Guardar Cuota</button>
+                    <button type="button" class="btn btn-secondary" onclick="cargarCuotaSemanal()">Recargar Cuota</button>
+                </form>
+
+                <h3 style="margin-top: 22px;">Reporte Semanal de Cobro</h3>
+                <div class="search-bar">
+                    <input type="date" id="reporteSemanaInput">
+                    <input type="text" id="reporteAgenteInput" placeholder="Filtrar por agente">
+                    <input type="text" id="reporteEmpresaInput" placeholder="Filtrar por empresa">
+                    <button type="button" class="btn" onclick="cargarReporteSemanal()">Ver Reporte</button>
+                    <button type="button" class="btn btn-secondary" onclick="procesarAlertasPagoManual()">Procesar Alertas</button>
+                    <button type="button" class="btn btn-secondary" onclick="generarBackupManual()">Respaldar Base</button>
+                </div>
+                <div id="reporteSemanalResumen" style="margin-top: 10px;"></div>
+                <div id="reporteSemanalContainer" class="table-responsive" style="margin-top: 12px;"></div>
+                <div id="alertasPagoContainer" class="table-responsive" style="margin-top: 12px;"></div>
+                <div id="backupsContainer" class="table-responsive" style="margin-top: 12px;"></div>
+
+                <h3 style="margin-top: 22px;">Comprobante de Pago</h3>
+                <div id="reciboPagoContainer" class="table-responsive" style="margin-top: 12px;">
+                    <p>No hay comprobante generado todavía.</p>
+                </div>
 
                 <h3 style="margin-top: 22px;">QR Manual</h3>
                 <form onsubmit="generarQR(event)">
@@ -382,6 +449,7 @@
 
     <!-- Librerías externas -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode.js/1.5.3/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     
     <script src="js/api-client.js"></script>
     <script src="js/main.js"></script>

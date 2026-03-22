@@ -5,11 +5,14 @@ Aplicación para administración de MariaDB con interfaz web moderna, autenticac
 ## Características
 
 - Gestión de bases de datos: listar bases, tablas, ver datos y eliminar tablas.
+- Visualizar Datos con contexto real de BD+tabla (selector de base de datos y consulta exacta por ID/UUID).
 - Herramientas SQL avanzadas: ejecutar consultas completas SQL desde UI.
 - Importación de archivos: CSV, Excel, TXT y DAT.
 - Importación adaptable: CSV/TXT/DAT se ajustan a tablas existentes (agrega columnas faltantes).
 - Gestión de usuarios: CRUD de usuarios, roles y cambio de contraseña.
 - Auditoría: registro de acciones con vista en interfaz.
+- Módulo QR mejorado: lectura clara por cámara o entrada manual (QR + código de barras).
+- Gestión de líneas: inventario de líneas y asignación agente-línea con estado ocupada/libre.
 - Tiempo real configurable: actualización periódica con modo ligero para ahorrar recursos.
 
 ## Requisitos
@@ -30,6 +33,12 @@ Accesos:
 - App: http://localhost:8000
 - API Docs: http://localhost:8000/docs
 
+Detener servidor en cualquier momento:
+
+```cmd
+stop.bat
+```
+
 Credenciales iniciales:
 
 - Usuario: admin
@@ -39,9 +48,11 @@ Credenciales iniciales:
 
 1. Inicia sesión con usuario administrador.
 2. En Bases de Datos: carga bases, explora tablas y ejecuta SQL.
-3. En Importar: selecciona archivo, delimitador y tabla destino.
-4. En Usuarios: crea, edita y administra cuentas.
-5. En Auditoría: revisa actividad reciente.
+3. En Visualizar Datos: selecciona base y tabla para consultar registros exactos.
+4. En QR: valida por escaneo y administra líneas ocupadas/libres por agente.
+5. En Importar: selecciona archivo, delimitador y tabla destino.
+6. En Usuarios: crea, edita y administra cuentas.
+7. En Auditoría: revisa actividad reciente.
 
 ## Configuración de tiempo real
 
@@ -54,6 +65,48 @@ Modo ligero incorporado:
 
 - Si la pestaña está inactiva, pausa auto-refresh.
 - Al volver a la pestaña, reanuda según configuración.
+
+## Acceso desde red local y remoto
+
+### Red local (sin escribir IP en cada dispositivo)
+
+La app ahora usa la misma URL desde la que se abre el sitio, por lo que no fuerza `localhost` en frontend ni en QR.
+
+Puedes configurar un hostname local en tu `.env`:
+
+```env
+API_HOST=0.0.0.0
+API_PORT=8000
+LOCAL_HOSTNAME=phantom.database.local
+PUBLIC_BASE_URL=http://phantom.database.local
+```
+
+Opciones para resolver `phantom.database.local` en tu red:
+
+1. DNS del router (recomendado): crea un registro A apuntando al equipo servidor.
+2. Archivo hosts en cada cliente:
+	- Windows: `C:\Windows\System32\drivers\etc\hosts`
+	- Linux/macOS: `/etc/hosts`
+	- Ejemplo: `192.168.1.50 phantom.database.local`
+3. mDNS/Bonjour en LAN (si tu red lo soporta).
+
+### Acceso remoto (otras redes)
+
+Para entrar desde internet, necesitas publicar tu servidor de forma segura:
+
+1. IP fija o DDNS (`tudominio.duckdns.org`, por ejemplo).
+2. Redirección de puertos en router (mejor si usas reverse proxy).
+3. HTTPS con certificado TLS (Nginx/Caddy recomendado).
+4. Firewall permitiendo solo puertos necesarios.
+5. Definir `PUBLIC_BASE_URL` al dominio público:
+
+```env
+PUBLIC_BASE_URL=https://tu-dominio.com
+```
+
+Con esto, los enlaces QR públicos se generan con ese dominio y no con `localhost`.
+
+Si no quieres escribir puerto en LAN, usa reverse proxy en `:80` apuntando al backend `:8000`.
 
 ## Estructura principal
 
@@ -79,11 +132,22 @@ start.bat       Arranque local en Windows
 - `GET /api/usuarios/`
 - `PUT /api/usuarios/{id}/password`
 - `GET /api/auditoria/`
+- `POST /api/qr/scan/verify` (valida contenido escaneado QR/codigo de barras)
+- `GET /api/qr/agentes` (agentes activos con líneas asignadas)
+- `GET /api/qr/lineas` (inventario de líneas y ocupación)
+- `POST /api/qr/lineas` (crear/reactivar línea)
+- `POST /api/qr/lineas/{linea_id}/asignar`
+- `POST /api/qr/lineas/{linea_id}/liberar`
+- `DELETE /api/qr/lineas/{linea_id}`
+- `POST /api/databases/{db}/views` (crear/actualizar vista temporal)
+- `GET /api/databases/{db}/views`
+- `DELETE /api/databases/{db}/views/{view}`
 
 ## Estado
 
 - Producción local estable
-- E2E validado en login, SQL avanzada, importación adaptable y cambio de contraseña
+- Ciclo de vida FastAPI migrado a lifespan (sin warning de on_event)
+- E2E validado en login, SQL avanzada, importación adaptable, vistas SQL, lectura QR/barcode y ocupación de líneas
 
 ## Licencia
 

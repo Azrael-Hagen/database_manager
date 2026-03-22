@@ -40,6 +40,7 @@ ENV/
 # Uploads y Generated Files
 uploads/
 qr_codes/
+backend/backups/
 *.log
 temp/
 

@@ -1,5 +1,5 @@
 // === CONFIGURACIÓN GLOBAL ===
-const API_URL = 'http://localhost:8000/api';
+const API_URL = `${window.location.origin}/api`;
 let authToken = null;
 let currentUser = null;
 let currentPage = 1;
@@ -12,6 +12,11 @@ let realtimePausedByVisibility = false;
 let hiddenDatabases = JSON.parse(localStorage.getItem('hiddenDatabases') || '[]');
 let showHiddenDatabases = false;
 let currentImportDB = '';
+let currentVerificationData = null;
+let qrScannerInstance = null;
+let currentWeeklyReportRows = [];
+let lastReceiptData = null;
+let currentDatosDatabase = '';
 
 function togglePassword(inputId, btn) {
     const input = document.getElementById(inputId);
@@ -23,6 +28,27 @@ function togglePassword(inputId, btn) {
         input.type = 'password';
         btn.innerHTML = '&#128065;'; // 👁
     }
+}
+
+function mondayISO(today = new Date()) {
+    const d = new Date(today);
+    const day = d.getDay();
+    const diff = (day + 6) % 7;
+    d.setDate(d.getDate() - diff);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+
+function setDefaultWeeklyDates() {
+    const week = mondayISO();
+    ['qrSemana', 'pagoSemana', 'reporteSemanaInput'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input && !input.value) {
+            input.value = week;
+        }
+    });
 }
 
 async function fetchJson(url, options = {}) {
@@ -75,6 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    setDefaultWeeklyDates();
 });
 
 function handleVisibilityChange() {
@@ -314,7 +341,7 @@ function loadSection(section, eventRef = null) {
             break;
         case 'datos':
             document.getElementById('datosSection').style.display = 'block';
-            cargarTablas();
+            cargarDatosDatabases();
             break;
         case 'databases':
             document.getElementById('databasesSection').style.display = 'block';
@@ -325,6 +352,10 @@ function loadSection(section, eventRef = null) {
             break;
         case 'qr':
             document.getElementById('qrSection').style.display = 'block';
+            cargarCuotaSemanal();
+            cargarReporteSemanal();
+            cargarRespaldos();
+            cargarLineasYAgentes();
             break;
         case 'usuarios':
             document.getElementById('usuariosSection').style.display = 'block';
@@ -369,23 +400,94 @@ async function loadDashboardData(showErrors = true) {
 }
 
 // === DATOS ===
-async function cargarTablas() {
+async function cargarDatosDatabases() {
     try {
-        const data = await fetchJson(`${API_URL}/datos?pagina=1&por_pagina=100`, {
-            headers: { 'Authorization': `Bearer ${authToken}` }
+        const select = document.getElementById('datosDatabaseSelect');
+        if (!select) return;
+
+        const prev = select.value;
+        const result = await apiClient.getDatabases();
+        const dbs = result.data || [];
+
+        let html = '<option value="">-- Base de datos --</option>';
+        dbs.forEach(db => {
+            html += `<option value="${db}">${db}</option>`;
         });
-        mostrarDatos(data.data || []);
+        select.innerHTML = html;
+
+        if (prev && dbs.includes(prev)) {
+            select.value = prev;
+        } else if (dbs.includes('database_manager')) {
+            select.value = 'database_manager';
+        } else if (dbs.length) {
+            select.value = dbs[0];
+        }
+
+        currentDatosDatabase = select.value;
+        await cargarTablas();
     } catch (error) {
         console.error('Error:', error);
+        alert('Error cargando bases de datos: ' + error.message);
+    }
+}
+
+async function cargarTablas() {
+    try {
+        const dbSelect = document.getElementById('datosDatabaseSelect');
+        const tableSelect = document.getElementById('tablasSelect');
+        if (!dbSelect || !tableSelect) return;
+
+        const dbName = dbSelect.value;
+        currentDatosDatabase = dbName;
+        if (!dbName) {
+            tableSelect.innerHTML = '<option value="">-- Selecciona tabla --</option>';
+            mostrarDatos([]);
+            return;
+        }
+
+        const prevTable = tableSelect.value;
+        const tablesResult = await apiClient.getTables(dbName);
+        const tables = tablesResult.data || [];
+
+        let html = '<option value="">-- Selecciona tabla --</option>';
+        tables.forEach(t => {
+            html += `<option value="${t}">${t}</option>`;
+        });
+        tableSelect.innerHTML = html;
+
+        if (prevTable && tables.includes(prevTable)) {
+            tableSelect.value = prevTable;
+        } else if (tables.includes('datos_importados')) {
+            tableSelect.value = 'datos_importados';
+        } else if (tables.length) {
+            tableSelect.value = tables[0];
+        }
+
+        await cargarTodosLosDatos();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error cargando tablas: ' + error.message);
     }
 }
 
 async function cargarTodosLosDatos() {
     try {
+        const dbName = document.getElementById('datosDatabaseSelect')?.value || '';
+        const tableName = document.getElementById('tablasSelect')?.value || '';
+        if (!dbName || !tableName) {
+            mostrarDatos([]);
+            return;
+        }
+
         const search = document.getElementById('searchInput').value.trim();
-        const data = await apiClient.getDatosTodos(search);
-        mostrarDatos(data.data || []);
-        alert(`Mostrando ${data.total || (data.data || []).length} registros activos.`);
+        const data = await apiClient.getTableData(dbName, tableName, 500);
+        let rows = data.data || [];
+        if (search) {
+            const s = search.toLowerCase();
+            rows = rows.filter(row => Object.values(row).some(v => String(v ?? '').toLowerCase().includes(s)));
+        }
+        mostrarDatos(rows);
+        alert(`Mostrando ${rows.length} registros de ${dbName}.${tableName}`);
     } catch (error) {
         console.error('Error:', error);
         alert('Error al cargar todos los datos: ' + error.message);
@@ -400,10 +502,25 @@ async function consultarUnDato() {
     }
 
     try {
-        const dato = /^\d+$/.test(value)
-            ? await apiClient.getDato(Number(value))
-            : await apiClient.getDatoByUUID(value);
-        mostrarDatos([dato]);
+        const dbName = document.getElementById('datosDatabaseSelect')?.value || '';
+        const tableName = document.getElementById('tablasSelect')?.value || '';
+        if (!dbName || !tableName) {
+            alert('Selecciona base de datos y tabla.');
+            return;
+        }
+
+        const where = /^\d+$/.test(value)
+            ? `id = ${Number(value)}`
+            : `uuid = '${value.replace(/'/g, "''")}'`;
+
+        const sql = `SELECT * FROM \`${tableName}\` WHERE ${where} LIMIT 1`;
+        const result = await apiClient.executeQuery(dbName, sql);
+        const rows = result.data || [];
+        if (!rows.length) {
+            alert('No se encontró un registro exacto con ese valor en la tabla seleccionada.');
+            return;
+        }
+        mostrarDatos(rows);
     } catch (error) {
         console.error('Error:', error);
         alert('No se encontró el registro: ' + error.message);
@@ -413,14 +530,20 @@ async function consultarUnDato() {
 async function buscarDatos() {
     const search = document.getElementById('searchInput').value;
     try {
-        const url = search
-            ? `${API_URL}/datos?buscar=${encodeURIComponent(search)}&pagina=1&por_pagina=100`
-            : `${API_URL}/datos?pagina=1&por_pagina=100`;
+        const dbName = document.getElementById('datosDatabaseSelect')?.value || '';
+        const tableName = document.getElementById('tablasSelect')?.value || '';
+        if (!dbName || !tableName) {
+            mostrarDatos([]);
+            return;
+        }
 
-        const data = await fetchJson(url, {
-            headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        mostrarDatos(data.data || []);
+        const data = await apiClient.getTableData(dbName, tableName, 500);
+        let rows = data.data || [];
+        const term = (search || '').trim().toLowerCase();
+        if (term) {
+            rows = rows.filter(row => Object.values(row).some(v => String(v ?? '').toLowerCase().includes(term)));
+        }
+        mostrarDatos(rows);
     } catch (error) {
         console.error('Error:', error);
     }
@@ -434,6 +557,9 @@ function mostrarDatos(datos) {
     }
 
     const columnas = Object.keys(datos[0]);
+    const dbName = document.getElementById('datosDatabaseSelect')?.value || '';
+    const tableName = document.getElementById('tablasSelect')?.value || '';
+    const editableContext = dbName === 'database_manager' && tableName === 'datos_importados';
     let html = '<table class="data-table"><thead><tr>';
 
     columnas.forEach(col => {
@@ -446,10 +572,15 @@ function mostrarDatos(datos) {
         columnas.forEach(col => {
             html += `<td>${fila[col] ?? ''}</td>`;
         });
-        html += `<td>
-            <button onclick="editarDato(${fila.id})" class="btn btn-small">Editar</button>
-            <button onclick="eliminarDato(${fila.id})" class="btn btn-small">Eliminar</button>
-        </td></tr>`;
+        if (editableContext && Number.isFinite(Number(fila.id))) {
+            html += `<td>
+                <button onclick="editarDato(${fila.id})" class="btn btn-small">Editar</button>
+                <button onclick="generarQrIndividual(${fila.id})" class="btn btn-small btn-secondary">QR</button>
+                <button onclick="eliminarDato(${fila.id})" class="btn btn-small">Eliminar</button>
+            </td></tr>`;
+        } else {
+            html += '<td><span class="hint">Solo lectura</span></td></tr>';
+        }
     });
 
     html += '</tbody></table>';
@@ -479,6 +610,249 @@ async function editarDato(id) {
     }
 }
 
+async function generarQrIndividual(agenteId) {
+    try {
+        const result = await apiClient.getQrAgente(agenteId);
+        const data = result.data || {};
+        renderSimpleQR(data.public_url);
+        loadSection('qr');
+        document.getElementById('qrAgenteId').value = agenteId;
+        const box = document.getElementById('qrVerificationResult');
+        if (box) {
+            box.innerHTML = `
+                <div class="card" style="padding:12px;border:1px solid #d8d8d8;border-radius:8px;">
+                    <strong>QR individual generado para:</strong> ${data.nombre || 'Agente'}<br>
+                    <strong>Asignación:</strong> ${data.tiene_asignacion ? 'Con número asignado' : 'Sin número asignado'}<br>
+                    <strong>URL pública:</strong> <a href="${data.public_url}" target="_blank">Abrir verificación</a><br>
+                    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                        <button type="button" class="btn btn-secondary" onclick="descargarQrAgente(${agenteId})">Descargar PNG</button>
+                        <button type="button" class="btn" onclick="navigator.clipboard.writeText('${data.public_url}')">Copiar URL</button>
+                    </div>
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error generando QR individual: ' + error.message);
+    }
+}
+
+async function leerCodigoManual() {
+    const input = document.getElementById('codigoEscaneadoManual');
+    const value = (input?.value || '').trim();
+    if (!value) {
+        alert('Ingresa o pega un código para leer.');
+        return;
+    }
+    await manejarQRLeido(value);
+}
+
+async function descargarQrAgente(agenteId) {
+    try {
+        const blob = await apiClient.downloadQrAgente(agenteId);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `agente_${agenteId}.png`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error descargando QR: ' + error.message);
+    }
+}
+
+async function iniciarEscanerQR() {
+    if (typeof Html5Qrcode === 'undefined') {
+        alert('Librería de escaneo no disponible.');
+        return;
+    }
+    if (qrScannerInstance) {
+        return;
+    }
+
+    qrScannerInstance = new Html5Qrcode('qrScanner');
+    try {
+        const formats = (typeof Html5QrcodeSupportedFormats !== 'undefined')
+            ? [
+                Html5QrcodeSupportedFormats.QR_CODE,
+                Html5QrcodeSupportedFormats.CODE_128,
+                Html5QrcodeSupportedFormats.CODE_39,
+                Html5QrcodeSupportedFormats.EAN_13,
+                Html5QrcodeSupportedFormats.EAN_8,
+                Html5QrcodeSupportedFormats.UPC_A,
+                Html5QrcodeSupportedFormats.UPC_E,
+            ]
+            : undefined;
+
+        await qrScannerInstance.start(
+            { facingMode: 'environment' },
+            {
+                fps: 10,
+                qrbox: { width: 240, height: 240 },
+                formatsToSupport: formats,
+            },
+            async (decodedText) => {
+                await manejarQRLeido(decodedText);
+            },
+            () => {}
+        );
+    } catch (error) {
+        qrScannerInstance = null;
+        alert('No se pudo iniciar la cámara: ' + error.message);
+    }
+}
+
+async function detenerEscanerQR() {
+    if (!qrScannerInstance) return;
+    try {
+        await qrScannerInstance.stop();
+        await qrScannerInstance.clear();
+    } catch (_) {
+        // ignore cleanup errors
+    }
+    qrScannerInstance = null;
+}
+
+async function manejarQRLeido(decodedText) {
+    await detenerEscanerQR();
+    const week = document.getElementById('qrSemana').value;
+
+    try {
+        const result = await apiClient.verificarCodigoEscaneado(decodedText, week);
+        const agente = result.agente || {};
+        document.getElementById('qrAgenteId').value = agente.id || '';
+        document.getElementById('qrTelefono').value = agente.telefono || '';
+        document.getElementById('qrVoip').value = agente.numero_voip || '';
+        await verificarAgenteQR();
+    } catch (error) {
+        console.error('Error de escaneo:', error);
+        alert('No se pudo validar el código escaneado: ' + error.message);
+    }
+}
+
+function renderLineasEstado(lineas) {
+    const container = document.getElementById('lineasEstadoContainer');
+    if (!container) return;
+    if (!lineas || !lineas.length) {
+        container.innerHTML = '<p>No hay líneas registradas.</p>';
+        return;
+    }
+
+    let html = '<table class="data-table"><thead><tr>';
+    html += '<th>ID</th><th>Línea</th><th>Tipo</th><th>Estado</th><th>Agente</th><th>Acciones</th>';
+    html += '</tr></thead><tbody>';
+
+    lineas.forEach(linea => {
+        const ocupada = !!linea.ocupada;
+        const agente = linea.agente?.nombre ? `${linea.agente.nombre} (ID ${linea.agente.id})` : '-';
+        const estado = ocupada ? '<span class="payment-pill unpaid">OCUPADA</span>' : '<span class="payment-pill paid">LIBRE</span>';
+        const action = ocupada
+            ? `<button class="btn btn-small btn-danger" onclick="liberarLinea(${linea.id})">Liberar</button>`
+            : '<span class="hint">Disponible</span>';
+        html += `<tr>
+            <td>${linea.id}</td>
+            <td>${linea.numero}</td>
+            <td>${linea.tipo || '-'}</td>
+            <td>${estado}</td>
+            <td>${agente}</td>
+            <td>${action}</td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+async function cargarLineasYAgentes() {
+    try {
+        const [lineasRes, agentesRes] = await Promise.all([
+            apiClient.getLineas('', false),
+            apiClient.getAgentesQR('')
+        ]);
+
+        const lineas = lineasRes.data || [];
+        const agentes = agentesRes.data || [];
+
+        const lineaSelect = document.getElementById('lineaAsignarSelect');
+        if (lineaSelect) {
+            let html = '<option value="">-- Línea --</option>';
+            lineas.forEach(l => {
+                html += `<option value="${l.id}">${l.numero} (${l.tipo || 'N/A'}) ${l.ocupada ? '[OCUPADA]' : '[LIBRE]'}</option>`;
+            });
+            lineaSelect.innerHTML = html;
+        }
+
+        const agenteSelect = document.getElementById('agenteAsignarSelect');
+        if (agenteSelect) {
+            let html = '<option value="">-- Agente --</option>';
+            agentes.forEach(a => {
+                html += `<option value="${a.id}">${a.nombre || 'Agente'} (ID ${a.id})</option>`;
+            });
+            agenteSelect.innerHTML = html;
+        }
+
+        renderLineasEstado(lineas);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error cargando agentes y líneas: ' + error.message);
+    }
+}
+
+async function crearLineaTelefonica(e) {
+    e.preventDefault();
+    const numero = document.getElementById('lineaNumeroInput')?.value.trim();
+    const tipo = (document.getElementById('lineaTipoInput')?.value || 'VOIP').trim();
+    const descripcion = document.getElementById('lineaDescripcionInput')?.value.trim() || '';
+    if (!numero) {
+        alert('Ingresa un número de línea.');
+        return;
+    }
+
+    try {
+        await apiClient.crearLinea({ numero, tipo, descripcion });
+        alert('Línea creada/reactivada correctamente.');
+        document.getElementById('lineaNumeroInput').value = '';
+        document.getElementById('lineaDescripcionInput').value = '';
+        await cargarLineasYAgentes();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error creando línea: ' + error.message);
+    }
+}
+
+async function asignarLineaAgente(e) {
+    e.preventDefault();
+    const lineaId = Number(document.getElementById('lineaAsignarSelect')?.value || 0);
+    const agenteId = Number(document.getElementById('agenteAsignarSelect')?.value || 0);
+    if (!lineaId || !agenteId) {
+        alert('Selecciona línea y agente.');
+        return;
+    }
+
+    try {
+        await apiClient.asignarLinea(lineaId, agenteId);
+        alert('Línea asignada correctamente.');
+        await cargarLineasYAgentes();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error asignando línea: ' + error.message);
+    }
+}
+
+async function liberarLinea(lineaId) {
+    if (!confirm('¿Liberar esta línea?')) return;
+    try {
+        await apiClient.liberarLinea(lineaId);
+        alert('Línea liberada.');
+        await cargarLineasYAgentes();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error liberando línea: ' + error.message);
+    }
+}
+
 async function eliminarDato(id) {
     if (!confirm('¿Estás seguro?')) return;
 
@@ -498,7 +872,7 @@ async function eliminarDato(id) {
 }
 
 function cambiarTabla() {
-    buscarDatos();
+    cargarTodosLosDatos();
 }
 
 // === IMPORTACIÓN ===
@@ -630,6 +1004,24 @@ function renderSimpleQR(text) {
     });
 }
 
+function prepararPagoDesdeVerificacion(agente, verificacion) {
+    document.getElementById('pagoAgenteId').value = agente.id || '';
+    document.getElementById('pagoTelefono').value = agente.telefono || '';
+    document.getElementById('pagoVoip').value = agente.numero_voip || '';
+    document.getElementById('pagoSemana').value = verificacion.semana_inicio || mondayISO();
+    document.getElementById('pagoMonto').value = Number(verificacion.cuota_semanal || verificacion.monto || 300);
+    document.getElementById('pagoPagado').checked = true;
+    document.getElementById('pagoAgenteId').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function prepararPagoActualVerificado() {
+    if (!currentVerificationData) {
+        alert('Primero verifica un agente.');
+        return;
+    }
+    prepararPagoDesdeVerificacion(currentVerificationData.agente, currentVerificationData.verificacion);
+}
+
 async function verificarAgenteQR() {
     const agenteId = document.getElementById('qrAgenteId').value;
     if (!agenteId) {
@@ -646,15 +1038,29 @@ async function verificarAgenteQR() {
         const v = result.verificacion || {};
         const a = result.agente || {};
         const box = document.getElementById('qrVerificationResult');
+        currentVerificationData = { agente: a, verificacion: v };
+        const paidClass = v.pagado ? 'payment-status paid' : 'payment-status unpaid';
+        const paidText = v.pagado ? 'PAGADO' : 'PENDIENTE';
+        const lineas = Array.isArray(a.lineas) ? a.lineas : [];
+        const lineasTxt = lineas.length
+            ? lineas.map(x => `${x.numero} (${x.tipo || 'N/A'})`).join(', ')
+            : 'Sin líneas asignadas';
+        const actionButton = v.pagado
+            ? ''
+            : `<button type="button" class="btn" onclick="prepararPagoActualVerificado()">Registrar pago ahora</button>`;
 
         box.innerHTML = `
-            <div class="card" style="padding:12px;border:1px solid #d8d8d8;border-radius:8px;">
+            <div class="card ${paidClass}" style="padding:12px;border-radius:8px;">
                 <strong>Agente:</strong> ${a.nombre || '-'} (ID ${a.id || '-'})<br>
                 <strong>Teléfono:</strong> ${a.telefono || '-'}<br>
                 <strong>VoIP:</strong> ${a.numero_voip || '-'}<br>
                 <strong>Asignación válida:</strong> ${v.asignacion_valida ? 'SI' : 'NO'}<br>
-                <strong>Pagado:</strong> ${v.pagado ? 'SI' : 'NO'}<br>
-                <strong>Monto:</strong> ${v.monto ?? 0}
+                <strong>Líneas:</strong> ${lineasTxt}<br>
+                <strong>Estado:</strong> <span class="payment-pill ${v.pagado ? 'paid' : 'unpaid'}">${paidText}</span><br>
+                <strong>Cuota:</strong> $${Number(v.cuota_semanal ?? 0).toFixed(2)} MXN<br>
+                <strong>Monto:</strong> $${Number(v.monto ?? 0).toFixed(2)} MXN<br>
+                <strong>Fecha pago:</strong> ${v.fecha_pago ? new Date(v.fecha_pago).toLocaleString() : 'Sin pago registrado'}<br>
+                <div style="margin-top:12px">${actionButton}</div>
             </div>
         `;
     } catch (error) {
@@ -676,11 +1082,292 @@ async function registrarPagoSemanal(e) {
     };
 
     try {
-        await apiClient.registrarPagoSemanal(payload);
+        const pago = await apiClient.registrarPagoSemanal(payload);
+        lastReceiptData = {
+            agente_id: payload.agente_id,
+            nombre: currentVerificationData?.agente?.nombre || `Agente ${payload.agente_id}`,
+            telefono: payload.telefono,
+            numero_voip: payload.numero_voip,
+            semana_inicio: payload.semana_inicio,
+            monto: Number(pago.monto ?? payload.monto ?? 0),
+            fecha_pago: pago.fecha_pago || new Date().toISOString(),
+            estado: payload.pagado ? 'PAGADO' : 'PENDIENTE',
+            empresa: currentVerificationData?.agente?.empresa || ''
+        };
+        renderReciboPago(lastReceiptData);
         alert('Pago semanal guardado correctamente.');
+        if (document.getElementById('qrAgenteId').value === String(payload.agente_id)) {
+            await verificarAgenteQR();
+        }
+        cargarReporteSemanal();
     } catch (error) {
         console.error('Error:', error);
         alert('Error guardando pago: ' + error.message);
+    }
+}
+
+function renderReciboPago(data) {
+    const container = document.getElementById('reciboPagoContainer');
+    if (!container || !data) return;
+    container.innerHTML = `
+        <div class="card" style="padding:16px;border:1px solid #d8d8d8;border-radius:10px;max-width:720px;">
+            <h4 style="margin-bottom:10px;">Comprobante de Pago</h4>
+            <p><strong>Agente:</strong> ${data.nombre || ''}</p>
+            <p><strong>ID:</strong> ${data.agente_id || ''}</p>
+            <p><strong>Empresa:</strong> ${data.empresa || '-'}</p>
+            <p><strong>Teléfono:</strong> ${data.telefono || '-'}</p>
+            <p><strong>VoIP:</strong> ${data.numero_voip || '-'}</p>
+            <p><strong>Semana:</strong> ${data.semana_inicio || '-'}</p>
+            <p><strong>Monto:</strong> $${Number(data.monto || 0).toFixed(2)} MXN</p>
+            <p><strong>Fecha de pago:</strong> ${data.fecha_pago ? new Date(data.fecha_pago).toLocaleString() : '-'}</p>
+            <p><strong>Estado:</strong> ${data.estado || 'PAGADO'}</p>
+            <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+                <button type="button" class="btn" onclick="imprimirReciboPago()">Imprimir Comprobante</button>
+            </div>
+        </div>
+    `;
+}
+
+function imprimirReciboPago() {
+    if (!lastReceiptData) {
+        alert('No hay comprobante para imprimir.');
+        return;
+    }
+    const receiptHtml = `
+        <html>
+        <head>
+            <title>Comprobante de Pago</title>
+            <style>
+                body { font-family: Segoe UI, Arial, sans-serif; padding: 24px; color: #182230; }
+                .receipt { border: 1px solid #d8d8d8; border-radius: 10px; padding: 20px; max-width: 700px; }
+                h1 { margin-top: 0; color: #094955; }
+                p { margin: 8px 0; }
+            </style>
+        </head>
+        <body>
+            <div class="receipt">
+                <h1>Comprobante de Pago</h1>
+                <p><strong>Agente:</strong> ${lastReceiptData.nombre || ''}</p>
+                <p><strong>ID:</strong> ${lastReceiptData.agente_id || ''}</p>
+                <p><strong>Empresa:</strong> ${lastReceiptData.empresa || '-'}</p>
+                <p><strong>Teléfono:</strong> ${lastReceiptData.telefono || '-'}</p>
+                <p><strong>VoIP:</strong> ${lastReceiptData.numero_voip || '-'}</p>
+                <p><strong>Semana:</strong> ${lastReceiptData.semana_inicio || '-'}</p>
+                <p><strong>Monto:</strong> $${Number(lastReceiptData.monto || 0).toFixed(2)} MXN</p>
+                <p><strong>Fecha de pago:</strong> ${lastReceiptData.fecha_pago ? new Date(lastReceiptData.fecha_pago).toLocaleString() : '-'}</p>
+                <p><strong>Estado:</strong> ${lastReceiptData.estado || 'PAGADO'}</p>
+            </div>
+        </body>
+        </html>
+    `;
+    const w = window.open('', '_blank', 'width=900,height=700');
+    if (!w) {
+        alert('No se pudo abrir la ventana de impresión.');
+        return;
+    }
+    w.document.open();
+    w.document.write(receiptHtml);
+    w.document.close();
+    w.focus();
+    w.print();
+}
+
+function generarReciboDesdeReporte(index) {
+    const row = currentWeeklyReportRows[index];
+    if (!row) return;
+    lastReceiptData = {
+        agente_id: row.agente_id,
+        nombre: row.nombre,
+        telefono: row.telefono,
+        numero_voip: row.numero_voip || '',
+        semana_inicio: document.getElementById('reporteSemanaInput')?.value || mondayISO(),
+        monto: row.monto_pagado || row.cuota || 0,
+        fecha_pago: row.fecha_pago,
+        estado: row.pagado ? 'PAGADO' : 'PENDIENTE',
+        empresa: row.empresa || ''
+    };
+    renderReciboPago(lastReceiptData);
+}
+
+async function cargarCuotaSemanal() {
+    try {
+        const res = await apiClient.getCuotaSemanal();
+        const cuota = Number(res.cuota_semanal || 300);
+        const input = document.getElementById('cuotaSemanalInput');
+        if (input) {
+            input.value = cuota;
+        }
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+async function guardarCuotaSemanal(e) {
+    e.preventDefault();
+    const input = document.getElementById('cuotaSemanalInput');
+    const cuota = Number(input.value);
+    if (!Number.isFinite(cuota) || cuota <= 0) {
+        alert('Ingresa una cuota válida mayor a 0.');
+        return;
+    }
+
+    try {
+        await apiClient.updateCuotaSemanal(cuota);
+        alert('Cuota semanal actualizada.');
+        cargarReporteSemanal();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error actualizando cuota: ' + error.message);
+    }
+}
+
+async function cargarReporteSemanal() {
+    const semana = document.getElementById('reporteSemanaInput')?.value || '';
+    const agente = document.getElementById('reporteAgenteInput')?.value.trim() || '';
+    const empresa = document.getElementById('reporteEmpresaInput')?.value.trim() || '';
+    try {
+        const reporte = await apiClient.getReporteSemanal(semana, agente, empresa);
+        const resumen = document.getElementById('reporteSemanalResumen');
+        const container = document.getElementById('reporteSemanalContainer');
+        const cuota = Number(reporte.cuota_semanal || 300).toFixed(2);
+        const tot = reporte.totales || { agentes: 0, pagados: 0, pendientes: 0 };
+
+        resumen.innerHTML = `
+            <div class="card" style="padding:12px;border:1px solid #d8d8d8;border-radius:8px;">
+                <strong>Semana:</strong> ${reporte.semana_inicio}<br>
+                <strong>Cuota vigente:</strong> $${cuota} MXN<br>
+                <strong>Agentes:</strong> ${tot.agentes} |
+                <strong>Pagados:</strong> ${tot.pagados} |
+                <strong>Pendientes:</strong> ${tot.pendientes}
+            </div>
+        `;
+
+        const filas = reporte.data || [];
+        currentWeeklyReportRows = filas;
+        if (filas.length === 0) {
+            container.innerHTML = '<p>No hay agentes activos para esta semana.</p>';
+        } else {
+            let html = '<table class="data-table"><thead><tr>';
+            html += '<th>ID</th><th>Nombre</th><th>Telefono</th><th>Empresa</th><th>Pagado</th><th>Monto</th><th>Saldo</th><th>Alerta</th>';
+            html += '</tr></thead><tbody>';
+            filas.forEach((f, index) => {
+                html += `<tr>
+                    <td>${f.agente_id}</td>
+                    <td>${f.nombre || ''}</td>
+                    <td>${f.telefono || ''}</td>
+                    <td>${f.empresa || ''}</td>
+                    <td>${f.pagado ? 'SI' : 'NO'}</td>
+                    <td>$${Number(f.monto_pagado || 0).toFixed(2)}</td>
+                    <td>$${Number(f.saldo || 0).toFixed(2)}</td>
+                    <td>${f.alerta_emitida ? (f.alerta_atendida ? 'Atendida' : 'Pendiente') : 'Sin alerta'}<br><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"><button onclick="generarQrIndividual(${f.agente_id})" class="btn btn-small btn-secondary">Ver QR</button><button onclick="generarReciboDesdeReporte(${index})" class="btn btn-small">Recibo</button></div></td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        cargarAlertasPago();
+        cargarRespaldos();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error cargando reporte semanal: ' + error.message);
+    }
+}
+
+async function cargarAlertasPago() {
+    const semana = document.getElementById('reporteSemanaInput')?.value || '';
+    const container = document.getElementById('alertasPagoContainer');
+
+    try {
+        const res = await apiClient.getAlertasPago(semana, true);
+        const alertas = res.data || [];
+        if (alertas.length === 0) {
+            container.innerHTML = '<p>No hay alertas pendientes.</p>';
+            return;
+        }
+
+        let html = '<h4>Alertas de pago pendientes</h4><table class="data-table"><thead><tr>';
+        html += '<th>ID Alerta</th><th>Agente</th><th>Semana</th><th>Fecha Alerta</th><th>Motivo</th>';
+        html += '</tr></thead><tbody>';
+        alertas.forEach(a => {
+            html += `<tr>
+                <td>${a.id}</td>
+                <td>${a.agente_id}</td>
+                <td>${a.semana_inicio}</td>
+                <td>${a.fecha_alerta ? new Date(a.fecha_alerta).toLocaleString() : ''}</td>
+                <td>${a.motivo || ''}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (error) {
+        console.error('Error:', error);
+        container.innerHTML = '<p>Error cargando alertas.</p>';
+    }
+}
+
+async function procesarAlertasPagoManual() {
+    try {
+        const res = await apiClient.procesarAlertasPago();
+        const data = res.data || {};
+        alert(`Alertas procesadas. Nuevas alertas: ${data.alertas_creadas || 0}`);
+        cargarReporteSemanal();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error procesando alertas: ' + error.message);
+    }
+}
+
+async function generarBackupManual() {
+    try {
+        const res = await apiClient.generarBackupManual();
+        const data = res.data || {};
+        alert(`Respaldo generado: ${data.file || 'OK'}`);
+        cargarRespaldos();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error generando respaldo: ' + error.message);
+    }
+}
+
+async function cargarRespaldos() {
+    const container = document.getElementById('backupsContainer');
+    if (!container) return;
+    try {
+        const res = await apiClient.listBackups();
+        const items = res.data || [];
+        if (!items.length) {
+            container.innerHTML = '<p>No hay respaldos disponibles.</p>';
+            return;
+        }
+
+        let html = '<h4>Respaldos disponibles</h4><table class="data-table"><thead><tr>';
+        html += '<th>Archivo</th><th>Tamaño</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>';
+        items.forEach(item => {
+            html += `<tr>
+                <td>${item.filename}</td>
+                <td>${Math.round((item.size || 0) / 1024)} KB</td>
+                <td>${item.modified ? new Date(item.modified).toLocaleString() : ''}</td>
+                <td><button class="btn btn-small btn-danger" onclick="restaurarRespaldo('${item.filename}')">Restaurar</button></td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (error) {
+        console.error('Error:', error);
+        container.innerHTML = '<p>Error cargando respaldos.</p>';
+    }
+}
+
+async function restaurarRespaldo(filename) {
+    if (!confirm(`¿Restaurar el respaldo ${filename}? Esta acción reemplazará la base actual.`)) return;
+    if (!confirm('Confirma nuevamente la restauración. Se hará un respaldo de rescate antes de continuar.')) return;
+    try {
+        const res = await apiClient.restoreBackup(filename);
+        alert(`Respaldo restaurado: ${res?.data?.file || filename}`);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error restaurando respaldo: ' + error.message);
     }
 }
 
@@ -848,6 +1535,8 @@ function mostrarTablas(database, tables) {
     let html = `<div style="margin-bottom:12px">
         <button onclick="cargarDatabases()" class="btn btn-secondary btn-small">← Bases de Datos</button>
         <button onclick="abrirImportBD('${database}')" class="btn btn-small" style="margin-left:8px">Importar archivo</button>
+        <button onclick="verVistas('${database}')" class="btn btn-small btn-secondary" style="margin-left:8px">Vistas</button>
+        <button onclick="crearVistaTemporal('${database}')" class="btn btn-small btn-secondary" style="margin-left:8px">Crear Vista</button>
     </div>
     <h3>Tablas en ${database}</h3>
     <table class="data-table">
@@ -869,6 +1558,74 @@ function mostrarTablas(database, tables) {
     
     html += '</tbody></table>';
     container.innerHTML = html;
+}
+
+async function verVistas(database) {
+    try {
+        const data = await apiClient.getViews(database);
+        if (data.status !== 'success') {
+            alert('Error al cargar vistas');
+            return;
+        }
+
+        const views = data.data || [];
+        const container = document.getElementById('databasesContainer');
+        let html = `<div style="margin-bottom:12px">
+            <button onclick="verTablas('${database}')" class="btn btn-secondary btn-small">← Tablas</button>
+            <button onclick="crearVistaTemporal('${database}')" class="btn btn-small" style="margin-left:8px">Crear Vista</button>
+        </div>
+        <h3>Vistas en ${database}</h3>`;
+
+        if (!views.length) {
+            html += '<p>No hay vistas creadas.</p>';
+            container.innerHTML = html;
+            return;
+        }
+
+        html += '<table class="data-table"><thead><tr><th>Vista</th><th>Acciones</th></tr></thead><tbody>';
+        views.forEach(view => {
+            html += `<tr>
+                <td>${view}</td>
+                <td>
+                    <button onclick="verDatosTabla('${database}', '${view}')" class="btn btn-small">Consultar</button>
+                    <button onclick="eliminarVista('${database}', '${view}')" class="btn btn-small btn-danger">Eliminar</button>
+                </td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error al cargar vistas: ' + error.message);
+    }
+}
+
+async function crearVistaTemporal(database) {
+    const viewName = prompt('Nombre de la vista: (solo letras, números y _)');
+    if (!viewName) return;
+    const selectQuery = prompt('Consulta SELECT para la vista:');
+    if (!selectQuery) return;
+
+    try {
+        await apiClient.createView(database, viewName.trim(), selectQuery.trim(), true);
+        alert(`Vista ${viewName} creada/actualizada en ${database}.`);
+        verVistas(database);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error creando vista: ' + error.message);
+    }
+}
+
+async function eliminarVista(database, viewName) {
+    if (!confirm(`¿Eliminar la vista ${viewName}?`)) return;
+    try {
+        await apiClient.deleteView(database, viewName);
+        alert('Vista eliminada.');
+        verVistas(database);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error eliminando vista: ' + error.message);
+    }
 }
 
 async function verDatosTabla(database, table) {

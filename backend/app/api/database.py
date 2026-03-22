@@ -16,6 +16,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/databases", tags=["Database Management"])
 
 
+def _safe_ident(name: str, field: str = "identificador") -> str:
+    """Validar nombres de BD/tabla/vista para evitar inyecciones por identificador."""
+    value = (name or "").strip()
+    if not value or not re.match(r"^[a-zA-Z0-9_]+$", value):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field} inválido"
+        )
+    return value
+
+
 @router.get("/")
 async def list_databases(
     current_user: dict = Depends(get_current_user),
@@ -46,6 +57,7 @@ async def list_tables(
     db: Session = Depends(get_db)
 ):
     """Listar tablas en una base de datos específica."""
+    db_name = _safe_ident(db_name, "Base de datos")
     try:
         logger.info(f"Usuario {current_user['username']} listando tablas en BD: {db_name}")
         # Cambiar a la base de datos especificada
@@ -76,6 +88,8 @@ async def get_table_data(
     db: Session = Depends(get_db)
 ):
     """Obtener datos de una tabla específica."""
+    db_name = _safe_ident(db_name, "Base de datos")
+    table_name = _safe_ident(table_name, "Tabla o vista")
     try:
         logger.info(f"Usuario {current_user['username']} consultando tabla {table_name} en BD {db_name}")
         # Cambiar a la base de datos
@@ -121,6 +135,7 @@ async def execute_query(
     db: Session = Depends(get_db)
 ):
     """Ejecutar una consulta SQL personalizada."""
+    db_name = _safe_ident(db_name, "Base de datos")
     try:
         sql_query = query or (payload or {}).get("query")
         if not sql_query or not str(sql_query).strip():
@@ -177,6 +192,8 @@ async def create_table(
     db: Session = Depends(get_db)
 ):
     """Crear una nueva tabla."""
+    db_name = _safe_ident(db_name, "Base de datos")
+    table_name = _safe_ident(table_name, "Tabla")
     try:
         logger.info(f"Usuario {current_user['username']} creando tabla {table_name} en BD {db_name}")
         
@@ -211,6 +228,8 @@ async def drop_table(
     db: Session = Depends(get_db)
 ):
     """Eliminar una tabla."""
+    db_name = _safe_ident(db_name, "Base de datos")
+    table_name = _safe_ident(table_name, "Tabla")
     try:
         logger.info(f"Usuario {current_user['username']} eliminando tabla {table_name} en BD {db_name}")
         
@@ -380,6 +399,7 @@ async def drop_database(
     db: Session = Depends(get_db)
 ):
     """Eliminar una base de datos completa (solo administradores)."""
+    db_name = _safe_ident(db_name, "Base de datos")
     if not current_user.get('es_admin', False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -409,3 +429,93 @@ async def drop_database(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error eliminando base de datos: {str(e)}"
         )
+
+
+@router.get("/{db_name}/views")
+async def list_views(
+    db_name: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Listar vistas de una base de datos específica."""
+    db_name = _safe_ident(db_name, "Base de datos")
+    try:
+        logger.info(f"Usuario {current_user['username']} listando vistas en BD: {db_name}")
+        db.execute(text(f"USE `{db_name}`"))
+        result = db.execute(text("SHOW FULL TABLES WHERE Table_type = 'VIEW'"))
+        views = [row[0] for row in result.fetchall()]
+        return {
+            "status": "success",
+            "database": db_name,
+            "data": views
+        }
+    except Exception as e:
+        logger.error(f"Error listando vistas en {db_name}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error listando vistas: {str(e)}"
+        )
+
+
+@router.post("/{db_name}/views")
+async def create_view(
+    db_name: str,
+    payload: dict = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Crear una vista SQL (temporal de trabajo) en la BD indicada."""
+    db_name = _safe_ident(db_name, "Base de datos")
+    view_name = _safe_ident((payload or {}).get("view_name", ""), "Vista")
+    select_query = str((payload or {}).get("select_query", "")).strip()
+    or_replace = bool((payload or {}).get("or_replace", True))
+
+    if not select_query:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Debe enviar select_query")
+
+    if not select_query.upper().startswith("SELECT"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La vista debe crearse a partir de un SELECT")
+
+    try:
+        db.execute(text(f"USE `{db_name}`"))
+        prefix = "CREATE OR REPLACE VIEW" if or_replace else "CREATE VIEW"
+        db.execute(text(f"{prefix} `{view_name}` AS {select_query}"))
+        db.commit()
+        logger.info(f"Usuario {current_user['username']} creó vista {db_name}.{view_name}")
+        return {
+            "status": "success",
+            "database": db_name,
+            "view": view_name,
+            "message": "Vista creada exitosamente"
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creando vista {db_name}.{view_name}: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error creando vista: {str(e)}")
+
+
+@router.delete("/{db_name}/views/{view_name}")
+async def drop_view(
+    db_name: str,
+    view_name: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Eliminar una vista de una base de datos específica."""
+    db_name = _safe_ident(db_name, "Base de datos")
+    view_name = _safe_ident(view_name, "Vista")
+    try:
+        db.execute(text(f"USE `{db_name}`"))
+        db.execute(text(f"DROP VIEW `{view_name}`"))
+        db.commit()
+        logger.info(f"Usuario {current_user['username']} eliminó vista {db_name}.{view_name}")
+        return {
+            "status": "success",
+            "database": db_name,
+            "view": view_name,
+            "message": "Vista eliminada exitosamente"
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error eliminando vista {db_name}.{view_name}: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error eliminando vista: {str(e)}")

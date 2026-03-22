@@ -55,6 +55,21 @@ services:
       - app_network
     command: python main.py
 
+  # Proxy local para acceder sin puerto (http://phantom.database.local)
+  nginx_local:
+    image: nginx:alpine
+    container_name: database_manager_nginx_local
+    restart: unless-stopped
+    profiles: ["local-host"]
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.local.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+    networks:
+      - app_network
+
   # Frontend Web (opcional, servido desde backend)
   # Si necesitas Nginx en frente (DESACTIVADO TEMPORALMENTE):
   # nginx:

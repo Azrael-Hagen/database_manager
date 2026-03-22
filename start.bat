@@ -58,6 +58,19 @@ if exist "C:\Program Files\MariaDB 12.2\bin\mysql.exe" (
     echo [OK] MariaDB disponible
 )
 
+echo.
+choice /C SN /N /M "Configurar acceso http://phantom.database.local sin puerto? [S/N]: "
+if errorlevel 2 goto skip_host_setup
+if errorlevel 1 (
+    echo [INFO] Ejecutando configuracion de host local; puede pedir permisos de administrador...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\setup-phantom-host.ps1"
+    if errorlevel 1 (
+        echo [AVISO] No se completo la configuracion de host. Se continuara con el arranque normal.
+    )
+)
+
+:skip_host_setup
+
 REM Iniciar aplicación
 echo [PASO 3/3] Iniciando Database Manager...
 echo.
@@ -67,6 +80,7 @@ echo ========================================
 echo.
 echo URL:              http://localhost:8000
 echo Documentacion:    http://localhost:8000/docs
+echo Stop rapido:      .\stop.bat
 echo Frontend activo:  carpeta web\ (no frontend\)
 echo Usuario:          admin
 echo Contrasena:       Admin123!
@@ -75,18 +89,79 @@ echo Presiona Ctrl+C para detener
 echo.
 
 REM Verificar si ya existe un proceso escuchando en el puerto configurado
-set "PORT_ACTION=0"
-powershell -NoProfile -Command "$port = 8000; $connections = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; if (-not $connections) { exit 0 }; Write-Host '[AVISO] Ya hay procesos escuchando en el puerto 8000.'; Write-Host ('PID(s): ' + ($connections -join ' ')); Write-Host ''; Get-CimInstance Win32_Process | Where-Object { $connections -contains $_.ProcessId } | Select-Object ProcessId, CommandLine | Format-Table -AutoSize | Out-Host; Write-Host ''; Write-Host 'Opciones:'; Write-Host '  1. Reutilizar la sesion actual'; Write-Host '  2. Reiniciar y crear una sesion nueva'; Write-Host '  3. Cancelar'; $answer = Read-Host 'Elige una opcion [1/2/3]'; if ($answer -eq '1') { exit 11 }; if ($answer -eq '3') { exit 12 }; if ($answer -ne '2') { exit 12 }; Write-Host ''; Write-Host 'Cerrando sesiones activas...'; foreach ($procId in $connections) { $result = Start-Process -FilePath taskkill.exe -ArgumentList '/PID', $procId, '/T', '/F' -NoNewWindow -Wait -PassThru; if ($result.ExitCode -ne 0) { Write-Host ('[ERROR] No se pudo cerrar el proceso ' + $procId); exit 2 }; Write-Host ('[OK] Proceso ' + $procId + ' cerrado') }; Start-Sleep -Seconds 2; $remaining = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; if ($remaining) { Write-Host ('[ERROR] El puerto 8000 sigue ocupado por: ' + ($remaining -join ' ')); exit 2 }; Write-Host '[OK] Puerto 8000 liberado'; exit 10"
-set "PORT_ACTION=%errorlevel%"
-
-if "%PORT_ACTION%"=="2" exit /b 1
-if "%PORT_ACTION%"=="11" (
-    echo [OK] Reutilizando la sesion activa en http://localhost:8000
-    exit /b 0
+set "PIDS="
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":8000 .*LISTENING"') do (
+    if not defined PIDS (
+        set "PIDS=%%P"
+    ) else (
+        echo !PIDS! | findstr /R /C:"\<%%P\>" >nul || set "PIDS=!PIDS! %%P"
+    )
 )
-if "%PORT_ACTION%"=="12" exit /b 0
 
-REM Ejecutar aplicación a través de main.py para respetar el manejador de Ctrl+C
+if defined PIDS (
+    echo [AVISO] Ya hay procesos escuchando en el puerto 8000.
+    echo PIDs: !PIDS!
+    echo.
+    powershell -NoProfile -Command "$ids='!PIDS!'.Split(' ',[System.StringSplitOptions]::RemoveEmptyEntries) ^| ForEach-Object { [int]$_ }; Get-CimInstance Win32_Process ^| Where-Object { $ids -contains $_.ProcessId } ^| Select-Object ProcessId, CommandLine ^| Format-Table -AutoSize"
+    echo.
+    echo Opciones:
+    echo   1. Reutilizar la sesion actual
+    echo   2. Reiniciar y crear una sesion nueva
+    echo   3. Detener sesiones y salir
+    echo   4. Cancelar
+    choice /C 1234 /N /M "Elige una opcion [1/2/3/4]: "
+
+    if errorlevel 4 exit /b 0
+    if errorlevel 3 goto stop_existing_and_exit
+    if errorlevel 2 goto kill_existing_session
+    if errorlevel 1 (
+        echo [OK] Reutilizando la sesion activa en http://localhost:8000
+        exit /b 0
+    )
+)
+
+goto run_server
+
+:kill_existing_session
+echo.
+echo Cerrando sesiones activas...
+for %%P in (!PIDS!) do (
+    taskkill /PID %%P /T /F >nul 2>&1
+    if errorlevel 1 (
+        echo [ERROR] No se pudo cerrar el proceso %%P
+        exit /b 1
+    )
+    echo [OK] Proceso %%P cerrado
+)
+timeout /t 2 /nobreak >nul
+
+set "REMAINING="
+for /f "tokens=5" %%R in ('netstat -ano ^| findstr /R /C:":8000 .*LISTENING"') do set "REMAINING=1"
+if defined REMAINING (
+    echo [ERROR] El puerto 8000 sigue ocupado.
+    exit /b 1
+)
+echo [OK] Puerto 8000 liberado
+
+goto run_server
+
+:stop_existing_and_exit
+echo.
+echo Deteniendo sesiones activas...
+for %%P in (!PIDS!) do (
+    taskkill /PID %%P /T /F >nul 2>&1
+    if errorlevel 1 (
+        echo [ERROR] No se pudo cerrar el proceso %%P
+        exit /b 1
+    )
+    echo [OK] Proceso %%P cerrado
+)
+echo [OK] Sesiones detenidas.
+exit /b 0
+
+:run_server
+
+REM Ejecutar aplicacion por main.py para respetar Ctrl+C
 cd backend
 set "PYTHONPATH=%CD%"
 set "API_DEBUG=False"

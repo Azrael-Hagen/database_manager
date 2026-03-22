@@ -62,6 +62,7 @@ class DatoImportado(Base):
     # Rastreo
     importacion_id = Column(Integer, ForeignKey("import_logs.id"))
     importacion = relationship("ImportLog", back_populates="datos")
+    lineas_asignadas = relationship("AgenteLineaAsignacion", back_populates="agente")
     
     def __repr__(self):
         return f"<DatoImportado {self.nombre}>"
@@ -88,6 +89,78 @@ class PagoSemanal(Base):
 
     def __repr__(self):
         return f"<PagoSemanal agente={self.agente_id} semana={self.semana_inicio} pagado={self.pagado}>"
+
+
+class ConfigSistema(Base):
+    """Configuracion clave/valor persistente del sistema."""
+
+    __tablename__ = "config_sistema"
+
+    id = Column(Integer, primary_key=True, index=True)
+    clave = Column(String(100), unique=True, nullable=False, index=True)
+    valor = Column(String(500), nullable=False)
+    fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<ConfigSistema {self.clave}={self.valor}>"
+
+
+class AlertaPago(Base):
+    """Alertas emitidas por falta de pago semanal."""
+
+    __tablename__ = "alertas_pago"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
+    semana_inicio = Column(Date, nullable=False, index=True)
+    fecha_alerta = Column(DateTime, default=datetime.utcnow, index=True)
+    motivo = Column(String(255), default="Pago semanal pendiente")
+    atendida = Column(Boolean, default=False, index=True)
+    fecha_atendida = Column(DateTime)
+
+    agente = relationship("DatoImportado")
+
+    def __repr__(self):
+        return f"<AlertaPago agente={self.agente_id} semana={self.semana_inicio} atendida={self.atendida}>"
+
+
+class LineaTelefonica(Base):
+    """Inventario de lineas que pueden asignarse a agentes."""
+
+    __tablename__ = "lineas_telefonicas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    numero = Column(String(50), unique=True, nullable=False, index=True)
+    tipo = Column(String(30), default="VOIP", nullable=False, index=True)
+    descripcion = Column(Text)
+    es_activa = Column(Boolean, default=True, index=True)
+    fecha_creacion = Column(DateTime, default=datetime.utcnow, index=True)
+    fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    asignaciones = relationship("AgenteLineaAsignacion", back_populates="linea")
+
+    def __repr__(self):
+        return f"<LineaTelefonica {self.numero} activa={self.es_activa}>"
+
+
+class AgenteLineaAsignacion(Base):
+    """Relacion historica entre agente y linea con estado de ocupacion."""
+
+    __tablename__ = "agente_linea_asignaciones"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
+    linea_id = Column(Integer, ForeignKey("lineas_telefonicas.id"), nullable=False, index=True)
+    es_activa = Column(Boolean, default=True, index=True)
+    fecha_asignacion = Column(DateTime, default=datetime.utcnow, index=True)
+    fecha_liberacion = Column(DateTime)
+    observaciones = Column(Text)
+
+    agente = relationship("DatoImportado", back_populates="lineas_asignadas")
+    linea = relationship("LineaTelefonica", back_populates="asignaciones")
+
+    def __repr__(self):
+        return f"<AgenteLineaAsignacion agente={self.agente_id} linea={self.linea_id} activa={self.es_activa}>"
 
 
 class ImportLog(Base):

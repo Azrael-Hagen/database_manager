@@ -4,7 +4,7 @@
  */
 
 class APIClient {
-    constructor(baseURL = 'http://localhost:8000/api') {
+    constructor(baseURL = `${window.location.origin}/api`) {
         this.baseURL = baseURL;
         this.token = localStorage.getItem('authToken');
     }
@@ -203,8 +203,112 @@ class APIClient {
         return this.request('GET', `/qr/verificar/${agenteId}${qs}`);
     }
 
+    async verificarAgenteQRPorUUID(uuid, semana = '') {
+        const qs = semana ? `?semana=${encodeURIComponent(semana)}` : '';
+        return this.request('GET', `/qr/verificar-uuid/${encodeURIComponent(uuid)}${qs}`);
+    }
+
+    async verificarCodigoEscaneado(code, semana = '') {
+        const payload = { code };
+        if (semana) payload.semana = semana;
+        return this.request('POST', '/qr/scan/verify', payload);
+    }
+
     async registrarPagoSemanal(payload) {
         return this.request('POST', '/qr/pagos', payload);
+    }
+
+    async getCuotaSemanal() {
+        return this.request('GET', '/qr/config/cuota');
+    }
+
+    async updateCuotaSemanal(cuota) {
+        return this.request('PUT', '/qr/config/cuota', { cuota_semanal: cuota });
+    }
+
+    async getReporteSemanal(semana = '', agente = '', empresa = '') {
+        const params = new URLSearchParams();
+        if (semana) params.append('semana', semana);
+        if (agente) params.append('agente', agente);
+        if (empresa) params.append('empresa', empresa);
+        const qs = params.toString() ? `?${params.toString()}` : '';
+        return this.request('GET', `/qr/reporte-semanal${qs}`);
+    }
+
+    async procesarAlertasPago() {
+        return this.request('POST', '/qr/alertas/procesar', {});
+    }
+
+    async generarBackupManual() {
+        return this.request('POST', '/qr/backup', {});
+    }
+
+    async getQrAgente(agenteId) {
+        return this.request('GET', `/qr/agente/${agenteId}/qr`);
+    }
+
+    async downloadQrAgente(agenteId) {
+        const url = `${this.baseURL}/qr/agente/${agenteId}/qr/download`;
+        const headers = {};
+        const token = this.getToken();
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+        const response = await fetch(url, { method: 'GET', headers, cache: 'no-store' });
+        if (!response.ok) {
+            let detail = `HTTP Error: ${response.status}`;
+            try {
+                const payload = await response.json();
+                detail = payload.detail || detail;
+            } catch (_) {}
+            throw new Error(detail);
+        }
+        return response.blob();
+    }
+
+    async listBackups() {
+        return this.request('GET', '/qr/backups');
+    }
+
+    async restoreBackup(filename) {
+        return this.request('POST', '/qr/restore', { filename });
+    }
+
+    async getAlertasPago(semana = '', soloPendientes = true) {
+        const params = new URLSearchParams();
+        if (semana) params.append('semana', semana);
+        params.append('solo_pendientes', String(soloPendientes));
+        return this.request('GET', `/qr/alertas?${params.toString()}`);
+    }
+
+    async getAgentesQR(search = '') {
+        const suffix = search ? `?search=${encodeURIComponent(search)}` : '';
+        return this.request('GET', `/qr/agentes${suffix}`);
+    }
+
+    async getLineas(search = '', soloOcupadas = false) {
+        const params = new URLSearchParams();
+        if (search) params.append('search', search);
+        if (soloOcupadas) params.append('solo_ocupadas', 'true');
+        const qs = params.toString() ? `?${params.toString()}` : '';
+        return this.request('GET', `/qr/lineas${qs}`);
+    }
+
+    async crearLinea(payload) {
+        return this.request('POST', '/qr/lineas', payload);
+    }
+
+    async asignarLinea(lineaId, agenteId) {
+        return this.request('POST', `/qr/lineas/${lineaId}/asignar`, { agente_id: agenteId });
+    }
+
+    async liberarLinea(lineaId, agenteId = null) {
+        const body = agenteId ? { agente_id: agenteId } : {};
+        return this.request('POST', `/qr/lineas/${lineaId}/liberar`, body);
+    }
+
+    async desactivarLinea(lineaId) {
+        return this.request('DELETE', `/qr/lineas/${lineaId}`);
     }
 
     // === GESTIÓN DE BASES DE DATOS ===
@@ -226,6 +330,22 @@ class APIClient {
 
     async deleteTable(database, table) {
         return this.request('DELETE', `/databases/${database}/tables/${table}`);
+    }
+
+    async getViews(database) {
+        return this.request('GET', `/databases/${encodeURIComponent(database)}/views`);
+    }
+
+    async createView(database, viewName, selectQuery, orReplace = true) {
+        return this.request('POST', `/databases/${encodeURIComponent(database)}/views`, {
+            view_name: viewName,
+            select_query: selectQuery,
+            or_replace: orReplace
+        });
+    }
+
+    async deleteView(database, viewName) {
+        return this.request('DELETE', `/databases/${encodeURIComponent(database)}/views/${encodeURIComponent(viewName)}`);
     }
 
     async deleteDatabase(dbName) {

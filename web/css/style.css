@@ -12,7 +12,9 @@
     --accent: #f28b30;
     --danger: #d64545;
     --success: #16966a;
+    --success-soft: #dff6ec;
     --shadow: 0 14px 30px rgba(16, 34, 54, 0.1);
+    --danger-soft: #fde7e7;
 }
 
 * {
@@ -153,6 +155,34 @@ body {
     color: var(--brand-strong);
     margin-bottom: 1rem;
     letter-spacing: 0.01em;
+}
+
+.payment-status.paid {
+    border: 1px solid #9fd3bb;
+    background: var(--success-soft);
+}
+
+.payment-status.unpaid {
+    border: 1px solid #e8b0b0;
+    background: var(--danger-soft);
+}
+
+.payment-pill {
+    display: inline-block;
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 0.82rem;
+}
+
+.payment-pill.paid {
+    color: #fff;
+    background: var(--success);
+}
+
+.payment-pill.unpaid {
+    color: #fff;
+    background: var(--danger);
 }
 
 .live-strip {

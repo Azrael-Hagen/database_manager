@@ -65,6 +65,12 @@ Verifica que ves estos archivos:
 docker-compose up -d --build
 ```
 
+Para usar hostname sin puerto (`http://phantom.database.local`), inicia también el perfil de proxy local:
+
+```powershell
+docker-compose --profile local-host up -d --build
+```
+
 **Qué hace**:
 - `up`: Inicia contenedores
 - `-d`: En segundo plano (detached mode)
@@ -102,6 +108,11 @@ Si MariaDB no está `healthy` aún, espera 30-40 segundos y vuelve a ejecutar.
 http://localhost:8000
 ```
 
+**Opción A2 - Hostname local sin puerto**:
+```
+http://phantom.database.local
+```
+
 **Opción B - API Documentation** (Swagger):
 ```
 http://localhost:8000/docs
@@ -120,6 +131,86 @@ http://localhost:8000/redoc
 Usuario:    admin
 Contraseña: SecurePassword123!
 ```
+
+---
+
+## 🌐 ACCESO DESDE RED LOCAL Y OTRAS REDES
+
+### Red local sin escribir IP
+
+Configura un hostname local para abrir la app desde celulares/PCs con una URL fija:
+
+Comando automático (Windows):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-phantom-host.ps1
+```
+
+Este script:
+
+1. Detecta tu IP local.
+2. Agrega/actualiza `phantom.database.local` en `hosts`.
+3. Limpia caché DNS.
+4. Configura acceso sin puerto (`80 -> 8000`).
+
+```env
+API_HOST=0.0.0.0
+API_PORT=8000
+LOCAL_HOSTNAME=phantom.database.local
+PUBLIC_BASE_URL=http://phantom.database.local
+```
+
+Opciones para resolver `phantom.database.local`:
+
+1. DNS local del router (recomendado): registro A al equipo servidor.
+2. Archivo `hosts` en cada cliente:
+   - Windows: `C:\Windows\System32\drivers\etc\hosts`
+   - Linux/macOS: `/etc/hosts`
+   - Ejemplo: `192.168.1.50 phantom.database.local`
+
+Para no usar puerto en la URL, publica el servicio en `:80` con reverse proxy:
+
+1. Cliente entra a `http://phantom.database.local`
+2. Proxy escucha `:80`
+3. Proxy reenvía al backend `http://127.0.0.1:8000`
+
+En Docker de este proyecto, el proxy local se activa con:
+
+```powershell
+docker-compose --profile local-host up -d
+```
+
+### Acceso desde internet (otras redes)
+
+1. Configura DDNS o dominio público.
+2. Abre/reenruta puertos en router hacia el servidor.
+3. Usa reverse proxy con HTTPS (Nginx/Caddy).
+4. Define `PUBLIC_BASE_URL` al dominio público:
+
+```env
+PUBLIC_BASE_URL=https://tu-dominio.com
+```
+
+Con esto, la UI y los QR públicos dejan de depender de `localhost`.
+
+---
+
+## ✅ CHECKLIST DE PUESTA EN PRODUCCIÓN SEGURA
+
+1. DNS/hosts resuelve `phantom.database.local` al servidor correcto.
+2. `PUBLIC_BASE_URL` configurado:
+   - LAN: `http://phantom.database.local`
+   - Internet: `https://tu-dominio.com`
+3. Reverse proxy activo (Nginx/Caddy) en `80/443`.
+4. Backend escuchando solo internamente o por red privada (`API_HOST=0.0.0.0`, `API_PORT=8000`).
+5. Firewall abierto solo para `80/443` (y no exponer `8000` públicamente).
+6. HTTPS y certificado TLS válidos para acceso externo.
+7. Contraseñas y `SECRET_KEY` actualizadas.
+8. Respaldos semanales verificados y restauración documentada.
+9. Prueba cruzada:
+   - PC en LAN abre `http://phantom.database.local`
+   - Móvil en WiFi abre `http://phantom.database.local`
+   - QR público abre dominio correcto (sin `localhost`).
 
 ---
 
@@ -147,6 +238,13 @@ Contraseña: SecurePassword123!
    ```
 4. Sube el archivo
 5. Verifica que aparecen en "Datos Importados" con QR generados
+
+### Test 4: Escaneo QR / Código de barras
+1. Ve a la sección "QR Verificación"
+2. Usa "Escanear con Cámara"
+3. Prueba un QR generado por el sistema (URL pública)
+4. Prueba un código numérico (ID / teléfono) desde lector/barcode
+5. Verifica que el estado de pago se muestra correctamente
 
 ---
 
@@ -182,6 +280,13 @@ docker-compose ps
 ---
 
 ## 🛑 DETENER / REINICIAR
+
+### Modo local (sin Docker)
+```cmd
+stop.bat
+```
+
+Esto cierra procesos escuchando en `:8000` para evitar sesiones huérfanas.
 
 ### Detener servicios (mantiene datos)
 ```powershell
