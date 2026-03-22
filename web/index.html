@@ -10,8 +10,23 @@
     <!-- Navbar -->
     <nav class="navbar">
         <div class="container">
-            <div class="logo">📊 Database Manager</div>
+            <div class="logo">
+                <img id="brandLogo" src="sources/Logo%20Phantom%20Databas.png" alt="Logo" class="brand-logo">
+                <div class="brand-copy">
+                    <span id="brandTitle">Database Manager</span>
+                    <small id="brandSubtitle">database_manager</small>
+                </div>
+            </div>
             <div class="user-menu" id="userMenu">
+                <div class="server-access" id="serverAccessWrap" title="URL local para compartir en red">
+                    <span class="server-access-label">LAN</span>
+                    <span id="serverAccessValue">cargando...</span>
+                    <button type="button" id="copyServerAccessBtn" class="btn btn-small btn-ghost" onclick="copiarAccesoServidor()">Copiar</button>
+                </div>
+                <div class="branding-admin" id="brandingAdminWrap" style="display:none;">
+                    <input type="file" id="brandingLogoInput" accept=".png,.jpg,.jpeg,.webp,.gif,.svg,image/*" style="display:none;" onchange="subirNuevoLogo(event)">
+                    <button type="button" id="changeLogoBtn" class="btn btn-small btn-ghost" onclick="abrirSelectorLogo()">Cambiar logo</button>
+                </div>
                 <span id="userName"></span>
                 <button onclick="logout()" class="btn btn-logout">Cerrar Sesión</button>
             </div>
@@ -25,6 +40,8 @@
             <li><a href="#" onclick="loadSection('datos', event)" class="menu-item">Datos</a></li>
             <li><a href="#" onclick="loadSection('databases', event)" class="menu-item">Bases de Datos</a></li>
             <li><a href="#" onclick="loadSection('importar', event)" class="menu-item">Importar</a></li>
+            <li><a href="#" onclick="loadSection('altasAgentes', event)" class="menu-item">Altas de Agentes</a></li>
+            <li><a href="#" onclick="loadSection('cambiosBajas', event)" class="menu-item">Cambios y Bajas</a></li>
             <li><a href="#" onclick="loadSection('qr', event)" class="menu-item">Generar QR</a></li>
             <li><a href="#" onclick="loadSection('usuarios', event)" class="menu-item">Usuarios</a></li>
             <li><a href="#" onclick="loadSection('auditoria', event)" class="menu-item">Auditoría</a></li>
@@ -215,6 +232,128 @@
                 </div>
             </section>
 
+            <section id="altasAgentesSection" class="panel" style="display: none;">
+                <h1>Altas de Agentes</h1>
+                <p class="hint">Usa esta pantalla para onboarding: crea catálogo de ladas, da de alta al agente, asigna línea y genera su QR inicial sin mezclarlo con verificación o cobros.</p>
+
+                <h3 style="margin-top: 22px;">Catálogo de Ladas</h3>
+                <form onsubmit="crearLadaCatalogo(event)">
+                    <div class="search-bar">
+                        <input type="text" id="ladaCodigoInput" placeholder="Lada (ej: 332, 55)" required>
+                        <input type="text" id="ladaRegionInput" placeholder="Región opcional (ej: Guadalajara)">
+                        <button type="submit" class="btn btn-secondary">Crear / Reactivar Lada</button>
+                    </div>
+                </form>
+
+                <h3 style="margin-top: 22px;">Alta Manual de Agente</h3>
+                <form onsubmit="crearAgenteManual(event)">
+                    <div class="search-bar">
+                        <input type="text" id="agenteNombreInput" placeholder="Nombre" required>
+                        <input type="text" id="agenteAliasInput" placeholder="Alias">
+                        <input type="text" id="agenteUbicacionInput" placeholder="Ubicación">
+                        <input type="text" id="agenteTelefonoInput" placeholder="Teléfono">
+                    </div>
+                    <div class="search-bar" style="margin-top:8px;">
+                        <input type="text" id="agenteFpInput" placeholder="FP">
+                        <input type="text" id="agenteFcInput" placeholder="FC">
+                        <input type="text" id="agenteGrupoInput" placeholder="Grupo">
+                        <input type="text" id="agenteEmpresaInput" placeholder="Empresa">
+                    </div>
+                    <div class="search-bar" style="margin-top:8px;">
+                        <select id="agenteModoAsignacion" onchange="cambiarModoAsignacionAgente()">
+                            <option value="ninguna">Sin asignación inicial</option>
+                            <option value="auto">Asignación automática</option>
+                            <option value="manual">Asignación manual</option>
+                        </select>
+                        <select id="agenteLadaObjetivoSelect">
+                            <option value="">-- Lada preferida (opcional) --</option>
+                        </select>
+                        <select id="agenteLineaManualSelect" style="display:none;">
+                            <option value="">-- Línea manual existente --</option>
+                        </select>
+                        <input type="text" id="agenteLineaManualInput" style="display:none;" placeholder="Número de línea manual (si no existe)">
+                    </div>
+                    <div class="search-bar" style="margin-top:8px;">
+                        <label class="live-control" style="align-items:center;">
+                            <input type="checkbox" id="agenteGenerarQrAlCrear" checked>
+                            <span>Generar QR al crear</span>
+                        </label>
+                        <button type="submit" class="btn">Crear Agente</button>
+                    </div>
+                </form>
+
+                <div id="altaAgenteQrResult" style="margin-top: 12px;"></div>
+                <div id="altaAgenteQrContainer" style="margin-top: 18px; text-align: center;"></div>
+
+                <h3 style="margin-top: 22px;">Líneas y Asignación</h3>
+                <form onsubmit="crearLineaTelefonica(event)">
+                    <div class="search-bar">
+                        <input type="text" id="lineaNumeroInput" placeholder="Número de línea (ej: 1001 o 525511223344)" required>
+                        <input type="text" id="lineaTipoInput" placeholder="Tipo (VOIP, MOVIL, FIJA)" value="VOIP">
+                        <input type="text" id="lineaDescripcionInput" placeholder="Descripción opcional">
+                        <button type="submit" class="btn">Crear / Reactivar Línea</button>
+                    </div>
+                </form>
+                <form onsubmit="asignarLineaAgente(event)" style="margin-top:10px;">
+                    <div class="search-bar">
+                        <select id="lineaAsignarSelect" required>
+                            <option value="">-- Línea --</option>
+                        </select>
+                        <select id="agenteAsignarSelect" required>
+                            <option value="">-- Agente --</option>
+                        </select>
+                        <button type="submit" class="btn">Asignar Línea</button>
+                        <button type="button" class="btn btn-secondary" onclick="cargarLineasYAgentes()">Refrescar</button>
+                    </div>
+                </form>
+                <div class="search-bar" style="margin-top:10px;">
+                    <select id="lineasLadaFilter">
+                        <option value="">-- Filtrar líneas por lada --</option>
+                    </select>
+                    <button type="button" class="btn btn-secondary" onclick="cargarLineasYAgentes()">Aplicar Filtro</button>
+                </div>
+                <div id="lineasEstadoContainer" class="table-responsive" style="margin-top: 12px;"></div>
+            </section>
+
+            <section id="cambiosBajasSection" class="panel" style="display: none;">
+                <h1>Cambios y Bajas</h1>
+                <p class="hint">Esta pantalla concentra mantenimiento operativo: busca un agente activo, corrige datos, libera líneas si hace falta, revisa su QR y aplica la baja suave sin salir del flujo.</p>
+
+                <div class="search-bar">
+                    <input type="text" id="gestionAgenteSearch" placeholder="Buscar por nombre, empresa o teléfono" onkeyup="cargarAgentesGestion(false)">
+                    <button type="button" class="btn" onclick="cargarAgentesGestion()">Buscar / Refrescar</button>
+                </div>
+
+                <div id="gestionAgentesContainer" class="table-responsive" style="margin-top: 12px;"></div>
+
+                <div id="editarAgentePanel" class="panel" style="display:none; margin-top: 18px;">
+                    <h3>Editar agente seleccionado</h3>
+                    <form onsubmit="guardarCambiosAgente(event)">
+                        <input type="hidden" id="editarAgenteId">
+                        <div class="search-bar">
+                            <input type="text" id="editarAgenteNombre" placeholder="Nombre" required>
+                            <input type="text" id="editarAgenteAlias" placeholder="Alias">
+                            <input type="text" id="editarAgenteUbicacion" placeholder="Ubicación">
+                            <input type="text" id="editarAgenteTelefono" placeholder="Teléfono">
+                        </div>
+                        <div class="search-bar" style="margin-top:8px;">
+                            <input type="text" id="editarAgenteFp" placeholder="FP">
+                            <input type="text" id="editarAgenteFc" placeholder="FC">
+                            <input type="text" id="editarAgenteGrupo" placeholder="Grupo">
+                            <input type="text" id="editarAgenteEmpresa" placeholder="Empresa">
+                        </div>
+                        <div class="search-bar" style="margin-top:8px;">
+                            <input type="text" id="editarAgenteVoip" placeholder="VoIP">
+                            <button type="submit" class="btn">Guardar Cambios</button>
+                            <button type="button" class="btn btn-secondary" onclick="cancelarEdicionAgente()">Cancelar</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div id="gestionAgenteQrResult" style="margin-top: 12px;"></div>
+                <div id="gestionAgenteQrContainer" style="margin-top: 18px; text-align: center;"></div>
+            </section>
+
             <!-- Sección de QR -->
             <section id="qrSection" class="panel" style="display: none;">
                 <h1>QR de Verificación de Agente</h1>
@@ -251,28 +390,16 @@
                 <p class="hint">La lectura acepta URL QR del sistema, UUID, ID de agente y número de línea.</p>
                 <div id="qrScanner" style="width:100%;max-width:420px;margin-top:12px;"></div>
 
-                <h3 style="margin-top: 22px;">Agentes y Líneas</h3>
-                <form onsubmit="crearLineaTelefonica(event)">
-                    <div class="search-bar">
-                        <input type="text" id="lineaNumeroInput" placeholder="Número de línea (ej: 1001 o 525511223344)" required>
-                        <input type="text" id="lineaTipoInput" placeholder="Tipo (VOIP, MOVIL, FIJA)" value="VOIP">
-                        <input type="text" id="lineaDescripcionInput" placeholder="Descripción opcional">
-                        <button type="submit" class="btn">Crear / Reactivar Línea</button>
+                <div class="card" style="margin-top: 22px; padding: 14px; border: 1px solid #d8e6f4; border-radius: 12px; background: #f9fcff; color: #173049;">
+                    <strong>Operación separada por flujo:</strong><br>
+                    Las altas nuevas y la asignación de números ahora viven en <strong>Altas de Agentes</strong>.<br>
+                    Los ajustes, correcciones y bajas están en <strong>Cambios y Bajas</strong>.<br>
+                    Esta pantalla queda enfocada a verificación, pagos, reportes y QR manuales.
+                    <div style="margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap;">
+                        <button type="button" class="btn btn-secondary" onclick="loadSection('altasAgentes')">Ir a Altas</button>
+                        <button type="button" class="btn btn-secondary" onclick="loadSection('cambiosBajas')">Ir a Cambios y Bajas</button>
                     </div>
-                </form>
-                <form onsubmit="asignarLineaAgente(event)" style="margin-top:10px;">
-                    <div class="search-bar">
-                        <select id="lineaAsignarSelect" required>
-                            <option value="">-- Línea --</option>
-                        </select>
-                        <select id="agenteAsignarSelect" required>
-                            <option value="">-- Agente --</option>
-                        </select>
-                        <button type="submit" class="btn">Asignar Línea</button>
-                        <button type="button" class="btn btn-secondary" onclick="cargarLineasYAgentes()">Refrescar</button>
-                    </div>
-                </form>
-                <div id="lineasEstadoContainer" class="table-responsive" style="margin-top: 12px;"></div>
+                </div>
 
                 <h3 style="margin-top: 22px;">Registrar Pago Semanal</h3>
                 <form onsubmit="registrarPagoSemanal(event)">
@@ -321,6 +448,12 @@
                     <button type="button" class="btn btn-secondary" onclick="procesarAlertasPagoManual()">Procesar Alertas</button>
                     <button type="button" class="btn btn-secondary" onclick="generarBackupManual()">Respaldar Base</button>
                 </div>
+                <div class="search-bar" style="margin-top: 10px;">
+                    <input type="text" id="backupDirInput" placeholder="Ruta de respaldos en el servidor, ej: D:\\Respaldos\\Phantom">
+                    <button type="button" class="btn btn-secondary" onclick="guardarRutaRespaldos()">Guardar Ruta</button>
+                    <button type="button" class="btn btn-secondary" onclick="cargarConfiguracionRespaldos()">Recargar Ruta</button>
+                </div>
+                <p class="hint" id="backupDirHint">Los respaldos y restauraciones se leerán desde la ruta configurada en el servidor.</p>
                 <div id="reporteSemanalResumen" style="margin-top: 10px;"></div>
                 <div id="reporteSemanalContainer" class="table-responsive" style="margin-top: 12px;"></div>
                 <div id="alertasPagoContainer" class="table-responsive" style="margin-top: 12px;"></div>

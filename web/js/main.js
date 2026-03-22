@@ -17,6 +17,17 @@ let qrScannerInstance = null;
 let currentWeeklyReportRows = [];
 let lastReceiptData = null;
 let currentDatosDatabase = '';
+let currentServerAccessUrl = '';
+let brandingManageEnabled = false;
+let currentAgentManagementRows = [];
+let currentEditingAgentId = null;
+let currentBackupDir = '';
+const DEFAULT_AGENT_DATABASE = 'registro_agentes';
+const BRANDING_DEFAULTS = {
+    appName: 'Database Manager',
+    subtitle: 'database_manager',
+    logoPath: 'sources/logo.png'
+};
 
 function togglePassword(inputId, btn) {
     const input = document.getElementById(inputId);
@@ -102,7 +113,77 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     setDefaultWeeklyDates();
+    loadBrandingConfig();
 });
+
+async function loadBrandingConfig() {
+    let config = { ...BRANDING_DEFAULTS };
+    try {
+        const response = await fetch('sources/branding.json', { cache: 'no-store' });
+        if (response.ok) {
+            const remote = await response.json();
+            config = {
+                appName: String(remote.appName || BRANDING_DEFAULTS.appName),
+                subtitle: String(remote.subtitle || BRANDING_DEFAULTS.subtitle),
+                logoPath: String(remote.logoPath || BRANDING_DEFAULTS.logoPath)
+            };
+        }
+    } catch (_) {
+        // Optional file; keep defaults when missing.
+    }
+
+    const titleEl = document.getElementById('brandTitle');
+    const subtitleEl = document.getElementById('brandSubtitle');
+    const logoEl = document.getElementById('brandLogo');
+    if (titleEl) titleEl.textContent = config.appName;
+    if (subtitleEl) subtitleEl.textContent = config.subtitle;
+    if (logoEl) applyLogoWithFallback(logoEl, config.logoPath);
+    document.title = `${config.appName} - ${config.subtitle}`;
+}
+
+function applyBrandingConfig(config) {
+    if (!config || typeof config !== 'object') return;
+    const titleEl = document.getElementById('brandTitle');
+    const subtitleEl = document.getElementById('brandSubtitle');
+    const logoEl = document.getElementById('brandLogo');
+    if (titleEl) titleEl.textContent = String(config.appName || BRANDING_DEFAULTS.appName);
+    if (subtitleEl) subtitleEl.textContent = String(config.subtitle || BRANDING_DEFAULTS.subtitle);
+    if (logoEl) applyLogoWithFallback(logoEl, String(config.logoPath || BRANDING_DEFAULTS.logoPath));
+    document.title = `${String(config.appName || BRANDING_DEFAULTS.appName)} - ${String(config.subtitle || BRANDING_DEFAULTS.subtitle)}`;
+}
+
+function applyLogoWithFallback(logoEl, rawPath) {
+    const candidates = [];
+
+    if (rawPath) {
+        candidates.push(String(rawPath));
+        try {
+            candidates.push(encodeURI(String(rawPath)));
+        } catch (_) {}
+        try {
+            candidates.push(encodeURI(decodeURI(String(rawPath))));
+        } catch (_) {}
+    }
+
+    candidates.push('sources/Logo Phantom Databas.png');
+    candidates.push('sources/Logo%20Phantom%20Databas.png');
+    candidates.push('sources/logo.png');
+
+    const unique = [...new Set(candidates.filter(Boolean))];
+    let idx = 0;
+
+    const tryNext = () => {
+        if (idx >= unique.length) {
+            logoEl.style.display = 'none';
+            return;
+        }
+        logoEl.style.display = 'block';
+        logoEl.src = unique[idx++];
+    };
+
+    logoEl.onerror = tryNext;
+    tryNext();
+}
 
 function handleVisibilityChange() {
     if (!authToken) return;
@@ -141,7 +222,7 @@ async function validarSesionActiva() {
 
 // === AUTENTICACIÓN ===
 function showLogin() {
-    const ids = ['loginSection', 'registerSection', 'dashboardSection', 'datosSection', 'databasesSection', 'importarSection', 'qrSection', 'usuariosSection', 'auditoriaSection'];
+    const ids = ['loginSection', 'registerSection', 'dashboardSection', 'datosSection', 'databasesSection', 'importarSection', 'altasAgentesSection', 'cambiosBajasSection', 'qrSection', 'usuariosSection', 'auditoriaSection'];
     ids.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = id === 'loginSection' ? 'block' : 'none';
@@ -168,6 +249,8 @@ function showApp() {
     document.querySelector('.sidebar').style.display = 'block';
     document.querySelector('footer').style.display = 'block';
     document.getElementById('userName').textContent = currentUser?.username || 'Usuario';
+    cargarAccesoServidorLocal();
+    cargarPermisosBrandingAdmin();
     syncRealtimeControls();
     loadSection('dashboard');
     startRealtimeUpdates();
@@ -229,8 +312,142 @@ function logout() {
     currentUser = null;
     apiClient.clearToken();
     localStorage.removeItem('currentUser');
+    currentServerAccessUrl = '';
+    brandingManageEnabled = false;
     stopRealtimeUpdates();
     showLogin();
+}
+
+async function cargarPermisosBrandingAdmin() {
+    const wrapEl = document.getElementById('brandingAdminWrap');
+    const inputEl = document.getElementById('brandingLogoInput');
+    if (wrapEl) wrapEl.style.display = 'none';
+    if (inputEl) inputEl.value = '';
+
+    if (!currentUser?.es_admin) {
+        brandingManageEnabled = false;
+        return;
+    }
+
+    try {
+        const res = await apiClient.getBrandingAdminStatus();
+        brandingManageEnabled = Boolean(res.can_manage_logo);
+        if (res.branding) {
+            applyBrandingConfig(res.branding);
+        }
+        if (wrapEl && brandingManageEnabled) {
+            wrapEl.style.display = 'inline-flex';
+        }
+    } catch (error) {
+        console.warn('No se pudieron cargar permisos de branding:', error.message);
+        brandingManageEnabled = false;
+    }
+}
+
+function abrirSelectorLogo() {
+    if (!brandingManageEnabled) {
+        alert('Solo un administrador desde el servidor local puede cambiar el logo.');
+        return;
+    }
+    const inputEl = document.getElementById('brandingLogoInput');
+    if (inputEl) {
+        inputEl.click();
+    }
+}
+
+async function subirNuevoLogo(event) {
+    const inputEl = event?.target;
+    const btnEl = document.getElementById('changeLogoBtn');
+    const file = inputEl?.files?.[0];
+    if (!file) {
+        return;
+    }
+
+    try {
+        if (btnEl) {
+            btnEl.disabled = true;
+            btnEl.textContent = 'Subiendo...';
+        }
+        const res = await apiClient.uploadBrandingLogo(file);
+        if (res.branding) {
+            applyBrandingConfig(res.branding);
+        } else {
+            await loadBrandingConfig();
+        }
+        alert('Logo actualizado correctamente.');
+    } catch (error) {
+        alert('Error cambiando logo: ' + error.message);
+    } finally {
+        if (inputEl) inputEl.value = '';
+        if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.textContent = 'Cambiar logo';
+        }
+    }
+}
+
+async function cargarAccesoServidorLocal() {
+    const valueEl = document.getElementById('serverAccessValue');
+    const wrapEl = document.getElementById('serverAccessWrap');
+    const btnEl = document.getElementById('copyServerAccessBtn');
+    if (!valueEl || !wrapEl || !btnEl) {
+        return;
+    }
+
+    valueEl.textContent = 'cargando...';
+    btnEl.disabled = true;
+
+    try {
+        const res = await apiClient.getLocalNetworkInfo();
+        const url = String(res.share_url || '').trim();
+        const ip = String(res.ip_local || '').trim();
+        currentServerAccessUrl = url;
+        valueEl.textContent = url || ip || 'No disponible';
+        wrapEl.title = ip ? `IP local: ${ip}` : 'Acceso local';
+        btnEl.disabled = !(url || ip);
+    } catch (error) {
+        console.warn('No se pudo obtener IP local:', error.message);
+        currentServerAccessUrl = '';
+        valueEl.textContent = 'No disponible';
+        wrapEl.title = 'No se pudo detectar IP local';
+        btnEl.disabled = true;
+    }
+}
+
+async function copiarAccesoServidor() {
+    const valueEl = document.getElementById('serverAccessValue');
+    const btnEl = document.getElementById('copyServerAccessBtn');
+    const text = (currentServerAccessUrl || valueEl?.textContent || '').trim();
+    if (!text || text.toLowerCase() === 'cargando...' || text.toLowerCase() === 'no disponible') {
+        alert('Acceso local no disponible todavía.');
+        return;
+    }
+
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+        } else {
+            const temp = document.createElement('textarea');
+            temp.value = text;
+            temp.style.position = 'fixed';
+            temp.style.opacity = '0';
+            document.body.appendChild(temp);
+            temp.focus();
+            temp.select();
+            document.execCommand('copy');
+            document.body.removeChild(temp);
+        }
+
+        if (btnEl) {
+            const original = btnEl.textContent;
+            btnEl.textContent = 'Copiado';
+            setTimeout(() => {
+                btnEl.textContent = original || 'Copiar';
+            }, 1200);
+        }
+    } catch (error) {
+        alert('No se pudo copiar automáticamente. URL: ' + text);
+    }
 }
 
 function startRealtimeUpdates() {
@@ -327,6 +544,8 @@ function loadSection(section, eventRef = null) {
     document.getElementById('datosSection').style.display = 'none';
     document.getElementById('databasesSection').style.display = 'none';
     document.getElementById('importarSection').style.display = 'none';
+    document.getElementById('altasAgentesSection').style.display = 'none';
+    document.getElementById('cambiosBajasSection').style.display = 'none';
     document.getElementById('qrSection').style.display = 'none';
     document.getElementById('usuariosSection').style.display = 'none';
     document.getElementById('auditoriaSection').style.display = 'none';
@@ -350,9 +569,18 @@ function loadSection(section, eventRef = null) {
         case 'importar':
             document.getElementById('importarSection').style.display = 'block';
             break;
+        case 'altasAgentes':
+            document.getElementById('altasAgentesSection').style.display = 'block';
+            cargarLineasYAgentes();
+            break;
+        case 'cambiosBajas':
+            document.getElementById('cambiosBajasSection').style.display = 'block';
+            cargarAgentesGestion();
+            break;
         case 'qr':
             document.getElementById('qrSection').style.display = 'block';
             cargarCuotaSemanal();
+            cargarConfiguracionRespaldos();
             cargarReporteSemanal();
             cargarRespaldos();
             cargarLineasYAgentes();
@@ -375,6 +603,23 @@ function loadSection(section, eventRef = null) {
             active.classList.add('active');
         }
     }
+}
+
+function pickPreferredDatabase(databases) {
+    if (!Array.isArray(databases) || !databases.length) {
+        return '';
+    }
+    if (databases.includes(DEFAULT_AGENT_DATABASE)) {
+        return DEFAULT_AGENT_DATABASE;
+    }
+    if (databases.includes('database_manager')) {
+        return 'database_manager';
+    }
+    return databases[0];
+}
+
+function isAgentDataTableContext(dbName, tableName) {
+    return tableName === 'datos_importados' && (dbName === DEFAULT_AGENT_DATABASE || dbName === 'database_manager');
 }
 
 // === DASHBOARD ===
@@ -415,10 +660,11 @@ async function cargarDatosDatabases() {
         });
         select.innerHTML = html;
 
+        const preferred = pickPreferredDatabase(dbs);
         if (prev && dbs.includes(prev)) {
             select.value = prev;
-        } else if (dbs.includes('database_manager')) {
-            select.value = 'database_manager';
+        } else if (preferred) {
+            select.value = preferred;
         } else if (dbs.length) {
             select.value = dbs[0];
         }
@@ -559,7 +805,7 @@ function mostrarDatos(datos) {
     const columnas = Object.keys(datos[0]);
     const dbName = document.getElementById('datosDatabaseSelect')?.value || '';
     const tableName = document.getElementById('tablasSelect')?.value || '';
-    const editableContext = dbName === 'database_manager' && tableName === 'datos_importados';
+    const editableContext = isAgentDataTableContext(dbName, tableName);
     let html = '<table class="data-table"><thead><tr>';
 
     columnas.forEach(col => {
@@ -611,13 +857,33 @@ async function editarDato(id) {
 }
 
 async function generarQrIndividual(agenteId) {
+    return generarQrIndividualEnContexto(agenteId, {
+        resultContainerId: 'qrVerificationResult',
+        qrContainerId: 'qrContainer',
+        navigateSection: 'qr',
+        setQrForm: true,
+    });
+}
+
+async function generarQrIndividualEnContexto(agenteId, options = {}) {
+    const {
+        resultContainerId = 'qrVerificationResult',
+        qrContainerId = 'qrContainer',
+        navigateSection = null,
+        setQrForm = false,
+    } = options;
     try {
         const result = await apiClient.getQrAgente(agenteId);
         const data = result.data || {};
-        renderSimpleQR(data.public_url);
-        loadSection('qr');
-        document.getElementById('qrAgenteId').value = agenteId;
-        const box = document.getElementById('qrVerificationResult');
+        renderSimpleQR(data.public_url, qrContainerId);
+        if (navigateSection) {
+            loadSection(navigateSection);
+        }
+        if (setQrForm) {
+            const qrAgenteInput = document.getElementById('qrAgenteId');
+            if (qrAgenteInput) qrAgenteInput.value = agenteId;
+        }
+        const box = document.getElementById(resultContainerId);
         if (box) {
             box.innerHTML = `
                 <div class="card" style="padding:12px;border:1px solid #d8d8d8;border-radius:8px;">
@@ -635,6 +901,24 @@ async function generarQrIndividual(agenteId) {
         console.error('Error:', error);
         alert('Error generando QR individual: ' + error.message);
     }
+}
+
+function previsualizarQrAlta(agenteId) {
+    return generarQrIndividualEnContexto(agenteId, {
+        resultContainerId: 'altaAgenteQrResult',
+        qrContainerId: 'altaAgenteQrContainer',
+        navigateSection: null,
+        setQrForm: false,
+    });
+}
+
+function previsualizarQrGestion(agenteId) {
+    return generarQrIndividualEnContexto(agenteId, {
+        resultContainerId: 'gestionAgenteQrResult',
+        qrContainerId: 'gestionAgenteQrContainer',
+        navigateSection: null,
+        setQrForm: false,
+    });
 }
 
 async function leerCodigoManual() {
@@ -742,7 +1026,7 @@ function renderLineasEstado(lineas) {
     }
 
     let html = '<table class="data-table"><thead><tr>';
-    html += '<th>ID</th><th>Línea</th><th>Tipo</th><th>Estado</th><th>Agente</th><th>Acciones</th>';
+    html += '<th>ID</th><th>Línea</th><th>Lada</th><th>Tipo</th><th>Estado</th><th>Agente</th><th>Acciones</th>';
     html += '</tr></thead><tbody>';
 
     lineas.forEach(linea => {
@@ -755,6 +1039,7 @@ function renderLineasEstado(lineas) {
         html += `<tr>
             <td>${linea.id}</td>
             <td>${linea.numero}</td>
+            <td>${linea.lada || '-'}</td>
             <td>${linea.tipo || '-'}</td>
             <td>${estado}</td>
             <td>${agente}</td>
@@ -765,23 +1050,258 @@ function renderLineasEstado(lineas) {
     container.innerHTML = html;
 }
 
+function getAgentExtras(agent) {
+    const extras = agent?.datos_adicionales;
+    if (!extras || typeof extras !== 'object' || Array.isArray(extras)) {
+        return {};
+    }
+    return extras;
+}
+
+function resetGestionAgentePanel() {
+    currentEditingAgentId = null;
+    const panel = document.getElementById('editarAgentePanel');
+    if (panel) panel.style.display = 'none';
+    const ids = [
+        'editarAgenteId',
+        'editarAgenteNombre',
+        'editarAgenteAlias',
+        'editarAgenteUbicacion',
+        'editarAgenteTelefono',
+        'editarAgenteFp',
+        'editarAgenteFc',
+        'editarAgenteGrupo',
+        'editarAgenteEmpresa',
+        'editarAgenteVoip',
+    ];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+}
+
+function renderGestionAgentes(agentes) {
+    const container = document.getElementById('gestionAgentesContainer');
+    if (!container) return;
+    if (!agentes.length) {
+        container.innerHTML = '<p>No hay agentes activos que coincidan con la búsqueda.</p>';
+        return;
+    }
+
+    let html = '<table class="data-table"><thead><tr>';
+    html += '<th>ID</th><th>Nombre</th><th>Alias</th><th>Teléfono</th><th>Empresa</th><th>Líneas</th><th>Ladas</th><th>Acciones</th>';
+    html += '</tr></thead><tbody>';
+
+    agentes.forEach(agent => {
+        const extras = getAgentExtras(agent);
+        const lines = Array.isArray(agent.lineas) ? agent.lineas : [];
+        const lineText = lines.length ? lines.map(line => `${line.numero} (${line.tipo || 'N/A'})`).join(', ') : 'Sin líneas';
+        const ladas = Array.isArray(agent.ladas_preferidas) && agent.ladas_preferidas.length ? agent.ladas_preferidas.join(', ') : '-';
+        html += `<tr>
+            <td>${agent.id}</td>
+            <td>${agent.nombre || '-'}</td>
+            <td>${extras.alias || '-'}</td>
+            <td>${agent.telefono || '-'}</td>
+            <td>${agent.empresa || '-'}</td>
+            <td>${lineText}</td>
+            <td>${ladas}</td>
+            <td>
+                <button onclick="editarAgenteGestion(${agent.id})" class="btn btn-small">Editar</button>
+                <button onclick="previsualizarQrGestion(${agent.id})" class="btn btn-small btn-secondary">QR</button>
+                <button onclick="liberarLineasAgente(${agent.id})" class="btn btn-small btn-secondary">Liberar líneas</button>
+                <button onclick="darBajaAgente(${agent.id})" class="btn btn-small btn-danger">Baja</button>
+            </td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+async function cargarAgentesGestion(showErrors = true) {
+    try {
+        const search = document.getElementById('gestionAgenteSearch')?.value.trim() || '';
+        const res = await apiClient.getAgentesQR(search);
+        currentAgentManagementRows = res.data || [];
+        renderGestionAgentes(currentAgentManagementRows);
+    } catch (error) {
+        console.error('Error:', error);
+        if (showErrors) {
+            alert('Error cargando agentes: ' + error.message);
+        }
+    }
+}
+
+async function editarAgenteGestion(agenteId) {
+    const agent = currentAgentManagementRows.find(item => Number(item.id) === Number(agenteId));
+    if (!agent) {
+        alert('No se encontró el agente en la lista actual.');
+        return;
+    }
+
+    const extras = getAgentExtras(agent);
+    currentEditingAgentId = Number(agenteId);
+    document.getElementById('editarAgenteId').value = String(agenteId);
+    document.getElementById('editarAgenteNombre').value = agent.nombre || '';
+    document.getElementById('editarAgenteAlias').value = extras.alias || '';
+    document.getElementById('editarAgenteUbicacion').value = extras.ubicacion || '';
+    document.getElementById('editarAgenteTelefono').value = agent.telefono || '';
+    document.getElementById('editarAgenteFp').value = extras.fp || '';
+    document.getElementById('editarAgenteFc').value = extras.fc || '';
+    document.getElementById('editarAgenteGrupo').value = extras.grupo || '';
+    document.getElementById('editarAgenteEmpresa').value = agent.empresa || '';
+    document.getElementById('editarAgenteVoip').value = extras.numero_voip || '';
+    const panel = document.getElementById('editarAgentePanel');
+    if (panel) {
+        panel.style.display = 'block';
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+function cancelarEdicionAgente() {
+    resetGestionAgentePanel();
+}
+
+async function guardarCambiosAgente(e) {
+    e.preventDefault();
+    const agenteId = Number(document.getElementById('editarAgenteId')?.value || currentEditingAgentId || 0);
+    if (!agenteId) {
+        alert('No hay un agente seleccionado para editar.');
+        return;
+    }
+
+    const agent = currentAgentManagementRows.find(item => Number(item.id) === agenteId) || {};
+    const extras = getAgentExtras(agent);
+    const payload = {
+        nombre: document.getElementById('editarAgenteNombre')?.value.trim() || null,
+        telefono: document.getElementById('editarAgenteTelefono')?.value.trim() || null,
+        empresa: document.getElementById('editarAgenteEmpresa')?.value.trim() || null,
+        datos_adicionales: {
+            ...extras,
+            alias: document.getElementById('editarAgenteAlias')?.value.trim() || null,
+            ubicacion: document.getElementById('editarAgenteUbicacion')?.value.trim() || null,
+            fp: document.getElementById('editarAgenteFp')?.value.trim() || null,
+            fc: document.getElementById('editarAgenteFc')?.value.trim() || null,
+            grupo: document.getElementById('editarAgenteGrupo')?.value.trim() || null,
+            numero_voip: document.getElementById('editarAgenteVoip')?.value.trim() || null,
+        }
+    };
+
+    if (!payload.nombre) {
+        alert('El nombre del agente es obligatorio.');
+        return;
+    }
+
+    payload.datos_adicionales = Object.fromEntries(Object.entries(payload.datos_adicionales).filter(([, value]) => value !== null && value !== ''));
+
+    try {
+        await apiClient.actualizarDato(agenteId, payload);
+        alert('Agente actualizado correctamente.');
+        resetGestionAgentePanel();
+        await cargarAgentesGestion(false);
+        await cargarLineasYAgentes();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error guardando cambios: ' + error.message);
+    }
+}
+
+async function liberarLineasAgente(agenteId) {
+    const agent = currentAgentManagementRows.find(item => Number(item.id) === Number(agenteId));
+    const lines = Array.isArray(agent?.lineas) ? agent.lineas : [];
+    if (!lines.length) {
+        alert('Este agente no tiene líneas asignadas.');
+        return;
+    }
+    if (!confirm(`¿Liberar ${lines.length} línea(s) del agente ${agent.nombre || agenteId}?`)) return;
+
+    try {
+        for (const line of lines) {
+            await apiClient.liberarLinea(line.id, agenteId);
+        }
+        alert('Líneas liberadas correctamente.');
+        await cargarAgentesGestion(false);
+        await cargarLineasYAgentes();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error liberando líneas: ' + error.message);
+    }
+}
+
+async function darBajaAgente(agenteId) {
+    const agent = currentAgentManagementRows.find(item => Number(item.id) === Number(agenteId));
+    const label = agent?.nombre || `ID ${agenteId}`;
+    if (!confirm(`¿Dar de baja al agente ${label}?`)) return;
+    if ((agent?.lineas || []).length && !confirm('El agente tiene líneas asignadas. La baja no las libera automáticamente. ¿Continuar?')) return;
+
+    try {
+        await apiClient.eliminarDato(agenteId);
+        alert('Agente dado de baja correctamente.');
+        if (currentEditingAgentId === Number(agenteId)) {
+            resetGestionAgentePanel();
+        }
+        await cargarAgentesGestion(false);
+        await cargarLineasYAgentes();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error dando de baja al agente: ' + error.message);
+    }
+}
+
 async function cargarLineasYAgentes() {
     try {
+        const lada = (document.getElementById('lineasLadaFilter')?.value || '').trim();
         const [lineasRes, agentesRes] = await Promise.all([
-            apiClient.getLineas('', false),
+            apiClient.getLineas('', false, lada),
             apiClient.getAgentesQR('')
         ]);
 
         const lineas = lineasRes.data || [];
         const agentes = agentesRes.data || [];
+        const ladas = (await apiClient.getLadas('')).data || [];
+
+        const ladaSelect = document.getElementById('lineasLadaFilter');
+        if (ladaSelect) {
+            const prev = ladaSelect.value;
+            let html = '<option value="">-- Filtrar líneas por lada --</option>';
+            ladas.forEach(l => {
+                html += `<option value="${l.codigo}">${l.codigo}${l.nombre_region ? ` - ${l.nombre_region}` : ''}</option>`;
+            });
+            ladaSelect.innerHTML = html;
+            if (prev && ladas.some(l => l.codigo === prev)) {
+                ladaSelect.value = prev;
+            }
+        }
+
+        const agenteLadaSelect = document.getElementById('agenteLadaObjetivoSelect');
+        if (agenteLadaSelect) {
+            const prev = agenteLadaSelect.value;
+            let html = '<option value="">-- Lada preferida (opcional) --</option>';
+            ladas.forEach(l => {
+                html += `<option value="${l.codigo}">${l.codigo}${l.nombre_region ? ` - ${l.nombre_region}` : ''}</option>`;
+            });
+            agenteLadaSelect.innerHTML = html;
+            if (prev && ladas.some(l => l.codigo === prev)) {
+                agenteLadaSelect.value = prev;
+            }
+        }
 
         const lineaSelect = document.getElementById('lineaAsignarSelect');
         if (lineaSelect) {
             let html = '<option value="">-- Línea --</option>';
             lineas.forEach(l => {
-                html += `<option value="${l.id}">${l.numero} (${l.tipo || 'N/A'}) ${l.ocupada ? '[OCUPADA]' : '[LIBRE]'}</option>`;
+                html += `<option value="${l.id}">${l.numero} [${l.lada || 'sin lada'}] (${l.tipo || 'N/A'}) ${l.ocupada ? '[OCUPADA]' : '[LIBRE]'}</option>`;
             });
             lineaSelect.innerHTML = html;
+        }
+
+        const lineaManualSelect = document.getElementById('agenteLineaManualSelect');
+        if (lineaManualSelect) {
+            let html = '<option value="">-- Línea manual existente --</option>';
+            lineas.forEach(l => {
+                html += `<option value="${l.id}">${l.numero} [${l.lada || 'sin lada'}] ${l.ocupada ? '(ocupada)' : '(libre)'}</option>`;
+            });
+            lineaManualSelect.innerHTML = html;
         }
 
         const agenteSelect = document.getElementById('agenteAsignarSelect');
@@ -794,9 +1314,111 @@ async function cargarLineasYAgentes() {
         }
 
         renderLineasEstado(lineas);
+        cambiarModoAsignacionAgente();
     } catch (error) {
         console.error('Error:', error);
         alert('Error cargando agentes y líneas: ' + error.message);
+    }
+}
+
+function cambiarModoAsignacionAgente() {
+    const modo = document.getElementById('agenteModoAsignacion')?.value || 'ninguna';
+    const selectManual = document.getElementById('agenteLineaManualSelect');
+    const inputManual = document.getElementById('agenteLineaManualInput');
+    if (!selectManual || !inputManual) return;
+
+    const showManual = modo === 'manual';
+    selectManual.style.display = showManual ? 'inline-block' : 'none';
+    inputManual.style.display = showManual ? 'inline-block' : 'none';
+}
+
+async function crearLadaCatalogo(e) {
+    e.preventDefault();
+    const codigo = document.getElementById('ladaCodigoInput')?.value.trim();
+    const nombreRegion = document.getElementById('ladaRegionInput')?.value.trim() || '';
+    if (!codigo) {
+        alert('Ingresa una lada válida.');
+        return;
+    }
+
+    try {
+        await apiClient.crearLada({ codigo, nombre_region: nombreRegion });
+        alert('Lada creada/reactivada correctamente.');
+        document.getElementById('ladaCodigoInput').value = '';
+        document.getElementById('ladaRegionInput').value = '';
+        await cargarLineasYAgentes();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error guardando lada: ' + error.message);
+    }
+}
+
+async function crearAgenteManual(e) {
+    e.preventDefault();
+    const modo = document.getElementById('agenteModoAsignacion')?.value || 'ninguna';
+    const payload = {
+        nombre: document.getElementById('agenteNombreInput')?.value.trim(),
+        alias: document.getElementById('agenteAliasInput')?.value.trim() || null,
+        ubicacion: document.getElementById('agenteUbicacionInput')?.value.trim() || null,
+        telefono: document.getElementById('agenteTelefonoInput')?.value.trim() || null,
+        fp: document.getElementById('agenteFpInput')?.value.trim() || null,
+        fc: document.getElementById('agenteFcInput')?.value.trim() || null,
+        grupo: document.getElementById('agenteGrupoInput')?.value.trim() || null,
+        empresa: document.getElementById('agenteEmpresaInput')?.value.trim() || null,
+        modo_asignacion: modo,
+        lada_objetivo: document.getElementById('agenteLadaObjetivoSelect')?.value || null
+    };
+
+    if (!payload.nombre) {
+        alert('El nombre del agente es obligatorio.');
+        return;
+    }
+
+    if (modo === 'manual') {
+        payload.linea_id = Number(document.getElementById('agenteLineaManualSelect')?.value || 0) || null;
+        payload.numero_linea_manual = document.getElementById('agenteLineaManualInput')?.value.trim() || null;
+        if (!payload.linea_id && !payload.numero_linea_manual) {
+            alert('Para modo manual selecciona una línea o escribe un número nuevo.');
+            return;
+        }
+    }
+
+    try {
+        const result = await apiClient.crearAgenteManual(payload);
+        const data = result.data || {};
+        document.getElementById('qrAgenteId').value = data.agente_id || '';
+        document.getElementById('qrTelefono').value = payload.telefono || '';
+        const asignacion = data.asignacion || {};
+        const lineaText = asignacion.asignada ? `Línea ${asignacion.linea_numero} asignada.` : 'Sin asignación inicial.';
+        alert(`Agente creado (ID ${data.agente_id}). ${lineaText}`);
+
+        [
+            'agenteNombreInput',
+            'agenteAliasInput',
+            'agenteUbicacionInput',
+            'agenteTelefonoInput',
+            'agenteFpInput',
+            'agenteFcInput',
+            'agenteGrupoInput',
+            'agenteEmpresaInput',
+            'agenteLineaManualInput'
+        ].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        document.getElementById('agenteModoAsignacion').value = 'ninguna';
+        document.getElementById('agenteLadaObjetivoSelect').value = '';
+        document.getElementById('agenteLineaManualSelect').value = '';
+        cambiarModoAsignacionAgente();
+
+        await cargarLineasYAgentes();
+        await cargarAgentesGestion(false);
+        if (document.getElementById('agenteGenerarQrAlCrear')?.checked && data.agente_id) {
+            await previsualizarQrAlta(data.agente_id);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error creando agente manual: ' + error.message);
     }
 }
 
@@ -990,8 +1612,9 @@ function mostrarQR(data) {
     alert('QR Data: ' + data);
 }
 
-function renderSimpleQR(text) {
-    const container = document.getElementById('qrContainer');
+function renderSimpleQR(text, containerId = 'qrContainer') {
+    const container = document.getElementById(containerId);
+    if (!container) return;
     container.innerHTML = '';
     // QRCode global from qrcode.js loaded in index.html
     new QRCode(container, {
@@ -1320,13 +1943,57 @@ async function procesarAlertasPagoManual() {
 
 async function generarBackupManual() {
     try {
-        const res = await apiClient.generarBackupManual();
+        const backupDir = (document.getElementById('backupDirInput')?.value || currentBackupDir || '').trim();
+        const res = await apiClient.generarBackupManual(backupDir);
         const data = res.data || {};
         alert(`Respaldo generado: ${data.file || 'OK'}`);
+        if (backupDir) {
+            currentBackupDir = backupDir;
+        }
+        await cargarConfiguracionRespaldos(false);
         cargarRespaldos();
     } catch (error) {
         console.error('Error:', error);
         alert('Error generando respaldo: ' + error.message);
+    }
+}
+
+async function cargarConfiguracionRespaldos(showErrors = true) {
+    const input = document.getElementById('backupDirInput');
+    const hint = document.getElementById('backupDirHint');
+    if (!input || !hint) return;
+
+    try {
+        const res = await apiClient.getBackupConfig();
+        const data = res.data || {};
+        currentBackupDir = String(data.backup_dir || '').trim();
+        input.value = currentBackupDir;
+        hint.textContent = `Ruta activa: ${currentBackupDir || 'No configurada'}${Number.isFinite(Number(data.files)) ? ` | archivos detectados: ${data.files}` : ''}`;
+    } catch (error) {
+        console.error('Error cargando configuración de respaldos:', error);
+        if (showErrors) {
+            alert('Error cargando configuración de respaldos: ' + error.message);
+        }
+    }
+}
+
+async function guardarRutaRespaldos() {
+    const input = document.getElementById('backupDirInput');
+    const backupDir = (input?.value || '').trim();
+    if (!backupDir) {
+        alert('Ingresa una ruta válida para respaldos.');
+        return;
+    }
+
+    try {
+        await apiClient.updateBackupConfig(backupDir, true);
+        currentBackupDir = backupDir;
+        alert('Ruta de respaldos guardada correctamente.');
+        await cargarConfiguracionRespaldos(false);
+        await cargarRespaldos();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error guardando la ruta de respaldos: ' + error.message);
     }
 }
 
@@ -1477,9 +2144,14 @@ function mostrarDatabases(databases) {
     // Actualizar select de query (solo bases visibles)
     const select = document.getElementById('queryDatabase');
     select.innerHTML = '<option value="">-- Selecciona BD --</option>';
-    databases.filter(db => !hiddenDatabases.includes(db)).forEach(db => {
+    const visibleDatabases = databases.filter(db => !hiddenDatabases.includes(db));
+    visibleDatabases.forEach(db => {
         select.innerHTML += `<option value="${db}">${db}</option>`;
     });
+    const preferredDatabase = pickPreferredDatabase(visibleDatabases);
+    if (preferredDatabase) {
+        select.value = preferredDatabase;
+    }
 }
 
 function ocultarDatabase(name) {

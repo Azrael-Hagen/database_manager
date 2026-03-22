@@ -1,0 +1,592 @@
+<!-- 
+  INSTRUCCIONES DE INTEGRACIÓN EN FRONTEND
+  Agregar estas secciones UI al archivo web/index.html
+-->
+
+<!-- 
+  ============================================================
+  SECCIÓN 1: EXPORTACIÓN DE DATOS
+  ============================================================
+-->
+<div id="exportacionSection" class="tab-pane fade">
+    <h2>📊 Exportación de Datos</h2>
+    
+    <div class="row">
+        <!-- Exportar Agentes -->
+        <div class="col-md-6">
+            <div class="card mb-3">
+                <div class="card-header bg-primary text-white">
+                    <h4>Exportar Agentes</h4>
+                </div>
+                <div class="card-body">
+                    <div class="form-group mb-3">
+                        <label for="exportFormat">Formato:</label>
+                        <select id="exportFormat" class="form-control">
+                            <option value="csv">CSV</option>
+                            <option value="excel">Excel (.xlsx)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-check mb-3">
+                        <input type="checkbox" id="exportWithPayments" class="form-check-input">
+                        <label class="form-check-label" for="exportWithPayments">
+                            Incluir datos de pagos
+                        </label>
+                    </div>
+                    
+                    <button class="btn btn-primary w-100" onclick="exportarAgentes()">
+                        ⬇️ Descargar Agentes
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Exportar Tabla -->
+        <div class="col-md-6">
+            <div class="card mb-3">
+                <div class="card-header bg-info text-white">
+                    <h4>Exportar Tabla</h4>
+                </div>
+                <div class="card-body">
+                    <div class="form-group mb-3">
+                        <label for="exportDbTable">Base de Datos:</label>
+                        <input type="text" id="exportDbTable" class="form-control" 
+                               placeholder="ej: registro_agentes" value="registro_agentes">
+                    </div>
+                    
+                    <div class="form-group mb-3">
+                        <label for="exportTableName">Tabla:</label>
+                        <input type="text" id="exportTableName" class="form-control" 
+                               placeholder="ej: datos_importados" value="datos_importados">
+                    </div>
+                    
+                    <div class="form-group mb-3">
+                        <label for="tableExportFormat">Formato:</label>
+                        <select id="tableExportFormat" class="form-control">
+                            <option value="csv">CSV</option>
+                            <option value="excel">Excel</option>
+                        </select>
+                    </div>
+                    
+                    <button class="btn btn-info w-100" onclick="exportarTabla()">
+                        ⬇️ Descargar Tabla
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 
+  ============================================================
+  SECCIÓN 2: GESTIÓN DE ESQUEMAS
+  ============================================================
+-->
+<div id="esquemaSection" class="tab-pane fade">
+    <h2>🗄️ Gestión de Esquemas de BD</h2>
+    
+    <div class="row">
+        <!-- Guardar Esquema -->
+        <div class="col-md-6">
+            <div class="card mb-3">
+                <div class="card-header bg-success text-white">
+                    <h4>Guardar Versión de Esquema</h4>
+                </div>
+                <div class="card-body">
+                    <div class="form-group mb-3">
+                        <label for="schemaDbName">Base de Datos:</label>
+                        <input type="text" id="schemaDbName" class="form-control" 
+                               placeholder="ej: registro_agentes" value="registro_agentes">
+                    </div>
+                    
+                    <div class="form-group mb-3">
+                        <label for="schemaVersion">Versión:</label>
+                        <input type="text" id="schemaVersion" class="form-control" 
+                               placeholder="ej: 1.0.0" value="1.0.0">
+                    </div>
+                    
+                    <div class="form-group mb-3">
+                        <label for="schemaTag">Etiqueta:</label>
+                        <input type="text" id="schemaTag" class="form-control" 
+                               placeholder="ej: Esquema producción">
+                    </div>
+                    
+                    <div class="form-group mb-3">
+                        <label for="schemaDesc">Descripción:</label>
+                        <textarea id="schemaDesc" class="form-control" rows="3" 
+                                  placeholder="Descripción de cambios o notas"></textarea>
+                    </div>
+                    
+                    <button class="btn btn-success w-100" onclick="guardarEsquema()">
+                        💾 Guardar Versión
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Listar Versiones -->
+        <div class="col-md-6">
+            <div class="card mb-3">
+                <div class="card-header bg-warning text-dark">
+                    <h4>Versiones Guardadas</h4>
+                </div>
+                <div class="card-body">
+                    <div id="schemaVersionsList">
+                        <p class="text-muted">Cargando versiones...</p>
+                    </div>
+                    
+                    <button class="btn btn-warning w-100 mt-3" onclick="refrescarEsquemas()">
+                        🔄 Actualizar Lista
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 
+  ============================================================
+  SECCIÓN 3: INTEGRACIÓN PBX
+  ============================================================
+-->
+<div id="pbxSection" class="tab-pane fade">
+    <h2>☎️ Integración con PBX</h2>
+    
+    <div class="row">
+        <!-- Extensiones Disponibles -->
+        <div class="col-md-6">
+            <div class="card mb-3">
+                <div class="card-header bg-danger text-white">
+                    <h4>Extensiones PBX Disponibles</h4>
+                </div>
+                <div class="card-body">
+                    <div class="form-group mb-3">
+                        <label for="pbxDbName">Base de Datos PBX:</label>
+                        <input type="text" id="pbxDbName" class="form-control" 
+                               value="asterisk" placeholder="ej: asterisk">
+                    </div>
+                    
+                    <div class="form-group mb-3">
+                        <label for="pbxSearch">Buscar:</label>
+                        <input type="text" id="pbxSearch" class="form-control" 
+                               placeholder="ej: 200">
+                    </div>
+                    
+                    <div id="pbxExtensionsList" style="max-height: 400px; overflow-y: auto; margin-bottom: 15px;">
+                        <p class="text-muted">Haz click 'Listar Extensiones' para cargar</p>
+                    </div>
+                    
+                    <button class="btn btn-danger w-100 mb-2" onclick="listarExtensiones()">
+                        📱 Listar Extensiones
+                    </button>
+                    
+                    <button class="btn btn-dark w-100" onclick="sincronizarExtensiones()">
+                        🔄 Sincronizar a Líneas
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Resultado Sincronización -->
+        <div class="col-md-6">
+            <div class="card mb-3">
+                <div class="card-header bg-info text-white">
+                    <h4>Resultado de Sincronización</h4>
+                </div>
+                <div class="card-body">
+                    <div id="pbxSyncResult">
+                        <p class="text-muted">Los resultados de sincronización aparecerán aquí</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 
+  ============================================================
+  SECCIÓN 4: GESTIÓN AVANZADA DE BACKUPS
+  ============================================================
+-->
+<div id="backupAdvancedSection" class="tab-pane fade">
+    <h2>💾 Backups - Configuración Avanzada</h2>
+    
+    <div class="row">
+        <!-- Rutas de Backup -->
+        <div class="col-md-6">
+            <div class="card mb-3">
+                <div class="card-header bg-primary text-white">
+                    <h4>Rutas de Backup</h4>
+                </div>
+                <div class="card-body">
+                    <div class="form-group mb-3">
+                        <label for="backupPath">Nueva Ruta:</label>
+                        <input type="text" id="backupPath" class="form-control" 
+                               placeholder="ej: D:/backups" value="">
+                    </div>
+                    
+                    <div class="form-check mb-3">
+                        <input type="checkbox" id="makeActiveBackup" class="form-check-input">
+                        <label class="form-check-label" for="makeActiveBackup">
+                            Establecer como ruta activa
+                        </label>
+                    </div>
+                    
+                    <button class="btn btn-primary w-100 mb-2" onclick="agregarRutaBackup()">
+                        ➕ Agregar Ruta
+                    </button>
+                    
+                    <div id="backupPathsList" class="mt-3">
+                        <p class="text-muted">Cargando rutas...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Auto-Backup -->
+        <div class="col-md-6">
+            <div class="card mb-3">
+                <div class="card-header bg-success text-white">
+                    <h4>Backup Automático</h4>
+                </div>
+                <div class="card-body">
+                    <div class="form-check mb-3">
+                        <input type="checkbox" id="autoBackupEnabled" class="form-check-input">
+                        <label class="form-check-label" for="autoBackupEnabled">
+                            Habilitar backups automáticos
+                        </label>
+                    </div>
+                    
+                    <div class="form-group mb-3">
+                        <label for="autoBackupHour">Hora del día (0-23):</label>
+                        <input type="number" id="autoBackupHour" class="form-control" 
+                               value="2" min="0" max="23">
+                    </div>
+                    
+                    <div class="form-group mb-3">
+                        <label for="retentionDays">Retener backups (días):</label>
+                        <input type="number" id="retentionDays" class="form-control" 
+                               value="30" min="1" max="365">
+                    </div>
+                    
+                    <button class="btn btn-success w-100 mb-2" onclick="configurarAutoBackup()">
+                        ⚙️ Guardar Configuración
+                    </button>
+                    
+                    <button class="btn btn-warning w-100" onclick="limpiarBackupsAntiguos()">
+                        🗑️ Limpiar Backups Antiguos
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 
+  ============================================================
+  JAVASCRIPT FUNCTIONS PARA AGREGAR A web/js/main.js
+  ============================================================
+-->
+
+<script>
+// Exportar agentes
+async function exportarAgentes() {
+    try {
+        const format = document.getElementById('exportFormat')?.value || 'csv';
+        const withPayments = document.getElementById('exportWithPayments')?.checked || false;
+        
+        const result = await apiClient.exportAgentesWithDownload(format, withPayments);
+        alert(`✅ Archivo descargado: ${result.filename}`);
+    } catch (error) {
+        alert(`❌ Error al exportar: ${error.message}`);
+    }
+}
+
+// Exportar tabla
+async function exportarTabla() {
+    try {
+        const dbName = document.getElementById('exportDbTable')?.value || 'registro_agentes';
+        const tableName = document.getElementById('exportTableName')?.value || 'datos_importados';
+        const format = document.getElementById('tableExportFormat')?.value || 'csv';
+        
+        const result = await apiClient.exportTableWithDownload(dbName, tableName, format);
+        alert(`✅ Archivo descargado: ${result.filename}`);
+    } catch (error) {
+        alert(`❌ Error al exportar: ${error.message}`);
+    }
+}
+
+// Guardar esquema
+async function guardarEsquema() {
+    try {
+        const dbName = document.getElementById('schemaDbName')?.value || 'registro_agentes';
+        const version = document.getElementById('schemaVersion')?.value || '1.0.0';
+        const etiqueta = document.getElementById('schemaTag')?.value || null;
+        const descripcion = document.getElementById('schemaDesc')?.value || null;
+        
+        const res = await apiClient.saveDatabaseSchema(dbName, version, etiqueta, descripcion);
+        alert(`✅ Esquema guardado: ${res.data.version}`);
+        refrescarEsquemas();
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+// Actualizar lista de esquemas
+async function refrescarEsquemas() {
+    try {
+        const dbName = document.getElementById('schemaDbName')?.value || 'registro_agentes';
+        const res = await apiClient.listSchemaVersions(dbName);
+        
+        const list = document.getElementById('schemaVersionsList');
+        if (!res.data || res.data.length === 0) {
+            list.innerHTML = '<p class="text-muted">Sin versiones guardadas</p>';
+            return;
+        }
+        
+        let html = '<table class="table table-sm"><thead><tr>' +
+                   '<th>Versión</th><th>Etiqueta</th><th>Fecha</th><th>Acciones</th>' +
+                   '</tr></thead><tbody>';
+        
+        for (const v of res.data) {
+            const fecha = new Date(v.fecha).toLocaleDateString();
+            html += `<tr>
+                <td>${v.version}</td>
+                <td>${v.etiqueta || '-'}</td>
+                <td>${fecha}</td>
+                <td>
+                    <button class="btn btn-sm btn-info" onclick="descargarEsquema(${v.id})">⬇️</button>
+                </td>
+            </tr>`;
+        }
+        
+        html += '</tbody></table>';
+        list.innerHTML = html;
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+// Descargar esquema específico
+async function descargarEsquema(schemaId) {
+    try {
+        const blob = await apiClient.downloadSchemaVersion(schemaId);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `schema_${schemaId}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+// Listar extensiones PBX
+async function listarExtensiones() {
+    try {
+        const pbxDb = document.getElementById('pbxDbName')?.value || 'asterisk';
+        const search = document.getElementById('pbxSearch')?.value || null;
+        
+        const res = await apiClient.listPbxExtensiones(pbxDb, search, 50);
+        
+        const list = document.getElementById('pbxExtensionsList');
+        if (!res.data || res.data.length === 0) {
+            list.innerHTML = '<p class="alert alert-info">No hay extensiones disponibles</p>';
+            return;
+        }
+        
+        let html = `<p class="text-muted">${res.data.length} extensiones encontradas</p>`;
+        html += '<div class="list-group">';
+        
+        for (const ext of res.data) {
+            html += `<div class="list-group-item">
+                <strong>${ext.extension}</strong>
+                ${ext.name ? ` - ${ext.name}` : ''}
+                ${ext.context ? ` (${ext.context})` : ''}
+            </div>`;
+        }
+        
+        html += '</div>';
+        list.innerHTML = html;
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+// Sincronizar extensiones
+async function sincronizarExtensiones() {
+    try {
+        const pbxDb = document.getElementById('pbxDbName')?.value || 'asterisk';
+        const res = await apiClient.syncPbxExtensions(pbxDb);
+        
+        const result = document.getElementById('pbxSyncResult');
+        result.innerHTML = `
+            <div class="alert alert-success">
+                <h5>✅ Sincronización Completada</h5>
+                <p>${res.data.message}</p>
+                <ul class="mb-0">
+                    <li>Creadas: ${res.data.created}</li>
+                    <li>Actualizadas: ${res.data.updated}</li>
+                    <li>Saltadas: ${res.data.skipped}</li>
+                    <li>Errores: ${res.data.errors}</li>
+                </ul>
+            </div>
+        `;
+    } catch (error) {
+        const result = document.getElementById('pbxSyncResult');
+        result.innerHTML = `<div class="alert alert-danger">❌ Error: ${error.message}</div>`;
+    }
+}
+
+// Agregar ruta de backup
+async function agregarRutaBackup() {
+    try {
+        const path = document.getElementById('backupPath')?.value;
+        if (!path) {
+            alert('Por favor ingresa una ruta');
+            return;
+        }
+        
+        const isActive = document.getElementById('makeActiveBackup')?.checked || false;
+        const res = await apiClient.addBackupPath(path, isActive);
+        
+        alert('✅ Ruta añadida correctamente');
+        document.getElementById('backupPath').value = '';
+        document.getElementById('makeActiveBackup').checked = false;
+        refrescarRutasBackup();
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+// Actualizar lista de rutas de backup
+async function refrescarRutasBackup() {
+    try {
+        const res = await apiClient.listBackupPaths();
+        const list = document.getElementById('backupPathsList');
+        
+        if (!res.data || res.data.length === 0) {
+            list.innerHTML = '<p class="text-muted">Sin rutas configuradas</p>';
+            return;
+        }
+        
+        let html = '<table class="table table-sm"><thead><tr>' +
+                   '<th>Ruta</th><th>Estado</th><th>Archivos</th><th>Acciones</th>' +
+                   '</tr></thead><tbody>';
+        
+        for (let i = 0; i < res.data.length; i++) {
+            const path = res.data[i];
+            const status = path.is_active ? '🟢 Activa' : '⚪ Inactiva';
+            const exists = path.exists ? '✅' : '❌';
+            
+            html += `<tr>
+                <td><small>${path.path}</small></td>
+                <td>${status}</td>
+                <td>${exists} ${path.file_count} archivos</td>
+                <td>
+                    ${!path.is_active ? `<button class="btn btn-sm btn-success" onclick="activarRutaBackup(${i})">Activar</button>` : ''}
+                </td>
+            </tr>`;
+        }
+        
+        html += '</tbody></table>';
+        list.innerHTML = html;
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+// Activar ruta de backup
+async function activarRutaBackup(index) {
+    try {
+        await apiClient.setActiveBackupPath(index);
+        refrescarRutasBackup();
+        alert('✅ Ruta activa actualizada');
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+// Configurar auto-backup
+async function configurarAutoBackup() {
+    try {
+        const enabled = document.getElementById('autoBackupEnabled')?.checked || false;
+        const hour = parseInt(document.getElementById('autoBackupHour')?.value || 2);
+        const retentionDays = parseInt(document.getElementById('retentionDays')?.value || 30);
+        
+        const res = await apiClient.configureAutoBackup(enabled, hour, retentionDays);
+        alert('✅ Configuración guardada');
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+// Limpiar backups antiguos
+async function limpiarBackupsAntiguos() {
+    try {
+        const days = parseInt(document.getElementById('retentionDays')?.value || 30);
+        
+        if (!confirm(`¿Eliminar backups más antiguos que ${days} días?`)) return;
+        
+        const res = await apiClient.cleanupOldBackups(days);
+        alert(`✅ ${res.data.deleted} backups eliminados`);
+    } catch (error) {
+        alert(`❌ Error: ${error.message}`);
+    }
+}
+
+// Inicializar al cargar la página
+document.addEventListener('DOMContentLoaded', function() {
+    // Cargar listas iniciales
+    refrescarEsquemas();
+    refrescarRutasBackup();
+});
+</script>
+
+<!-- 
+  ============================================================
+  CSS ADICIONAL - AGREGAR A web/css/style.css
+  ============================================================
+-->
+<style>
+.tab-pane {
+    padding: 20px;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+    margin-top: 10px;
+}
+
+.card {
+    border-left: 4px solid #007bff;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.card-header {
+    font-weight: bold;
+    padding: 15px;
+}
+
+.card-body {
+    padding: 15px;
+}
+
+#pbxExtensionsList,
+#backupPathsList {
+    border: 1px solid #dee2e6;
+    border-radius: 5px;
+    padding: 10px;
+    background-color: #fff;
+}
+
+.list-group-item {
+    padding: 10px;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.list-group-item:last-child {
+    border-bottom: none;
+}
+</style>

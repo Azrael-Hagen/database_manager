@@ -13,6 +13,8 @@ Aplicación para administración de MariaDB con interfaz web moderna, autenticac
 - Auditoría: registro de acciones con vista en interfaz.
 - Módulo QR mejorado: lectura clara por cámara o entrada manual (QR + código de barras).
 - Gestión de líneas: inventario de líneas y asignación agente-línea con estado ocupada/libre.
+- Alta manual de agentes: formulario rápido (Nombre, alias, ubicación, FP, FC, grupo) con asignación de línea automática o manual.
+- Catálogo de ladas: filtros por lada y preferencia por agente para priorizar asignación automática.
 - Tiempo real configurable: actualización periódica con modo ligero para ahorrar recursos.
 
 ## Requisitos
@@ -50,9 +52,33 @@ Credenciales iniciales:
 2. En Bases de Datos: carga bases, explora tablas y ejecuta SQL.
 3. En Visualizar Datos: selecciona base y tabla para consultar registros exactos.
 4. En QR: valida por escaneo y administra líneas ocupadas/libres por agente.
-5. En Importar: selecciona archivo, delimitador y tabla destino.
-6. En Usuarios: crea, edita y administra cuentas.
-7. En Auditoría: revisa actividad reciente.
+5. En QR > Agentes y Líneas: crea agentes manualmente y asigna número por modo automático/manual.
+6. En QR > Agentes y Líneas: usa ladas para filtrar inventario y orientar asignaciones.
+7. En Importar: selecciona archivo, delimitador y tabla destino.
+8. En Usuarios: crea, edita y administra cuentas.
+9. En Auditoría: revisa actividad reciente.
+
+## Branding (logo y nombre)
+
+Se agregó carpeta para recursos visuales en:
+
+- `web/sources/`
+
+Configura el nombre mostrado en navegador/navbar y la ruta del logo editando:
+
+- `web/sources/branding.json`
+
+Ejemplo:
+
+```json
+{
+	"appName": "Mi Operación",
+	"subtitle": "Base Agentes 2026",
+	"logoPath": "sources/logo.png"
+}
+```
+
+Luego coloca tu logo en `web/sources/logo.png` (o cambia `logoPath` a otra imagen de la carpeta).
 
 ## Configuración de tiempo real
 
@@ -113,6 +139,7 @@ Si no quieres escribir puerto en LAN, usa reverse proxy en `:80` apuntando al ba
 ```text
 backend/        API FastAPI + modelos + seguridad
 web/            Interfaz HTML/CSS/JS
+web/sources/    Logo e identidad visual (branding.json + imágenes)
 start.bat       Arranque local en Windows
 ```
 
@@ -134,11 +161,14 @@ start.bat       Arranque local en Windows
 - `GET /api/auditoria/`
 - `POST /api/qr/scan/verify` (valida contenido escaneado QR/codigo de barras)
 - `GET /api/qr/agentes` (agentes activos con líneas asignadas)
+- `POST /api/qr/agentes/manual` (alta manual de agente con asignación opcional)
 - `GET /api/qr/lineas` (inventario de líneas y ocupación)
 - `POST /api/qr/lineas` (crear/reactivar línea)
 - `POST /api/qr/lineas/{linea_id}/asignar`
 - `POST /api/qr/lineas/{linea_id}/liberar`
 - `DELETE /api/qr/lineas/{linea_id}`
+- `GET /api/qr/ladas` (catálogo de ladas activas)
+- `POST /api/qr/ladas` (crear/reactivar lada)
 - `POST /api/databases/{db}/views` (crear/actualizar vista temporal)
 - `GET /api/databases/{db}/views`
 - `DELETE /api/databases/{db}/views/{view}`

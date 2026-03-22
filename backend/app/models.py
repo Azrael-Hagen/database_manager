@@ -63,6 +63,7 @@ class DatoImportado(Base):
     importacion_id = Column(Integer, ForeignKey("import_logs.id"))
     importacion = relationship("ImportLog", back_populates="datos")
     lineas_asignadas = relationship("AgenteLineaAsignacion", back_populates="agente")
+    ladas_preferidas = relationship("AgenteLadaPreferencia", back_populates="agente")
     
     def __repr__(self):
         return f"<DatoImportado {self.nombre}>"
@@ -163,6 +164,41 @@ class AgenteLineaAsignacion(Base):
         return f"<AgenteLineaAsignacion agente={self.agente_id} linea={self.linea_id} activa={self.es_activa}>"
 
 
+class LadaCatalogo(Base):
+    """Catalogo de ladas para filtros y asignacion automatica."""
+
+    __tablename__ = "ladas_catalogo"
+
+    id = Column(Integer, primary_key=True, index=True)
+    codigo = Column(String(10), unique=True, nullable=False, index=True)
+    nombre_region = Column(String(120))
+    es_activa = Column(Boolean, default=True, index=True)
+    fecha_creacion = Column(DateTime, default=datetime.utcnow, index=True)
+
+    agentes_preferidos = relationship("AgenteLadaPreferencia", back_populates="lada")
+
+    def __repr__(self):
+        return f"<LadaCatalogo {self.codigo} activa={self.es_activa}>"
+
+
+class AgenteLadaPreferencia(Base):
+    """Tabla pivote agente <-> lada para preferencias de asignacion."""
+
+    __tablename__ = "agente_lada_preferencias"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
+    lada_id = Column(Integer, ForeignKey("ladas_catalogo.id"), nullable=False, index=True)
+    prioridad = Column(Integer, default=1, index=True)
+    fecha_creacion = Column(DateTime, default=datetime.utcnow, index=True)
+
+    agente = relationship("DatoImportado", back_populates="ladas_preferidas")
+    lada = relationship("LadaCatalogo", back_populates="agentes_preferidos")
+
+    def __repr__(self):
+        return f"<AgenteLadaPreferencia agente={self.agente_id} lada={self.lada_id} prioridad={self.prioridad}>"
+
+
 class ImportLog(Base):
     """Log de importaciones con auditoría completa."""
     
@@ -228,3 +264,34 @@ class AuditoriaAccion(Base):
     
     def __repr__(self):
         return f"<AuditoriaAccion {self.tipo_accion}>"
+
+
+class EsquemaBaseDatos(Base):
+    """Almacenamiento persistente de esquemas de BD para versionamiento y análisis."""
+    
+    __tablename__ = "esquemas_base_datos"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    uuid = Column(String(36), unique=True, default=lambda: str(uuid.uuid4()))
+    
+    # Identificación
+    nombre_bd = Column(String(255), nullable=False, index=True)
+    version = Column(String(20))  # Semantic version: 1.0.0
+    etiqueta = Column(String(255))  # User-friendly label
+    descripcion = Column(Text)
+    
+    # Contenido del esquema
+    esquema_json = Column(Text, nullable=False)  # Full schema data as JSON
+    hash_esquema = Column(String(64), nullable=False, index=True)  # SHA256 for change detection
+    
+    # Comparación con versión anterior
+    cambios_desde_anterior = Column(Text)  # JSON with migration details
+    
+    # Metadata
+    guardar_por = Column(Integer, ForeignKey("usuarios.id"))
+    usuario = relationship("Usuario")
+    fecha_guardado = Column(DateTime, default=datetime.utcnow, index=True)
+    activo = Column(Boolean, default=True, index=True)
+    
+    def __repr__(self):
+        return f"<EsquemaBaseDatos {self.nombre_bd} v{self.version}>"

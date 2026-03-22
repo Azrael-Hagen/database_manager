@@ -253,6 +253,10 @@ python main.py
 - ✅ **NUEVO:** Relación agente-línea con estado ocupada/libre
 - ✅ **NUEVO:** Lectura QR/código manual + cámara en flujo claro de verificación
 - ✅ **NUEVO:** Endpoints para crear/asignar/liberar/desactivar líneas
+- ✅ **NUEVO:** Alta manual de agentes desde UI (campos operativos: alias, ubicación, FP, FC, grupo)
+- ✅ **NUEVO:** Asignación de número automática o manual al crear agente
+- ✅ **NUEVO:** Catálogo de ladas y tabla pivote de preferencia agente-lada
+- ✅ **NUEVO:** Branding configurable en navegador/navbar mediante `web/sources/branding.json`
 
 ### **Base de Datos**
 - ✅ Conexión estable
@@ -311,6 +315,17 @@ python main.py
 	- Tabla `agente_linea_asignaciones` para estado de ocupación y trazabilidad.
 	- Endpoints `/api/qr/lineas*` y `/api/qr/agentes` para consulta y operación desde UI.
 - Gestión SQL ampliada con vistas temporales por base de datos (`/api/databases/{db}/views`).
+- Alta manual integrada en módulo QR:
+	- Endpoint `POST /api/qr/agentes/manual` con asignación `ninguna|manual|auto`.
+	- En modo manual permite seleccionar línea existente o crearla por número.
+	- En modo auto prioriza líneas libres por lada objetivo.
+- Catálogo de ladas y pivote:
+	- Tabla `ladas_catalogo` para ladas activas.
+	- Tabla `agente_lada_preferencias` como pivote agente-lada.
+	- Endpoints `GET/POST /api/qr/ladas`.
+- Branding web:
+	- Carpeta `web/sources/` para imágenes del proyecto.
+	- Carga opcional de `web/sources/branding.json` para título, subtítulo y logo.
 
 ### Validación E2E más reciente
 - Login administrador correcto.
@@ -319,6 +334,11 @@ python main.py
 - Verificación por escaneo usando número de línea con resultado al agente asignado.
 - Consulta de base/tabla específica y búsqueda exacta por ID.
 - Limpieza ejecutada: liberación y desactivación de línea temporal + eliminación de agente de prueba.
+- Login admin en `:8002` correcto.
+- Creación/reactivación de lada de prueba correcta.
+- Alta manual de agente con `modo_asignacion=auto` y `lada_objetivo` correcta.
+- Verificación de inventario por filtro de lada con línea ocupada correcta.
+- Limpieza final correcta (soft delete de agente + liberar/desactivar línea temporal).
 
 ---
 

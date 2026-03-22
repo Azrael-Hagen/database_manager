@@ -1,16 +1,20 @@
 """Aplicación FastAPI principal - Producción."""
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 import logging
 import os
 from datetime import datetime
+import socket
+import ipaddress
 import signal
 import sys
+import json
+from pathlib import Path
 
 from app.config import config
 from app.database.orm import init_db, get_db, SessionLocal
@@ -21,6 +25,8 @@ from app.api.database import router as database_router
 from app.api.usuarios import router as usuarios_router
 from app.api.auditoria import router as auditoria_router
 from app.api.qr import router as qr_router
+from app.api.export import router as export_router
+from app.security import get_current_user
 from app.utils.pagos import generar_alertas_miercoles_pendientes
 from app.utils.backups import create_weekly_backup
 
@@ -34,6 +40,23 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+WEB_DIR = BASE_DIR / "web"
+SOURCES_DIR = WEB_DIR / "sources"
+BRANDING_FILE = SOURCES_DIR / "branding.json"
+ALLOWED_LOGO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
+
+
+class NoCacheStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        lower_path = str(path).lower()
+        if lower_path in {"", "/", "index.html"} or lower_path.endswith((".html", ".js", ".css", ".json")):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
 
 # Crear directorios necesarios
 config.create_directories()
@@ -146,6 +169,7 @@ app.include_router(database_router)
 app.include_router(usuarios_router)
 app.include_router(auditoria_router)
 app.include_router(qr_router)
+app.include_router(export_router)
 
 
 # HEALTH CHECK
@@ -160,11 +184,173 @@ async def health_check():
     }
 
 
+def _is_private_ipv4(ip: str) -> bool:
+    try:
+        parsed = ipaddress.ip_address(ip)
+        return parsed.version == 4 and parsed.is_private and not parsed.is_loopback
+    except ValueError:
+        return False
+
+
+def _collect_local_ipv4_candidates() -> list[str]:
+    candidates: list[str] = []
+    sock = None
+
+    # Primary route-based IP detection (does not send external traffic).
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        if ip:
+            candidates.append(ip)
+    except Exception:
+        pass
+    finally:
+        try:
+            if sock:
+                sock.close()
+        except Exception:
+            pass
+
+    try:
+        host_ips = socket.gethostbyname_ex(socket.gethostname())[2]
+        candidates.extend(host_ips)
+    except Exception:
+        pass
+
+    unique: list[str] = []
+    for ip in candidates:
+        if ip and ip not in unique:
+            unique.append(ip)
+    return unique
+
+
+def _is_local_request_host(host: str | None) -> bool:
+    if not host:
+        return False
+    host_value = str(host).strip().lower()
+    local_names = {"127.0.0.1", "::1", "localhost", socket.gethostname().lower()}
+    if host_value in local_names:
+        return True
+    return host_value in {ip.lower() for ip in _collect_local_ipv4_candidates()}
+
+
+def _read_branding_config() -> dict:
+    default = {
+        "appName": "Phantom Database",
+        "subtitle": "server console",
+        "logoPath": "sources/Logo%20Phantom%20Databas.png",
+    }
+    try:
+        if BRANDING_FILE.exists():
+            with BRANDING_FILE.open("r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+                if isinstance(payload, dict):
+                    default.update(payload)
+    except Exception as exc:
+        logger.warning(f"No se pudo leer branding.json: {exc}")
+    return default
+
+
+def _write_branding_config(payload: dict) -> None:
+    SOURCES_DIR.mkdir(parents=True, exist_ok=True)
+    with BRANDING_FILE.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+
+
+def _ensure_local_admin(request: Request, current_user: dict) -> None:
+    if not current_user.get("es_admin", False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo administradores pueden cambiar el logo")
+    client_host = request.client.host if request.client else None
+    if not _is_local_request_host(client_host):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="El cambio de logo solo está permitido desde el servidor local")
+
+
+@app.get("/api/network/local", tags=["Sistema"])
+async def local_network_info(request: Request):
+    """Devuelve IP local sugerida y URL para compartir en LAN."""
+    candidates = _collect_local_ipv4_candidates()
+    preferred = next((ip for ip in candidates if _is_private_ipv4(ip)), None)
+    ip_local = preferred or next((ip for ip in candidates if ip != "127.0.0.1"), None) or "127.0.0.1"
+
+    port = request.url.port or config.API_PORT or 8000
+    scheme = request.url.scheme or "http"
+    share_url = f"{scheme}://{ip_local}:{port}"
+
+    return {
+        "status": "ok",
+        "ip_local": ip_local,
+        "puerto": int(port),
+        "share_url": share_url,
+        "hostname": socket.gethostname(),
+    }
+
+
+@app.get("/api/branding/admin-status", tags=["Sistema"])
+async def branding_admin_status(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    branding = _read_branding_config()
+    client_host = request.client.host if request.client else None
+    return {
+        "status": "ok",
+        "branding": branding,
+        "can_manage_logo": bool(current_user.get("es_admin", False) and _is_local_request_host(client_host)),
+        "client_host": client_host,
+    }
+
+
+@app.post("/api/branding/logo", tags=["Sistema"])
+async def upload_branding_logo(
+    request: Request,
+    logo: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    _ensure_local_admin(request, current_user)
+
+    extension = Path(logo.filename or "").suffix.lower()
+    if extension not in ALLOWED_LOGO_EXTENSIONS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Formato no permitido. Usa PNG, JPG, WEBP, GIF o SVG")
+
+    raw = await logo.read()
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo está vacío")
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo supera el límite de 5 MB")
+
+    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    safe_name = f"custom-logo-{timestamp}{extension}"
+    target_file = SOURCES_DIR / safe_name
+    SOURCES_DIR.mkdir(parents=True, exist_ok=True)
+    target_file.write_bytes(raw)
+
+    branding = _read_branding_config()
+    branding["logoPath"] = f"sources/{safe_name}"
+    _write_branding_config(branding)
+
+    return {
+        "status": "ok",
+        "mensaje": "Logo actualizado correctamente",
+        "branding": branding,
+    }
+
+
+@app.get("/")
+async def serve_index():
+    index_file = WEB_DIR / "index.html"
+    response = FileResponse(index_file)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 # SERVIR ARCHIVOS ESTÁTICOS
 
 web_path = os.path.join(os.path.dirname(__file__), "..", "web")
 if os.path.exists(web_path):
-    app.mount("/", StaticFiles(directory=web_path, html=True), name="web")
+    app.mount("/", NoCacheStaticFiles(directory=web_path, html=True), name="web")
 
 
 if __name__ == "__main__":

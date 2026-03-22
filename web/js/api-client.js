@@ -239,8 +239,20 @@ class APIClient {
         return this.request('POST', '/qr/alertas/procesar', {});
     }
 
-    async generarBackupManual() {
-        return this.request('POST', '/qr/backup', {});
+    async generarBackupManual(backupDir = '') {
+        const payload = backupDir ? { backup_dir: backupDir } : {};
+        return this.request('POST', '/qr/backup', payload);
+    }
+
+    async getBackupConfig() {
+        return this.request('GET', '/qr/backup/config');
+    }
+
+    async updateBackupConfig(backupDir, createIfMissing = true) {
+        return this.request('PUT', '/qr/backup/config', {
+            backup_dir: backupDir,
+            create_if_missing: createIfMissing,
+        });
     }
 
     async getQrAgente(agenteId) {
@@ -286,10 +298,24 @@ class APIClient {
         return this.request('GET', `/qr/agentes${suffix}`);
     }
 
-    async getLineas(search = '', soloOcupadas = false) {
+    async crearAgenteManual(payload) {
+        return this.request('POST', '/qr/agentes/manual', payload);
+    }
+
+    async getLadas(search = '') {
+        const suffix = search ? `?search=${encodeURIComponent(search)}` : '';
+        return this.request('GET', `/qr/ladas${suffix}`);
+    }
+
+    async crearLada(payload) {
+        return this.request('POST', '/qr/ladas', payload);
+    }
+
+    async getLineas(search = '', soloOcupadas = false, lada = '') {
         const params = new URLSearchParams();
         if (search) params.append('search', search);
         if (soloOcupadas) params.append('solo_ocupadas', 'true');
+        if (lada) params.append('lada', lada);
         const qs = params.toString() ? `?${params.toString()}` : '';
         return this.request('GET', `/qr/lineas${qs}`);
     }
@@ -404,6 +430,44 @@ class APIClient {
     // === HEALTH CHECK ===
     async health() {
         return this.request('GET', '/health');
+    }
+
+    async getLocalNetworkInfo() {
+        return this.request('GET', '/network/local');
+    }
+
+    async getBrandingAdminStatus() {
+        return this.request('GET', '/branding/admin-status');
+    }
+
+    async uploadBrandingLogo(file) {
+        const url = `${this.baseURL}/branding/logo`;
+        const formData = new FormData();
+        formData.append('logo', file);
+
+        const options = {
+            method: 'POST',
+            cache: 'no-store',
+            headers: {}
+        };
+
+        const token = this.getToken();
+        if (token) {
+            options.headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        options.body = formData;
+
+        const response = await fetch(url, options);
+        if (!response.ok) {
+            let detail = `HTTP Error: ${response.status}`;
+            try {
+                const payload = await response.json();
+                detail = payload.detail || payload.mensaje || detail;
+            } catch (_) {}
+            throw new Error(detail);
+        }
+        return response.json();
     }
 }
 

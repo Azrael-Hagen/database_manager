@@ -12,12 +12,26 @@ from fastapi.responses import HTMLResponse, FileResponse
 from sqlalchemy.orm import Session
 
 from app.database.orm import get_db
-from app.models import DatoImportado, PagoSemanal, AlertaPago, LineaTelefonica, AgenteLineaAsignacion
+from app.models import (
+    AgenteLadaPreferencia,
+    AgenteLineaAsignacion,
+    AlertaPago,
+    DatoImportado,
+    LadaCatalogo,
+    LineaTelefonica,
+    PagoSemanal,
+)
 from app.schemas import PagoSemanalCrear, PagoSemanalRespuesta
 from app.security import get_current_user
 from app.qr import QRGenerator
 from app.config import config
-from app.utils.backups import create_weekly_backup, list_backups, restore_backup
+from app.utils.backups import (
+    create_weekly_backup,
+    get_backup_settings,
+    list_backups,
+    restore_backup,
+    set_backup_dir,
+)
 from app.utils.pagos import (
     generar_alertas_miercoles_pendientes,
     get_cuota_semanal,
@@ -95,6 +109,16 @@ def _extract_voip(dato: DatoImportado) -> str | None:
         if key in data and data[key] is not None:
             return str(data[key])
     return None
+
+
+def _safe_json_object(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
 
 
 def _has_assignment(dato: DatoImportado) -> bool:
@@ -231,6 +255,92 @@ def _safe_line_number(raw: str) -> str:
     if not re.match(r"^[0-9A-Za-z_\-\+]+$", value):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Numero de linea invalido")
     return value
+
+
+def _normalize_lada(raw: str) -> str:
+    value = re.sub(r"\D", "", str(raw or "").strip())
+    if len(value) < 2 or len(value) > 6:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lada invalida")
+    return value
+
+
+def _extract_lada_from_number(number: str, known_codes: list[str]) -> str | None:
+    digits = re.sub(r"\D", "", str(number or ""))
+    if not digits:
+        return None
+    # Match longest known lada prefix first.
+    for code in sorted((c for c in known_codes if c), key=len, reverse=True):
+        if digits.startswith(code):
+            return code
+    # Fallback for unknown catalog: first 3 digits for MX style dialing.
+    return digits[:3] if len(digits) >= 3 else digits
+
+
+def _resolve_or_create_line_for_manual_assignment(db: Session, payload: dict) -> LineaTelefonica:
+    linea_id = int((payload or {}).get("linea_id") or 0)
+    if linea_id > 0:
+        linea = db.query(LineaTelefonica).filter(
+            LineaTelefonica.id == linea_id,
+            LineaTelefonica.es_activa.is_(True),
+        ).first()
+        if not linea:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linea no encontrada")
+        return linea
+
+    raw_number = (payload or {}).get("numero_linea_manual")
+    numero = _safe_line_number(raw_number)
+    tipo = str((payload or {}).get("tipo_linea") or "VOIP").strip().upper()[:30] or "VOIP"
+    descripcion = str((payload or {}).get("descripcion_linea") or "").strip() or None
+
+    existing = db.query(LineaTelefonica).filter(LineaTelefonica.numero == numero).first()
+    if existing:
+        existing.es_activa = True
+        if tipo:
+            existing.tipo = tipo
+        if descripcion is not None:
+            existing.descripcion = descripcion
+        db.flush()
+        return existing
+
+    line = LineaTelefonica(numero=numero, tipo=tipo, descripcion=descripcion, es_activa=True)
+    db.add(line)
+    db.flush()
+    return line
+
+
+def _choose_free_line_automatically(db: Session, lada_objetivo: str | None = None) -> LineaTelefonica | None:
+    active_assignments = _active_line_assignments_map(db)
+    lineas = db.query(LineaTelefonica).filter(LineaTelefonica.es_activa.is_(True)).order_by(LineaTelefonica.numero.asc()).all()
+    available = [l for l in lineas if l.id not in active_assignments]
+    if not available:
+        return None
+
+    if lada_objetivo:
+        filtered = [l for l in available if re.sub(r"\D", "", l.numero).startswith(lada_objetivo)]
+        if filtered:
+            return filtered[0]
+
+    return available[0]
+
+
+def _set_agent_lada_preference(db: Session, agente_id: int, lada_code: str | None) -> None:
+    if not lada_code:
+        return
+    lada_code = _normalize_lada(lada_code)
+    lada = db.query(LadaCatalogo).filter(LadaCatalogo.codigo == lada_code).first()
+    if not lada:
+        lada = LadaCatalogo(codigo=lada_code, nombre_region=None, es_activa=True)
+        db.add(lada)
+        db.flush()
+
+    existing = db.query(AgenteLadaPreferencia).filter(
+        AgenteLadaPreferencia.agente_id == agente_id,
+        AgenteLadaPreferencia.lada_id == lada.id,
+    ).first()
+    if existing:
+        return
+
+    db.add(AgenteLadaPreferencia(agente_id=agente_id, lada_id=lada.id, prioridad=1))
 
 
 @router.post("/pagos", response_model=PagoSemanalRespuesta)
@@ -433,6 +543,10 @@ async def listar_agentes_qr(
                 "nombre": a.nombre,
                 "telefono": a.telefono,
                 "empresa": a.empresa,
+                "datos_adicionales": _safe_json_object(a.datos_adicionales),
+                "ladas_preferidas": [
+                    pref.lada.codigo for pref in sorted(a.ladas_preferidas, key=lambda x: x.prioridad) if pref.lada and pref.lada.es_activa
+                ],
                 "lineas": _agent_active_lines(db, a.id),
             }
             for a in agentes
@@ -440,10 +554,182 @@ async def listar_agentes_qr(
     }
 
 
+@router.post("/agentes/manual")
+async def crear_agente_manual(
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Crear agente manualmente y asignar linea de forma opcional."""
+    nombre = str((payload or {}).get("nombre") or "").strip()
+    if not nombre:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nombre es requerido")
+
+    telefono = str((payload or {}).get("telefono") or "").strip() or None
+    email = str((payload or {}).get("email") or "").strip() or None
+    empresa = str((payload or {}).get("empresa") or "").strip() or None
+    ciudad = str((payload or {}).get("ciudad") or "").strip() or None
+    pais = str((payload or {}).get("pais") or "").strip() or None
+
+    datos_adicionales = {
+        "alias": str((payload or {}).get("alias") or "").strip() or None,
+        "ubicacion": str((payload or {}).get("ubicacion") or "").strip() or None,
+        "fp": str((payload or {}).get("fp") or "").strip() or None,
+        "fc": str((payload or {}).get("fc") or "").strip() or None,
+        "grupo": str((payload or {}).get("grupo") or "").strip() or None,
+        "numero_voip": str((payload or {}).get("numero_voip") or "").strip() or None,
+    }
+    datos_adicionales = {k: v for k, v in datos_adicionales.items() if v not in (None, "")}
+
+    modo = str((payload or {}).get("modo_asignacion") or "ninguna").strip().lower()
+    if modo not in {"ninguna", "manual", "auto"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="modo_asignacion invalido")
+
+    lada_objetivo = str((payload or {}).get("lada_objetivo") or "").strip() or None
+    if lada_objetivo:
+        lada_objetivo = _normalize_lada(lada_objetivo)
+
+    agente = DatoImportado(
+        nombre=nombre,
+        email=email,
+        telefono=telefono,
+        empresa=empresa,
+        ciudad=ciudad,
+        pais=pais,
+        datos_adicionales=json.dumps(datos_adicionales, ensure_ascii=False) if datos_adicionales else None,
+        creado_por=current_user.get("id"),
+        es_activo=True,
+    )
+    db.add(agente)
+    db.flush()
+
+    asignacion_resumen = {"modo": modo, "asignada": False}
+
+    if modo == "manual":
+        linea = _resolve_or_create_line_for_manual_assignment(db, payload)
+        current = db.query(AgenteLineaAsignacion).filter(
+            AgenteLineaAsignacion.linea_id == linea.id,
+            AgenteLineaAsignacion.es_activa.is_(True),
+        ).first()
+        if current and current.agente_id != agente.id:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La linea seleccionada ya esta ocupada")
+        if not current:
+            db.add(AgenteLineaAsignacion(agente_id=agente.id, linea_id=linea.id, es_activa=True))
+        asignacion_resumen = {
+            "modo": modo,
+            "asignada": True,
+            "linea_id": linea.id,
+            "linea_numero": linea.numero,
+        }
+
+    if modo == "auto":
+        linea = _choose_free_line_automatically(db, lada_objetivo)
+        if linea:
+            db.add(AgenteLineaAsignacion(agente_id=agente.id, linea_id=linea.id, es_activa=True))
+            asignacion_resumen = {
+                "modo": modo,
+                "asignada": True,
+                "linea_id": linea.id,
+                "linea_numero": linea.numero,
+            }
+        else:
+            asignacion_resumen = {
+                "modo": modo,
+                "asignada": False,
+                "reason": "No hay lineas libres para asignar",
+            }
+
+    _set_agent_lada_preference(db, agente.id, lada_objetivo)
+
+    db.commit()
+    db.refresh(agente)
+
+    return {
+        "status": "success",
+        "data": {
+            "agente_id": agente.id,
+            "uuid": agente.uuid,
+            "nombre": agente.nombre,
+            "telefono": agente.telefono,
+            "modo_asignacion": modo,
+            "asignacion": asignacion_resumen,
+            "lineas": _agent_active_lines(db, agente.id),
+        },
+    }
+
+
+@router.get("/ladas")
+async def listar_ladas(
+    search: str | None = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Listar ladas para filtros de asignacion y alta manual."""
+    query = db.query(LadaCatalogo).filter(LadaCatalogo.es_activa.is_(True))
+    if search:
+        term = f"%{search.strip()}%"
+        query = query.filter((LadaCatalogo.codigo.ilike(term)) | (LadaCatalogo.nombre_region.ilike(term)))
+
+    rows = query.order_by(LadaCatalogo.codigo.asc()).all()
+    return {
+        "status": "success",
+        "data": [
+            {
+                "id": row.id,
+                "codigo": row.codigo,
+                "nombre_region": row.nombre_region,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.post("/ladas")
+async def crear_o_reactivar_lada(
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Crear o reactivar una lada de catalogo."""
+    codigo = _normalize_lada((payload or {}).get("codigo"))
+    nombre_region = str((payload or {}).get("nombre_region") or "").strip() or None
+
+    existing = db.query(LadaCatalogo).filter(LadaCatalogo.codigo == codigo).first()
+    if existing:
+        existing.es_activa = True
+        existing.nombre_region = nombre_region
+        db.commit()
+        db.refresh(existing)
+        return {
+            "status": "success",
+            "data": {
+                "id": existing.id,
+                "codigo": existing.codigo,
+                "nombre_region": existing.nombre_region,
+                "reactivada": True,
+            },
+        }
+
+    row = LadaCatalogo(codigo=codigo, nombre_region=nombre_region, es_activa=True)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "status": "success",
+        "data": {
+            "id": row.id,
+            "codigo": row.codigo,
+            "nombre_region": row.nombre_region,
+            "reactivada": False,
+        },
+    }
+
+
 @router.get("/lineas")
 async def listar_lineas(
     search: str | None = Query(None),
     solo_ocupadas: bool = Query(False),
+    lada: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -459,8 +745,13 @@ async def listar_lineas(
 
     lineas = query.order_by(LineaTelefonica.numero.asc()).all()
     assign_map = _active_line_assignments_map(db)
+    ladas = db.query(LadaCatalogo).filter(LadaCatalogo.es_activa.is_(True)).all()
+    known_codes = [row.codigo for row in ladas]
     data = []
     for linea in lineas:
+        resolved_lada = _extract_lada_from_number(linea.numero, known_codes)
+        if lada and resolved_lada != _normalize_lada(lada):
+            continue
         assign = assign_map.get(linea.id)
         ocupada = assign is not None
         if solo_ocupadas and not ocupada:
@@ -470,6 +761,7 @@ async def listar_lineas(
             "numero": linea.numero,
             "tipo": linea.tipo,
             "descripcion": linea.descripcion,
+            "lada": resolved_lada,
             "ocupada": ocupada,
             "agente": {
                 "id": assign.agente.id,
@@ -700,24 +992,58 @@ async def reporte_semanal(
 
 @router.post("/backup")
 async def generar_respaldo_manual(
+    payload: dict | None = None,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Generar respaldo semanal manual de la base de datos."""
     if not current_user.get("es_admin", False):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admin puede generar respaldo")
-    result = create_weekly_backup(db, force=True)
+    backup_dir = (payload or {}).get("backup_dir")
+    result = create_weekly_backup(db, force=True, backup_dir=backup_dir)
     if result.get("status") == "error":
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=result.get("reason"))
     return {"status": "success", "data": result}
 
 
+@router.get("/backup/config")
+async def obtener_configuracion_respaldo(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Consultar ruta configurada de respaldos."""
+    if not current_user.get("es_admin", False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admin puede consultar la configuración de respaldos")
+    return {"status": "success", "data": get_backup_settings(db)}
+
+
+@router.put("/backup/config")
+async def actualizar_configuracion_respaldo(
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Guardar ruta persistente de respaldos."""
+    if not current_user.get("es_admin", False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo admin puede modificar la configuración de respaldos")
+    backup_dir = str((payload or {}).get("backup_dir") or "").strip()
+    if not backup_dir:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Debes indicar una ruta de respaldo")
+    create_if_missing = bool((payload or {}).get("create_if_missing", True))
+    try:
+        data = set_backup_dir(db, backup_dir, create_if_missing=create_if_missing)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return {"status": "success", "data": data}
+
+
 @router.get("/backups")
 async def listar_respaldos(
     current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """Listar respaldos disponibles."""
-    return {"status": "success", "data": list_backups()}
+    return {"status": "success", "data": list_backups(db=db)}
 
 
 @router.post("/restore")

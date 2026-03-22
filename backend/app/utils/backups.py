@@ -14,6 +14,7 @@ from app.config import config
 from app.models import ConfigSistema
 
 LAST_BACKUP_WEEK_KEY = "LAST_BACKUP_WEEK"
+BACKUP_DIR_KEY = "BACKUP_DIR_PATH"
 
 
 def _get_config_row(db: Session, key: str) -> Optional[ConfigSistema]:
@@ -28,6 +29,31 @@ def _set_config_value(db: Session, key: str, value: str) -> None:
     else:
         row.valor = value
     db.commit()
+
+
+def _normalize_backup_dir(raw: str | None) -> str:
+    candidate = str(raw or "").strip().strip('"')
+    if not candidate:
+        candidate = os.getenv("BACKUP_DIR", config.BACKUP_FOLDER)
+    return os.path.abspath(os.path.expanduser(candidate))
+
+
+def get_backup_dir(db: Session | None = None) -> str:
+    if db is not None:
+        row = _get_config_row(db, BACKUP_DIR_KEY)
+        if row and row.valor:
+            return _normalize_backup_dir(row.valor)
+    return _normalize_backup_dir(os.getenv("BACKUP_DIR", config.BACKUP_FOLDER))
+
+
+def set_backup_dir(db: Session, backup_dir: str, create_if_missing: bool = True) -> dict:
+    normalized = _normalize_backup_dir(backup_dir)
+    if create_if_missing:
+        os.makedirs(normalized, exist_ok=True)
+    if not os.path.isdir(normalized):
+        raise ValueError("La ruta indicada no existe o no es un directorio válido")
+    _set_config_value(db, BACKUP_DIR_KEY, normalized)
+    return {"backup_dir": normalized, "exists": True}
 
 
 def current_week_key(ref: date | None = None) -> str:
@@ -64,9 +90,9 @@ def find_mysql() -> Optional[str]:
     return None
 
 
-def list_backups() -> list[dict]:
+def list_backups(db: Session | None = None, backup_dir: str | None = None) -> list[dict]:
     """List available backup files in backup directory."""
-    backup_dir = os.getenv("BACKUP_DIR", config.BACKUP_FOLDER)
+    backup_dir = _normalize_backup_dir(backup_dir or get_backup_dir(db))
     os.makedirs(backup_dir, exist_ok=True)
     items = []
     for name in sorted(os.listdir(backup_dir), reverse=True):
@@ -83,10 +109,10 @@ def list_backups() -> list[dict]:
     return items
 
 
-def restore_backup(db: Session, filename: str) -> dict:
+def restore_backup(db: Session, filename: str, backup_dir: str | None = None) -> dict:
     """Restore database from selected SQL dump, creating a rescue backup first."""
     safe_name = os.path.basename(filename)
-    backup_dir = os.getenv("BACKUP_DIR", config.BACKUP_FOLDER)
+    backup_dir = _normalize_backup_dir(backup_dir or get_backup_dir(db))
     filepath = os.path.join(backup_dir, safe_name)
     if not os.path.exists(filepath):
         return {"status": "error", "reason": "backup file not found"}
@@ -95,7 +121,7 @@ def restore_backup(db: Session, filename: str) -> dict:
     if not mysql_bin:
         return {"status": "error", "reason": "mysql client not found"}
 
-    rescue = create_weekly_backup(db, force=True)
+    rescue = create_weekly_backup(db, force=True, backup_dir=backup_dir)
 
     command = [
         mysql_bin,
@@ -126,7 +152,7 @@ def restore_backup(db: Session, filename: str) -> dict:
     }
 
 
-def create_weekly_backup(db: Session, force: bool = False) -> dict:
+def create_weekly_backup(db: Session, force: bool = False, backup_dir: str | None = None) -> dict:
     """Create one SQL dump per ISO week."""
     week_key = current_week_key()
     last_row = _get_config_row(db, LAST_BACKUP_WEEK_KEY)
@@ -137,7 +163,7 @@ def create_weekly_backup(db: Session, force: bool = False) -> dict:
     if not dump_bin:
         return {"status": "error", "reason": "mysqldump not found", "week": week_key}
 
-    backup_dir = os.getenv("BACKUP_DIR", config.BACKUP_FOLDER)
+    backup_dir = _normalize_backup_dir(backup_dir or get_backup_dir(db))
     os.makedirs(backup_dir, exist_ok=True)
 
     filename = f"backup_{config.DB_NAME}_{week_key}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql"
@@ -169,4 +195,13 @@ def create_weekly_backup(db: Session, force: bool = False) -> dict:
         "status": "success",
         "week": week_key,
         "file": filepath,
+    }
+
+
+def get_backup_settings(db: Session) -> dict:
+    backup_dir = get_backup_dir(db)
+    return {
+        "backup_dir": backup_dir,
+        "exists": os.path.isdir(backup_dir),
+        "files": len(list_backups(db=db, backup_dir=backup_dir)),
     }
