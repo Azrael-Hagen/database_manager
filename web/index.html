@@ -24,6 +24,8 @@
                     <span id="serverAccessValue">cargando...</span>
                     <button type="button" id="copyServerAccessBtn" class="btn btn-small btn-ghost" onclick="copiarAccesoServidor()">Copiar</button>
                 </div>
+                <span id="serverAccessHint" class="hint" style="color:#b9dbff;max-width:260px;"></span>
+                <span id="cameraSecurityHint" class="hint" style="color:#ffd89c;max-width:300px;"></span>
                 <div class="branding-admin" id="brandingAdminWrap" style="display:none;">
                     <input type="file" id="brandingLogoInput" accept=".png,.jpg,.jpeg,.webp,.gif,.svg,image/*" style="display:none;" onchange="subirNuevoLogo(event)">
                     <button type="button" id="changeLogoBtn" class="btn btn-small btn-ghost" onclick="abrirSelectorLogo()">Cambiar logo</button>
@@ -203,9 +205,22 @@
                             <button type="button" class="btn" onclick="loadSection('importar')">Importar Archivo</button>
                             <button type="button" class="btn btn-secondary" onclick="loadSection('datos')">Ver Datos</button>
                             <button type="button" class="btn btn-secondary" onclick="loadSection('altasAgentes')">Alta de Agente</button>
-                            <button type="button" class="btn btn-secondary" onclick="loadSection('qr')">Pagos y QR</button>
+                            <button type="button" class="btn btn-secondary" onclick="loadSection('qrScan')">Escaneo QR</button>
+                            <button type="button" class="btn btn-secondary" onclick="loadSection('qr')">Pagos y Reportes</button>
                             <button type="button" class="btn btn-secondary" onclick="loadSection('databases')">SQL y Estructura</button>
                         </div>
+                    </div>
+                    <div class="dashboard-card">
+                        <h3>Inicio Automático en Windows</h3>
+                        <p class="hint">Configura si el servidor debe arrancar con Windows en la máquina servidor.</p>
+                        <div class="dashboard-actions autostart-actions">
+                            <button type="button" class="btn" onclick="copiarComandoAutostart('install logon', this)">Activar al iniciar sesión</button>
+                            <button type="button" class="btn btn-secondary" onclick="copiarComandoAutostart('install startup', this)">Activar al arrancar equipo</button>
+                            <button type="button" class="btn btn-secondary" onclick="copiarComandoAutostart('remove', this)">Desactivar inicio automático</button>
+                            <button type="button" class="btn btn-secondary" onclick="copiarComandoAutostart('status', this)">Ver estado</button>
+                        </div>
+                        <p class="hint" style="margin-top:8px;">Comando base: <strong>.\manage_autostart.bat [install logon|install startup|remove|status]</strong></p>
+                        <p id="autostartHint" class="hint" style="margin-top:4px;">Tip: al pulsar un botón se copia el comando para pegarlo en la terminal del servidor.</p>
                     </div>
                 </div>
             </section>
@@ -515,24 +530,13 @@
                     <button type="submit" class="btn">Generar QR Verificación</button>
                 </form>
 
-                <h3 style="margin-top: 22px;">Lectura QR / Código de Barras</h3>
-                <div class="search-bar" style="margin-top: 12px;">
-                    <button type="button" class="btn btn-secondary" onclick="iniciarEscanerQR()">Escanear con Cámara</button>
-                    <button type="button" class="btn btn-secondary" onclick="detenerEscanerQR()">Detener Cámara</button>
+                <div class="card" style="margin-top: 22px; padding: 14px; border: 1px solid #d8e6f4; border-radius: 12px; background: #f9fcff; color: #173049;">
+                    <strong>Escaneo QR centralizado:</strong><br>
+                    Para evitar duplicidad y errores operativos, el escaneo ahora vive únicamente en <strong>Escaneo QR</strong>.
+                    <div style="margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap;">
+                        <button type="button" class="btn" onclick="loadSection('qrScan')">Abrir Escaneo QR</button>
+                    </div>
                 </div>
-                <div class="search-bar qr-camera-tools" style="margin-top: 8px;">
-                    <select id="qrCameraSelect">
-                        <option value="">-- Selecciona cámara --</option>
-                    </select>
-                    <button type="button" class="btn btn-secondary" onclick="cargarCamarasDisponibles()">Actualizar Cámaras</button>
-                    <button type="button" class="btn btn-secondary" onclick="iniciarEscanerQRCamaraSeleccionada()">Usar Cámara Seleccionada</button>
-                </div>
-                <div class="search-bar" style="margin-top: 8px;">
-                    <input type="text" id="codigoEscaneadoManual" placeholder="Pega aquí contenido QR/código y presiona Leer">
-                    <button type="button" class="btn" onclick="leerCodigoManual()">Leer Código</button>
-                </div>
-                <p class="hint">La lectura acepta URL QR del sistema, UUID, ID de agente y número de línea. En móvil puedes cambiar de cámara desde el selector.</p>
-                <div id="qrScanner" style="width:100%;max-width:420px;margin-top:12px;"></div>
 
                 <div class="card" style="margin-top: 22px; padding: 14px; border: 1px solid #d8e6f4; border-radius: 12px; background: #f9fcff; color: #173049;">
                     <strong>Operación separada por flujo:</strong><br>
@@ -659,9 +663,26 @@
                         <option value="asc">Ascendente</option>
                     </select>
                 </div>
+                <div class="card" style="margin-top:10px;padding:14px;border:1px solid #d8e6f4;border-radius:12px;background:#f9fcff;color:#173049;">
+                    <h3>Registro Temporal (máx. 10 días)</h3>
+                    <form onsubmit="crearUsuarioTemporal(event)">
+                        <div class="search-bar" style="margin-top:8px;">
+                            <input type="text" id="tempUsername" placeholder="Usuario temporal" required>
+                            <input type="email" id="tempEmail" placeholder="Email temporal" required>
+                            <input type="text" id="tempNombre" placeholder="Nombre completo (opcional)">
+                            <input type="password" id="tempPassword" placeholder="Contraseña temporal" required>
+                            <input type="number" id="tempDias" placeholder="Días" value="10" min="1" max="10" required>
+                            <button type="submit" class="btn">Crear Temporal</button>
+                        </div>
+                    </form>
+                    <p class="hint" style="margin-top:6px;">Los usuarios temporales se eliminan automáticamente al vencer. Puedes renovarlos o atender su solicitud de permisos.</p>
+                </div>
+                <div id="usuariosSolicitudesContainer" class="table-responsive" style="margin-top: 10px;"></div>
                 <div id="usuariosMaintenanceContainer" class="table-responsive" style="margin-top: 10px;"></div>
                 <p class="hint" style="margin-top:8px;">La depuración de usuarios temporales solo está permitida desde la máquina servidor.</p>
                 <div id="usuariosContainer" class="table-responsive"></div>
+                <h3 style="margin-top:16px;">Historial de Temporales Eliminados</h3>
+                <div id="usuariosTempHistoryContainer" class="table-responsive" style="margin-top: 10px;"></div>
             </section>
 
             <!-- Sección de Auditoría -->

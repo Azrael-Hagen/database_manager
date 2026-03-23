@@ -3,7 +3,7 @@
 from fastapi import FastAPI, Request, status, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 import logging
@@ -48,6 +48,8 @@ WEB_DIR = BASE_DIR / "web"
 SOURCES_DIR = WEB_DIR / "sources"
 BRANDING_FILE = SOURCES_DIR / "branding.json"
 ALLOWED_LOGO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
+SSL_CERT_PATH = Path(__file__).parent.parent / "ssl" / "cert.pem"
+SSL_KEY_PATH = Path(__file__).parent.parent / "ssl" / "key.pem"
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -131,6 +133,58 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _request_is_https(request: Request) -> bool:
+    forwarded_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    if forwarded_proto == "https":
+        return True
+    return (request.url.scheme or "").lower() == "https"
+
+
+def _build_https_redirect_url(request: Request) -> str:
+    forwarded_host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
+    host_header = (request.headers.get("host") or "").strip()
+    raw_host = forwarded_host or host_header or (request.url.hostname or "localhost")
+
+    host_only = raw_host.split(":")[0]
+    https_port = int(config.SSL_PORT or 443)
+    if https_port == 443:
+        authority = host_only
+    else:
+        authority = f"{host_only}:{https_port}"
+
+    query = f"?{request.url.query}" if request.url.query else ""
+    return f"https://{authority}{request.url.path}{query}"
+
+
+@app.middleware("http")
+async def enforce_https_middleware(request: Request, call_next):
+    """Forzar HTTPS: redirige HTTP y bloquea si no hay TLS configurado."""
+    if not config.FORCE_HTTPS:
+        response = await call_next(request)
+        return response
+
+    if request.url.path == "/api/health":
+        return await call_next(request)
+
+    if _request_is_https(request):
+        response = await call_next(request)
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+    tls_ready = SSL_CERT_PATH.exists() and SSL_KEY_PATH.exists()
+    if tls_ready:
+        return RedirectResponse(url=_build_https_redirect_url(request), status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+    return JSONResponse(
+        status_code=status.HTTP_426_UPGRADE_REQUIRED,
+        content={
+            "status": "error",
+            "mensaje": "HTTPS requerido. Configura TLS antes de ingresar.",
+            "detalle": "Ejecuta scripts/setup-https.ps1 y accede por https.",
+        },
+    )
 
 # MANEJADORES DE ERRORES
 
@@ -278,13 +332,19 @@ async def local_network_info(request: Request):
 
     port = request.url.port or config.API_PORT or 8000
     scheme = request.url.scheme or "http"
+    default_port = 443 if scheme == "https" else 80
     share_url = f"{scheme}://{ip_local}:{port}"
+    share_url_no_port = f"{scheme}://{ip_local}"
+    share_url_preferida = share_url_no_port if int(port) == int(default_port) else share_url
 
     return {
         "status": "ok",
         "ip_local": ip_local,
         "puerto": int(port),
         "share_url": share_url,
+        "share_url_no_port": share_url_no_port,
+        "share_url_preferida": share_url_preferida,
+        "usa_puerto_por_defecto": bool(int(port) == int(default_port)),
         "hostname": socket.gethostname(),
     }
 

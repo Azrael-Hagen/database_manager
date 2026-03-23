@@ -25,7 +25,9 @@ class Config:
     # Servidor
     API_HOST = os.getenv("API_HOST", "0.0.0.0")
     API_PORT = int(os.getenv("API_PORT", 8000))
+    SSL_PORT = int(os.getenv("SSL_PORT", 8443))
     API_DEBUG = os.getenv("API_DEBUG", "True").lower() == "true"
+    FORCE_HTTPS = os.getenv("FORCE_HTTPS", "True").lower() == "true"
     PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
     LOCAL_HOSTNAME = (os.getenv("LOCAL_HOSTNAME", "") or "").strip()
 

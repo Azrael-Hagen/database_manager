@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database.orm import get_db
 from app.database.repositorios import RepositorioUsuario, RepositorioAuditoria
+from app.api.usuarios import _purge_expired_temp_users
 from app.schemas import UsuarioCrear, UsuarioAuth, Usuario, Token
 from app.security import create_access_token, get_current_user, get_client_ip, ACCESS_TOKEN_EXPIRE_MINUTES, normalize_role
 from datetime import timedelta
@@ -55,6 +56,8 @@ async def login(credenciales: UsuarioAuth, db: Session = Depends(get_db), reques
     """Login de usuario."""
     repo_usuario = RepositorioUsuario(db)
     repo_auditoria = RepositorioAuditoria(db)
+
+    _purge_expired_temp_users(db)
     
     usuario = repo_usuario.autenticar(credenciales.username, credenciales.password)
     
@@ -116,6 +119,7 @@ async def login(credenciales: UsuarioAuth, db: Session = Depends(get_db), reques
 async def me(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener usuario actual."""
     repo_usuario = RepositorioUsuario(db)
+    _purge_expired_temp_users(db, actor_user_id=current_user.get("id"))
     usuario = repo_usuario.obtener_por_username(current_user["username"])
     
     if not usuario:

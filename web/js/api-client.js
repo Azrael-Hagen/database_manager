@@ -493,6 +493,30 @@ class APIClient {
         return this.request('POST', `/usuarios/maintenance/purge-temporary?include_inactive_stale=${includeInactiveStale ? 'true' : 'false'}`, {});
     }
 
+    async crearUsuarioTemporal(payload) {
+        return this.request('POST', '/usuarios/temporales', payload);
+    }
+
+    async renovarUsuarioTemporal(id, diasVigencia = 10) {
+        return this.request('POST', `/usuarios/${id}/temporal/renovar`, { dias_vigencia: diasVigencia });
+    }
+
+    async solicitarPermisoTemporal(id, payload) {
+        return this.request('POST', `/usuarios/${id}/solicitud-permisos`, payload);
+    }
+
+    async getSolicitudesPermisosTemporales() {
+        return this.request('GET', '/usuarios/solicitudes-permisos');
+    }
+
+    async resolverSolicitudPermisoTemporal(id, payload) {
+        return this.request('POST', `/usuarios/solicitudes-permisos/${id}/resolver`, payload);
+    }
+
+    async getHistorialTemporales(limit = 100) {
+        return this.request('GET', `/usuarios/temporales/historial?limit=${encodeURIComponent(limit)}`);
+    }
+
     async hardDeleteDato(id) {
         return this.request('DELETE', `/datos/${id}/hard-delete`);
     }

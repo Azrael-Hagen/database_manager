@@ -5,9 +5,27 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Requ
 from sqlalchemy.orm import Session
 from app.database.orm import get_db
 from app.database.repositorios import RepositorioUsuario, RepositorioAuditoria
-from app.schemas import Usuario, UsuarioCrear, UsuarioActualizar, PasswordUpdate
-from app.security import normalize_role, get_current_user, hash_password, require_admin_role, require_server_machine_request
-from app.models import Usuario as UsuarioModel
+from app.schemas import (
+    Usuario,
+    UsuarioCrear,
+    UsuarioActualizar,
+    PasswordUpdate,
+    UsuarioTemporalCrear,
+    UsuarioTemporalRenovar,
+    SolicitudPermisoCrear,
+    SolicitudPermisoResolver,
+    TempUsuarioHistorialItem,
+)
+from app.security import (
+    normalize_role,
+    get_current_user,
+    hash_password,
+    require_admin_role,
+    require_server_machine_request,
+    ROLE_ADMIN,
+    ROLE_CAPTURE,
+)
+from app.models import Usuario as UsuarioModel, TempUsuarioHistorial
 import logging
 import json
 
@@ -15,6 +33,61 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/usuarios", tags=["User Management"])
 
 TEMP_USER_PREFIXES = ("tmp_", "temp_", "test_", "demo_")
+TEMP_USER_MAX_DAYS = 10
+
+
+def _archive_temp_user(
+    db: Session,
+    user: UsuarioModel,
+    motivo: str,
+    eliminado_por: int | None = None,
+    detalle: dict | None = None,
+) -> None:
+    payload = TempUsuarioHistorial(
+        usuario_id=user.id,
+        username=user.username,
+        email=user.email,
+        rol=normalize_role(user.rol, user.es_admin),
+        fecha_creacion_usuario=user.fecha_creacion,
+        fecha_expiracion=user.temporal_expira_en,
+        fecha_eliminacion=datetime.utcnow(),
+        motivo=motivo,
+        eliminado_por=eliminado_por,
+        detalle_json=json.dumps(detalle or {}, ensure_ascii=False),
+    )
+    db.add(payload)
+
+
+def _purge_expired_temp_users(db: Session, actor_user_id: int | None = None) -> list[dict]:
+    now = datetime.utcnow()
+    repo = RepositorioUsuario(db)
+    expired = (
+        db.query(UsuarioModel)
+        .filter(
+            UsuarioModel.es_temporal.is_(True),
+            UsuarioModel.temporal_expira_en.isnot(None),
+            UsuarioModel.temporal_expira_en <= now,
+        )
+        .all()
+    )
+    purged: list[dict] = []
+    for user in expired:
+        if actor_user_id and user.id == actor_user_id:
+            continue
+        try:
+            _archive_temp_user(
+                db,
+                user,
+                motivo="expirado",
+                eliminado_por=actor_user_id,
+                detalle={"trigger": "auto-expiry"},
+            )
+            repo.eliminar_usuario_definitivo(user.id, reassigned_user_id=actor_user_id)
+            purged.append({"id": user.id, "username": user.username})
+        except Exception as exc:
+            logger.warning("No se pudo eliminar usuario temporal expirado %s: %s", user.username, exc)
+            db.rollback()
+    return purged
 
 
 @router.get("/", response_model=list[Usuario])
@@ -28,6 +101,8 @@ async def listar_usuarios(
 ):
     """Listar todos los usuarios."""
     require_admin_role(current_user, "No tienes permisos para ver usuarios")
+
+    _purge_expired_temp_users(db, actor_user_id=current_user["id"])
 
     repo = RepositorioUsuario(db)
     allowed_fields = {
@@ -46,6 +121,235 @@ async def listar_usuarios(
     usuarios = db.query(UsuarioModel).order_by(order_clause, UsuarioModel.id.desc()).offset(skip).limit(limit).all()
     logger.info(f"Usuario {current_user['username']} listó {len(usuarios)} usuarios")
     return usuarios
+
+
+@router.post("/temporales", response_model=Usuario)
+async def crear_usuario_temporal(
+    payload: UsuarioTemporalCrear,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Crear usuario temporal de solo consulta con vigencia máxima de 10 días."""
+    require_admin_role(current_user, "Solo administradores pueden crear usuarios temporales")
+
+    repo = RepositorioUsuario(db)
+    repo_auditoria = RepositorioAuditoria(db)
+
+    if repo.obtener_por_username(payload.username):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El nombre de usuario ya existe")
+    if repo.obtener_por_email(payload.email):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El email ya está registrado")
+
+    dias_vigencia = min(int(payload.dias_vigencia or TEMP_USER_MAX_DAYS), TEMP_USER_MAX_DAYS)
+    expira_en = datetime.utcnow() + timedelta(days=dias_vigencia)
+    user_data = {
+        "username": payload.username,
+        "email": payload.email,
+        "nombre_completo": payload.nombre_completo,
+        "hashed_password": hash_password(payload.password),
+        "rol": "viewer",
+        "es_admin": False,
+        "es_activo": True,
+        "es_temporal": True,
+        "temporal_expira_en": expira_en,
+        "temporal_renovaciones": 0,
+        "solicitud_permiso_estado": "none",
+    }
+    usuario = repo.crear_usuario(user_data)
+
+    repo_auditoria.registrar_accion(
+        usuario_id=current_user["id"],
+        tipo_accion="CREAR",
+        tabla="usuarios",
+        registro_id=usuario.id,
+        descripcion=f"Usuario temporal creado: {usuario.username}",
+        datos_nuevos=json.dumps({"dias_vigencia": dias_vigencia, "expira_en": expira_en.isoformat()}, ensure_ascii=False),
+        resultado="SUCCESS",
+    )
+    return usuario
+
+
+@router.post("/{user_id}/temporal/renovar", response_model=Usuario)
+async def renovar_usuario_temporal(
+    user_id: int,
+    payload: UsuarioTemporalRenovar,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Renovar vigencia de un usuario temporal por hasta 10 días."""
+    require_admin_role(current_user, "Solo administradores pueden renovar usuarios temporales")
+
+    repo = RepositorioUsuario(db)
+    repo_auditoria = RepositorioAuditoria(db)
+    usuario = repo.obtener_por_id(user_id)
+    if not usuario:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+    if not usuario.es_temporal:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El usuario no es temporal")
+
+    dias_vigencia = min(int(payload.dias_vigencia or TEMP_USER_MAX_DAYS), TEMP_USER_MAX_DAYS)
+    nueva_expiracion = datetime.utcnow() + timedelta(days=dias_vigencia)
+    usuario_actualizado = repo.actualizar_usuario(
+        user_id,
+        {
+            "temporal_expira_en": nueva_expiracion,
+            "temporal_renovaciones": int(usuario.temporal_renovaciones or 0) + 1,
+        },
+    )
+
+    repo_auditoria.registrar_accion(
+        usuario_id=current_user["id"],
+        tipo_accion="ACTUALIZAR",
+        tabla="usuarios",
+        registro_id=user_id,
+        descripcion=f"Renovación de temporal: {usuario.username}",
+        datos_nuevos=json.dumps({"expira_en": nueva_expiracion.isoformat(), "dias": dias_vigencia}, ensure_ascii=False),
+        resultado="SUCCESS",
+    )
+    return usuario_actualizado
+
+
+@router.post("/{user_id}/solicitud-permisos", response_model=Usuario)
+async def solicitar_escalamiento_permisos(
+    user_id: int,
+    payload: SolicitudPermisoCrear,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Registrar solicitud de escalamiento para usuario temporal."""
+    requester_id = int(current_user.get("id") or 0)
+    is_admin = bool(current_user.get("es_admin"))
+    if requester_id != user_id and not is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo puedes solicitar permisos para tu propio usuario")
+
+    repo = RepositorioUsuario(db)
+    repo_auditoria = RepositorioAuditoria(db)
+    usuario = repo.obtener_por_id(user_id)
+    if not usuario:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+    if not usuario.es_temporal:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Solo aplica para usuarios temporales")
+
+    rol_solicitado = ROLE_ADMIN if payload.rol_solicitado == ROLE_ADMIN else ROLE_CAPTURE
+    usuario_actualizado = repo.actualizar_usuario(
+        user_id,
+        {
+            "solicitud_permiso_estado": "pending",
+            "solicitud_permiso_rol": rol_solicitado,
+            "solicitud_permiso_motivo": payload.motivo,
+            "solicitud_permiso_fecha": datetime.utcnow(),
+        },
+    )
+
+    repo_auditoria.registrar_accion(
+        usuario_id=requester_id or user_id,
+        tipo_accion="ACTUALIZAR",
+        tabla="usuarios",
+        registro_id=user_id,
+        descripcion=f"Solicitud de permisos temporal: {usuario.username}",
+        datos_nuevos=json.dumps({"rol_solicitado": rol_solicitado, "motivo": payload.motivo or ""}, ensure_ascii=False),
+        resultado="SUCCESS",
+    )
+    return usuario_actualizado
+
+
+@router.get("/solicitudes-permisos")
+async def listar_solicitudes_permisos(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Listar solicitudes de escalamiento pendientes para usuarios temporales."""
+    require_admin_role(current_user, "Solo administradores pueden ver solicitudes")
+
+    _purge_expired_temp_users(db, actor_user_id=current_user["id"])
+    rows = (
+        db.query(UsuarioModel)
+        .filter(
+            UsuarioModel.es_temporal.is_(True),
+            UsuarioModel.solicitud_permiso_estado == "pending",
+        )
+        .order_by(UsuarioModel.solicitud_permiso_fecha.desc(), UsuarioModel.id.desc())
+        .all()
+    )
+    return {
+        "status": "success",
+        "total": len(rows),
+        "items": [
+            {
+                "id": u.id,
+                "username": u.username,
+                "email": u.email,
+                "rol_actual": normalize_role(u.rol, u.es_admin),
+                "rol_solicitado": u.solicitud_permiso_rol,
+                "motivo": u.solicitud_permiso_motivo,
+                "solicitado_en": u.solicitud_permiso_fecha.isoformat() if u.solicitud_permiso_fecha else None,
+                "expira_en": u.temporal_expira_en.isoformat() if u.temporal_expira_en else None,
+            }
+            for u in rows
+        ],
+    }
+
+
+@router.post("/solicitudes-permisos/{user_id}/resolver", response_model=Usuario)
+async def resolver_solicitud_permisos(
+    user_id: int,
+    payload: SolicitudPermisoResolver,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Aprobar o rechazar solicitud de permisos de usuario temporal."""
+    require_admin_role(current_user, "Solo administradores pueden resolver solicitudes")
+
+    repo = RepositorioUsuario(db)
+    repo_auditoria = RepositorioAuditoria(db)
+    usuario = repo.obtener_por_id(user_id)
+    if not usuario:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+    if not usuario.es_temporal:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El usuario no es temporal")
+    if (usuario.solicitud_permiso_estado or "none") != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No hay solicitud pendiente para este usuario")
+
+    approved_role = ROLE_ADMIN if payload.rol_aprobado == ROLE_ADMIN else ROLE_CAPTURE
+    if payload.aprobar:
+        updates = {
+            "rol": approved_role,
+            "es_admin": approved_role == ROLE_ADMIN,
+            "es_temporal": False,
+            "temporal_expira_en": None,
+            "solicitud_permiso_estado": "approved",
+            "solicitud_permiso_rol": approved_role,
+        }
+    else:
+        updates = {
+            "solicitud_permiso_estado": "rejected",
+        }
+
+    usuario_actualizado = repo.actualizar_usuario(user_id, updates)
+
+    repo_auditoria.registrar_accion(
+        usuario_id=current_user["id"],
+        tipo_accion="ACTUALIZAR",
+        tabla="usuarios",
+        registro_id=user_id,
+        descripcion=f"Solicitud de permisos {'aprobada' if payload.aprobar else 'rechazada'}: {usuario.username}",
+        datos_nuevos=json.dumps({"aprobar": payload.aprobar, "rol_aprobado": approved_role}, ensure_ascii=False),
+        resultado="SUCCESS",
+    )
+    return usuario_actualizado
+
+
+@router.get("/temporales/historial", response_model=list[TempUsuarioHistorialItem])
+async def historial_temporales(
+    limit: int = Query(100, ge=1, le=500),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Consultar historial de usuarios temporales autoeliminados o depurados."""
+    require_admin_role(current_user, "Solo administradores pueden consultar historial")
+
+    rows = db.query(TempUsuarioHistorial).order_by(TempUsuarioHistorial.fecha_eliminacion.desc()).limit(limit).all()
+    return rows
 
 
 @router.get("/{user_id}", response_model=Usuario)
@@ -241,9 +545,10 @@ async def resumen_mantenimiento_usuarios(
     for user in users:
         username = (user.username or "").lower()
         is_temp_name = username.startswith(TEMP_USER_PREFIXES)
+        is_temp_flag = bool(user.es_temporal)
         stale_session = user.fecha_ultima_sesion is None or user.fecha_ultima_sesion < stale_cutoff
         inactive = not bool(user.es_activo)
-        if is_temp_name or (inactive and stale_session):
+        if is_temp_name or is_temp_flag or (inactive and stale_session):
             candidates.append(
                 {
                     "id": user.id,
@@ -253,6 +558,8 @@ async def resumen_mantenimiento_usuarios(
                     "fecha_creacion": user.fecha_creacion.isoformat() if user.fecha_creacion else None,
                     "fecha_ultima_sesion": user.fecha_ultima_sesion.isoformat() if user.fecha_ultima_sesion else None,
                     "is_temp_name": is_temp_name,
+                    "is_temp_flag": is_temp_flag,
+                    "temporal_expira_en": user.temporal_expira_en.isoformat() if user.temporal_expira_en else None,
                     "is_stale": stale_session,
                 }
             )
@@ -339,7 +646,7 @@ async def purgar_usuarios_temporales(
             continue
         role = normalize_role(user.rol, user.es_admin)
         username_lower = (user.username or "").lower()
-        is_temp = username_lower.startswith(TEMP_USER_PREFIXES)
+        is_temp = bool(user.es_temporal) or username_lower.startswith(TEMP_USER_PREFIXES)
         is_stale_inactive = include_inactive_stale and (not user.es_activo) and (
             user.fecha_ultima_sesion is None or user.fecha_ultima_sesion < stale_cutoff
         )
@@ -348,9 +655,17 @@ async def purgar_usuarios_temporales(
         if not is_temp and not is_stale_inactive:
             continue
         try:
+            _archive_temp_user(
+                db,
+                user,
+                motivo="purga_manual_temporales" if is_temp else "purga_manual_obsoleto",
+                eliminado_por=current_user['id'],
+                detalle={"include_inactive_stale": bool(include_inactive_stale)},
+            )
             repo.eliminar_usuario_definitivo(user.id, reassigned_user_id=current_user['id'])
             purged.append({"id": user.id, "username": user.username})
         except Exception:
+            db.rollback()
             continue
 
     repo_auditoria.registrar_accion(

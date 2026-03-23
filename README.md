@@ -41,6 +41,17 @@ Detener servidor en cualquier momento:
 stop.bat
 ```
 
+Autostart en Windows (PowerShell):
+
+```powershell
+.\manage_autostart.bat install logon
+.\manage_autostart.bat install startup
+.\manage_autostart.bat status
+.\manage_autostart.bat remove
+```
+
+Nota: en PowerShell debes usar `./` o `.\` para ejecutar scripts en el directorio actual.
+
 Credenciales iniciales:
 
 - Usuario: admin
@@ -133,6 +144,95 @@ PUBLIC_BASE_URL=https://tu-dominio.com
 Con esto, los enlaces QR públicos se generan con ese dominio y no con `localhost`.
 
 Si no quieres escribir puerto en LAN, usa reverse proxy en `:80` apuntando al backend `:8000`.
+
+### Forzar ingreso solo por HTTPS
+
+El backend ahora puede bloquear HTTP y exigir HTTPS.
+
+Variables en `.env`:
+
+```env
+FORCE_HTTPS=true
+SSL_PORT=8443
+```
+
+Comportamiento:
+
+- Si llega una petición por HTTP y hay TLS configurado (`ssl/cert.pem` + `ssl/key.pem`), redirige automáticamente a HTTPS.
+- Si llega por HTTP y no hay TLS, responde `426 Upgrade Required` para no permitir ingreso inseguro.
+- `GET /api/health` se mantiene accesible por HTTP para healthchecks internos.
+
+## Deploy seguro sin downtime (Blue-Green)
+
+Para publicar updates sin detener servicio, se incluye un stack blue-green con healthcheck y switch atómico por Nginx.
+
+Archivos principales:
+
+- `docker-compose.bluegreen.yml`
+- `deploy/nginx.bluegreen.conf`
+- `deploy/active-upstream.conf`
+- `scripts/deploy-bluegreen.sh` (Linux/macOS)
+- `scripts/deploy-bluegreen.ps1` (Windows)
+
+Flujo recomendado:
+
+1. Levantar stack:
+
+```bash
+docker compose -f docker-compose.bluegreen.yml up -d
+```
+
+2. Deploy sin downtime (Linux):
+
+```bash
+chmod +x scripts/deploy-bluegreen.sh
+./scripts/deploy-bluegreen.sh deploy
+```
+
+3. Deploy sin downtime (Windows PowerShell):
+
+```powershell
+.\scripts\deploy-bluegreen.ps1 -Action deploy
+```
+
+Opción automática desde directorio raíz (recomendada):
+
+```powershell
+.\deploy.ps1 -Action deploy
+```
+
+```cmd
+deploy.bat -Action deploy
+```
+
+En PowerShell, usa prefijo relativo:
+
+```powershell
+.\deploy.bat -Action deploy
+```
+
+4. Ver estado:
+
+```bash
+docker compose -f docker-compose.bluegreen.yml ps
+```
+
+Este enfoque levanta la versión nueva, valida `/api/health`, cambia el tráfico y luego detiene la versión anterior.
+
+Características robustas del deploy:
+
+- Preflight: valida Docker, daemon activo y archivos requeridos.
+- Crea `deploy/active-upstream.conf` si no existe.
+- Logging en `logs/deploy-bluegreen-YYYYMMDD-HHMMSS.log`.
+- Rollback automático del switch si falla el cambio de tráfico.
+
+Comandos útiles:
+
+```powershell
+.\deploy.ps1 -Action status
+.\deploy.ps1 -Action switch -Color blue
+.\deploy.ps1 -Action switch -Color green
+```
 
 ## Estructura principal
 

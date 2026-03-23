@@ -114,7 +114,7 @@ def _fetch_agent_snapshot(db: Session) -> dict:
                         COALESCE(es_activo, 1) AS es_activo,
                         CASE WHEN qr_filename IS NOT NULL AND qr_filename <> '' THEN 1 ELSE 0 END AS has_qr
                     FROM {table_ref}
-                    ORDER BY COALESCE(fecha_creacion, fecha_modificacion) DESC, id DESC
+                                        ORDER BY COALESCE(fecha_creacion, fecha_modificacion) DESC, id DESC
                     LIMIT 5
                     """
                 )

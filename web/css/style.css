@@ -409,6 +409,10 @@ body {
     margin-top: 8px;
 }
 
+.autostart-actions {
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
 .activity-chart {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
@@ -771,6 +775,53 @@ body {
     font-size: 0.88rem;
 }
 
+#serverAccessHint,
+#cameraSecurityHint {
+    margin-bottom: 0;
+    line-height: 1.2;
+}
+
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+.status-pill.temp {
+    background: #fff0cc;
+    color: #7d5300;
+    border: 1px solid #efce7a;
+}
+
+.status-pill.normal {
+    background: #dff6ec;
+    color: #0f6646;
+    border: 1px solid #94d7b9;
+}
+
+.status-pill.pending {
+    background: #ffe6d1;
+    color: #8f4e00;
+    border: 1px solid #f0be8f;
+}
+
+.status-pill.approved {
+    background: #d7f3e3;
+    color: #0f6646;
+    border: 1px solid #98d8b7;
+}
+
+.status-pill.rejected {
+    background: #fde7e7;
+    color: #8d2c2c;
+    border: 1px solid #edb1b1;
+}
+
 .table-responsive {
     overflow: auto;
     border: 1px solid var(--border);
@@ -836,11 +887,6 @@ body {
 
 .qr-camera-tools {
     grid-template-columns: 1.6fr 1fr 1fr;
-}
-
-#qrScanner {
-    width: 100% !important;
-    max-width: 520px !important;
 }
 
 #qrScanScanner {
@@ -1050,10 +1096,6 @@ footer {
 
     .qr-camera-tools {
         grid-template-columns: 1fr;
-    }
-
-    #qrScanner {
-        max-width: 100% !important;
     }
 
     #qrScanScanner {

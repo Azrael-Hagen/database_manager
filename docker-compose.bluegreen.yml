@@ -1,0 +1,125 @@
+services:
+  mariadb:
+    image: mariadb:latest
+    container_name: database_manager_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${DB_NAME:-database_manager}
+      MYSQL_USER: ${DB_USER:-manager}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-manager123}
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend_blue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: database-manager:latest
+    container_name: database_manager_api_blue
+    restart: unless-stopped
+    environment:
+      DB_HOST: mariadb
+      DB_USER: ${DB_USER:-manager}
+      DB_PASSWORD: ${DB_PASSWORD:-manager123}
+      DB_NAME: ${DB_NAME:-database_manager}
+      DB_PORT: 3306
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      API_DEBUG: ${API_DEBUG:-False}
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      LOG_LEVEL: INFO
+    volumes:
+      - ./backend:/app/backend
+      - ./web:/app/web
+      - backend_logs:/app/backend/logs
+      - qr_codes:/app/backend/qr_codes
+      - uploads:/app/backend/uploads
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - app_network
+    ports:
+      - "127.0.0.1:18000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    command: python main.py
+
+  backend_green:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: database-manager:latest
+    container_name: database_manager_api_green
+    restart: unless-stopped
+    environment:
+      DB_HOST: mariadb
+      DB_USER: ${DB_USER:-manager}
+      DB_PASSWORD: ${DB_PASSWORD:-manager123}
+      DB_NAME: ${DB_NAME:-database_manager}
+      DB_PORT: 3306
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      API_DEBUG: ${API_DEBUG:-False}
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      LOG_LEVEL: INFO
+    volumes:
+      - ./backend:/app/backend
+      - ./web:/app/web
+      - backend_logs:/app/backend/logs
+      - qr_codes:/app/backend/qr_codes
+      - uploads:/app/backend/uploads
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - app_network
+    ports:
+      - "127.0.0.1:18001:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    command: python main.py
+
+  gateway:
+    image: nginx:alpine
+    container_name: database_manager_gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx.bluegreen.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/active-upstream.conf:/etc/nginx/conf.d/active-upstream.conf:ro
+    depends_on:
+      - backend_blue
+      - backend_green
+    networks:
+      - app_network
+
+volumes:
+  db_data:
+    driver: local
+  backend_logs:
+    driver: local
+  qr_codes:
+    driver: local
+  uploads:
+    driver: local
+
+networks:
+  app_network:
+    driver: bridge

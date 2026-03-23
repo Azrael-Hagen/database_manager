@@ -92,6 +92,52 @@ def _ensure_core_schema_updates():
             connection.execute(text("ALTER TABLE `usuarios` ADD COLUMN `rol` VARCHAR(20) NOT NULL DEFAULT 'viewer'"))
             connection.execute(text("CREATE INDEX `ix_usuarios_rol` ON `usuarios` (`rol`)"))
 
+        if not _column_exists(connection, "usuarios", "es_temporal"):
+            connection.execute(text("ALTER TABLE `usuarios` ADD COLUMN `es_temporal` TINYINT(1) NOT NULL DEFAULT 0"))
+        if not _column_exists(connection, "usuarios", "temporal_expira_en"):
+            connection.execute(text("ALTER TABLE `usuarios` ADD COLUMN `temporal_expira_en` DATETIME NULL"))
+        if not _column_exists(connection, "usuarios", "temporal_renovaciones"):
+            connection.execute(text("ALTER TABLE `usuarios` ADD COLUMN `temporal_renovaciones` INT NOT NULL DEFAULT 0"))
+        if not _column_exists(connection, "usuarios", "solicitud_permiso_estado"):
+            connection.execute(text("ALTER TABLE `usuarios` ADD COLUMN `solicitud_permiso_estado` VARCHAR(20) NOT NULL DEFAULT 'none'"))
+        if not _column_exists(connection, "usuarios", "solicitud_permiso_rol"):
+            connection.execute(text("ALTER TABLE `usuarios` ADD COLUMN `solicitud_permiso_rol` VARCHAR(20) NULL"))
+        if not _column_exists(connection, "usuarios", "solicitud_permiso_motivo"):
+            connection.execute(text("ALTER TABLE `usuarios` ADD COLUMN `solicitud_permiso_motivo` TEXT NULL"))
+        if not _column_exists(connection, "usuarios", "solicitud_permiso_fecha"):
+            connection.execute(text("ALTER TABLE `usuarios` ADD COLUMN `solicitud_permiso_fecha` DATETIME NULL"))
+
+        if not _index_exists(connection, "usuarios", "ix_usuarios_es_temporal"):
+            connection.execute(text("CREATE INDEX `ix_usuarios_es_temporal` ON `usuarios` (`es_temporal`)"))
+        if not _index_exists(connection, "usuarios", "ix_usuarios_temporal_expira_en"):
+            connection.execute(text("CREATE INDEX `ix_usuarios_temporal_expira_en` ON `usuarios` (`temporal_expira_en`)"))
+        if not _index_exists(connection, "usuarios", "ix_usuarios_solicitud_permiso_estado"):
+            connection.execute(text("CREATE INDEX `ix_usuarios_solicitud_permiso_estado` ON `usuarios` (`solicitud_permiso_estado`)"))
+
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS `temp_usuarios_historial` (
+                    `id` INT NOT NULL AUTO_INCREMENT,
+                    `usuario_id` INT NOT NULL,
+                    `username` VARCHAR(50) NOT NULL,
+                    `email` VARCHAR(255) NULL,
+                    `rol` VARCHAR(20) NOT NULL DEFAULT 'viewer',
+                    `fecha_creacion_usuario` DATETIME NULL,
+                    `fecha_expiracion` DATETIME NULL,
+                    `fecha_eliminacion` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    `motivo` VARCHAR(80) NOT NULL DEFAULT 'expirado',
+                    `eliminado_por` INT NULL,
+                    `detalle_json` TEXT NULL,
+                    PRIMARY KEY (`id`),
+                    KEY `ix_temp_usuarios_historial_usuario_fecha` (`usuario_id`, `fecha_eliminacion`),
+                    KEY `ix_temp_usuarios_historial_username` (`username`),
+                    KEY `ix_temp_usuarios_historial_motivo` (`motivo`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+        )
+
         # Asegurar que papelera_registros existe aunque ya se cree con create_all
         connection.execute(
             text(

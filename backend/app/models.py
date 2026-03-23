@@ -21,6 +21,13 @@ class Usuario(Base):
     es_activo = Column(Boolean, default=True)
     es_admin = Column(Boolean, default=False)
     rol = Column(String(20), default="viewer", nullable=False, index=True)
+    es_temporal = Column(Boolean, default=False, nullable=False, index=True)
+    temporal_expira_en = Column(DateTime, index=True)
+    temporal_renovaciones = Column(Integer, default=0, nullable=False)
+    solicitud_permiso_estado = Column(String(20), default="none", nullable=False, index=True)
+    solicitud_permiso_rol = Column(String(20))
+    solicitud_permiso_motivo = Column(Text)
+    solicitud_permiso_fecha = Column(DateTime)
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
     fecha_ultima_sesion = Column(DateTime)
     
@@ -69,6 +76,27 @@ class DatoImportado(Base):
     
     def __repr__(self):
         return f"<DatoImportado {self.nombre}>"
+
+
+class TempUsuarioHistorial(Base):
+    """Historial de usuarios temporales eliminados automáticamente o por mantenimiento."""
+
+    __tablename__ = "temp_usuarios_historial"
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, nullable=False, index=True)
+    username = Column(String(50), nullable=False, index=True)
+    email = Column(String(255), nullable=True)
+    rol = Column(String(20), nullable=False, default="viewer")
+    fecha_creacion_usuario = Column(DateTime)
+    fecha_expiracion = Column(DateTime)
+    fecha_eliminacion = Column(DateTime, default=datetime.utcnow, index=True)
+    motivo = Column(String(80), nullable=False, default="expirado", index=True)
+    eliminado_por = Column(Integer, ForeignKey("usuarios.id"))
+    detalle_json = Column(Text)
+
+    def __repr__(self):
+        return f"<TempUsuarioHistorial usuario={self.username} motivo={self.motivo}>"
 
 
 class PagoSemanal(Base):

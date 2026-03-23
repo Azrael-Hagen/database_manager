@@ -20,11 +20,13 @@ let currentWeeklyReportRows = [];
 let lastReceiptData = null;
 let currentDatosDatabase = '';
 let currentServerAccessUrl = '';
+let currentServerAccessNoPortUrl = '';
 let brandingManageEnabled = false;
 let currentAgentManagementRows = [];
 let currentEditingAgentId = null;
 let currentBackupDir = '';
 let currentTableBrowserState = { database: '', table: '', orderBy: 'id', direction: 'desc', limit: 50 };
+let currentUsuariosRows = [];
 let altasTourActive = false;
 let altasTourStepIndex = 0;
 let altasTourBackdrop = null;
@@ -145,6 +147,31 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function formatDateTimeSafe(value) {
+    if (!value) return '-';
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return '-';
+    return dt.toLocaleString();
+}
+
+function isCameraSecureContext() {
+    const host = (window.location.hostname || '').toLowerCase();
+    const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+    return window.location.protocol === 'https:' || isLocalHost;
+}
+
+function renderCameraSecurityHint() {
+    const hintEl = document.getElementById('cameraSecurityHint');
+    if (!hintEl) return;
+    if (isCameraSecureContext()) {
+        hintEl.textContent = '';
+        hintEl.title = '';
+        return;
+    }
+    hintEl.textContent = 'Camara: HTTP detectado. Usa HTTPS o localhost para escaneo QR.';
+    hintEl.title = 'Los navegadores bloquean camara en origenes HTTP no seguros';
 }
 
 function updateScrollTopButton() {
@@ -476,6 +503,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateScrollTopButton();
     setDefaultWeeklyDates();
     loadBrandingConfig();
+    renderCameraSecurityHint();
 });
 
 async function loadBrandingConfig() {
@@ -755,26 +783,42 @@ async function cargarAccesoServidorLocal() {
     const valueEl = document.getElementById('serverAccessValue');
     const wrapEl = document.getElementById('serverAccessWrap');
     const btnEl = document.getElementById('copyServerAccessBtn');
+    const hintEl = document.getElementById('serverAccessHint');
     if (!valueEl || !wrapEl || !btnEl) {
         return;
     }
 
     valueEl.textContent = 'cargando...';
+    if (hintEl) hintEl.textContent = '';
     btnEl.disabled = true;
 
     try {
         const res = await apiClient.getLocalNetworkInfo();
+        const preferred = String(res.share_url_preferida || '').trim();
         const url = String(res.share_url || '').trim();
+        const noPort = String(res.share_url_no_port || '').trim();
         const ip = String(res.ip_local || '').trim();
-        currentServerAccessUrl = url;
-        valueEl.textContent = url || ip || 'No disponible';
+        currentServerAccessUrl = preferred || url;
+        currentServerAccessNoPortUrl = noPort;
+        valueEl.textContent = currentServerAccessUrl || ip || 'No disponible';
         wrapEl.title = ip ? `IP local: ${ip}` : 'Acceso local';
-        btnEl.disabled = !(url || ip);
+        if (hintEl) {
+            if (noPort && noPort !== currentServerAccessUrl) {
+                hintEl.textContent = `Alternativa: ${noPort}`;
+            } else if (res.usa_puerto_por_defecto) {
+                hintEl.textContent = 'Puerto por defecto detectado; se puede omitir.';
+            } else {
+                hintEl.textContent = '';
+            }
+        }
+        btnEl.disabled = !(currentServerAccessUrl || ip);
     } catch (error) {
         console.warn('No se pudo obtener IP local:', error.message);
         currentServerAccessUrl = '';
+        currentServerAccessNoPortUrl = '';
         valueEl.textContent = 'No disponible';
         wrapEl.title = 'No se pudo detectar IP local';
+        if (hintEl) hintEl.textContent = '';
         btnEl.disabled = true;
     }
 }
@@ -789,20 +833,7 @@ async function copiarAccesoServidor() {
     }
 
     try {
-        if (navigator.clipboard && window.isSecureContext) {
-            await navigator.clipboard.writeText(text);
-        } else {
-            const temp = document.createElement('textarea');
-            temp.value = text;
-            temp.style.position = 'fixed';
-            temp.style.opacity = '0';
-            document.body.appendChild(temp);
-            temp.focus();
-            temp.select();
-            document.execCommand('copy');
-            document.body.removeChild(temp);
-        }
-
+        await copiarTextoPortapapeles(text);
         if (btnEl) {
             const original = btnEl.textContent;
             btnEl.textContent = 'Copiado';
@@ -812,6 +843,48 @@ async function copiarAccesoServidor() {
         }
     } catch (error) {
         alert('No se pudo copiar automáticamente. URL: ' + text);
+    }
+}
+
+async function copiarTextoPortapapeles(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+    const temp = document.createElement('textarea');
+    temp.value = text;
+    temp.style.position = 'fixed';
+    temp.style.opacity = '0';
+    document.body.appendChild(temp);
+    temp.focus();
+    temp.select();
+    document.execCommand('copy');
+    document.body.removeChild(temp);
+}
+
+async function copiarComandoAutostart(action, btnEl = null) {
+    const actionValue = String(action || '').trim();
+    if (!actionValue) return;
+
+    const command = `.\\manage_autostart.bat ${actionValue}`;
+    const hintEl = document.getElementById('autostartHint');
+    try {
+        await copiarTextoPortapapeles(command);
+        if (hintEl) {
+            hintEl.textContent = `Comando copiado: ${command}`;
+        }
+        if (btnEl) {
+            const original = btnEl.textContent;
+            btnEl.textContent = 'Copiado';
+            setTimeout(() => {
+                btnEl.textContent = original || 'Copiar';
+            }, 1200);
+        }
+    } catch (error) {
+        if (hintEl) {
+            hintEl.textContent = `No se pudo copiar. Ejecuta manualmente: ${command}`;
+        }
+        alert(`No se pudo copiar el comando. Ejecuta manualmente:\n${command}`);
     }
 }
 
@@ -967,9 +1040,6 @@ function loadSection(section, eventRef = null) {
             cargarRecibosPersistidos();
             cargarRespaldos();
             cargarLineasYAgentes();
-            setTimeout(() => {
-                cargarCamarasDisponibles(true).catch(() => {});
-            }, 120);
             break;
         case 'usuarios':
             document.getElementById('usuariosSection').style.display = 'block';
@@ -4026,9 +4096,12 @@ async function cargarUsuarios() {
         const orderBy = document.getElementById('usuariosOrderBy')?.value || 'fecha_creacion';
         const direction = document.getElementById('usuariosOrderDir')?.value || 'desc';
         const usuarios = await apiClient.getUsuarios(orderBy, direction);
+        currentUsuariosRows = Array.isArray(usuarios) ? usuarios : [];
         mostrarUsuarios(usuarios);
         if (canAdmin()) {
             cargarMantenimientoUsuarios(false);
+            cargarSolicitudesPermisosTemporales(false);
+            cargarHistorialTemporales(false);
         }
     } catch (error) {
         console.error('Error:', error);
@@ -4048,6 +4121,9 @@ function mostrarUsuarios(usuarios) {
                     <th>Email</th>
                     <th>Nombre</th>
                     <th>Rol</th>
+                    <th>Temporal</th>
+                    <th>Expira</th>
+                    <th>Solicitud</th>
                     <th>Activo</th>
                     <th>Acciones</th>
                 </tr>
@@ -4056,6 +4132,24 @@ function mostrarUsuarios(usuarios) {
     `;
     
     usuarios.forEach(user => {
+        const temporalBadge = user.es_temporal
+            ? '<span class="status-pill temp">Temporal</span>'
+            : '<span class="status-pill normal">Normal</span>';
+        const requestState = String(user.solicitud_permiso_estado || 'none').toLowerCase();
+        const requestBadge = requestState === 'pending'
+            ? '<span class="status-pill pending">Pendiente</span>'
+            : requestState === 'approved'
+                ? '<span class="status-pill approved">Aprobada</span>'
+                : requestState === 'rejected'
+                    ? '<span class="status-pill rejected">Rechazada</span>'
+                    : '-';
+        const renewButton = user.es_temporal
+            ? `<button onclick="renovarUsuarioTemporal(${user.id}, 10)" class="btn btn-small btn-secondary">Renovar 10d</button>`
+            : '';
+        const requestButtons = user.es_temporal
+            ? `<button onclick="solicitarPermisosTemporal(${user.id}, 'capture')" class="btn btn-small btn-secondary">Solicitar capture</button>
+               <button onclick="solicitarPermisosTemporal(${user.id}, 'admin')" class="btn btn-small btn-secondary">Solicitar admin</button>`
+            : '';
         html += `
             <tr>
                 <td>${user.id}</td>
@@ -4063,12 +4157,17 @@ function mostrarUsuarios(usuarios) {
                 <td>${user.email}</td>
                 <td>${user.nombre_completo || ''}</td>
                 <td>${user.rol || (user.es_admin ? 'admin' : 'viewer')}</td>
+                <td>${temporalBadge}</td>
+                <td>${formatDateTimeSafe(user.temporal_expira_en)}</td>
+                <td>${requestBadge}</td>
                 <td>${user.es_activo ? 'Sí' : 'No'}</td>
                 <td>
                     <button onclick="editarUsuario(${user.id})" class="btn btn-small">Editar</button>
                     <button onclick="cambiarPassword(${user.id})" class="btn btn-small btn-secondary">Contraseña</button>
                     <button onclick="eliminarUsuario(${user.id}, false)" class="btn btn-small btn-danger">Desactivar</button>
                     <button onclick="eliminarUsuario(${user.id}, true)" class="btn btn-small btn-danger">Eliminar Definitivo</button>
+                    ${renewButton}
+                    ${requestButtons}
                 </td>
             </tr>
         `;
@@ -4165,6 +4264,143 @@ async function depurarUsuariosTemporales() {
     } catch (error) {
         console.error('Error:', error);
         alert('Error depurando usuarios temporales: ' + error.message);
+    }
+}
+
+async function crearUsuarioTemporal(event) {
+    event.preventDefault();
+    if (!canAdmin()) return;
+    const payload = {
+        username: document.getElementById('tempUsername')?.value?.trim(),
+        email: document.getElementById('tempEmail')?.value?.trim(),
+        nombre_completo: document.getElementById('tempNombre')?.value?.trim() || null,
+        password: document.getElementById('tempPassword')?.value || '',
+        dias_vigencia: Number(document.getElementById('tempDias')?.value || 10),
+    };
+    try {
+        await apiClient.crearUsuarioTemporal(payload);
+        alert('Usuario temporal creado.');
+        document.getElementById('tempUsername').value = '';
+        document.getElementById('tempEmail').value = '';
+        document.getElementById('tempNombre').value = '';
+        document.getElementById('tempPassword').value = '';
+        document.getElementById('tempDias').value = '10';
+        cargarUsuarios();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error creando usuario temporal: ' + error.message);
+    }
+}
+
+async function renovarUsuarioTemporal(userId, diasVigencia = 10) {
+    if (!canAdmin()) return;
+    try {
+        await apiClient.renovarUsuarioTemporal(userId, diasVigencia);
+        alert('Usuario temporal renovado.');
+        cargarUsuarios();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error renovando usuario temporal: ' + error.message);
+    }
+}
+
+async function solicitarPermisosTemporal(userId, role = 'capture') {
+    const motivo = prompt('Motivo de la solicitud de permisos (opcional):') || '';
+    try {
+        await apiClient.solicitarPermisoTemporal(userId, { rol_solicitado: role, motivo });
+        alert('Solicitud registrada.');
+        cargarUsuarios();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error registrando solicitud: ' + error.message);
+    }
+}
+
+async function cargarSolicitudesPermisosTemporales(showErrors = true) {
+    if (!canAdmin()) return;
+    const container = document.getElementById('usuariosSolicitudesContainer');
+    if (!container) return;
+    try {
+        const result = await apiClient.getSolicitudesPermisosTemporales();
+        const items = result.items || [];
+        if (!items.length) {
+            container.innerHTML = '<p class="hint">Sin solicitudes de permisos pendientes.</p>';
+            return;
+        }
+        let html = '<table class="data-table"><thead><tr><th>ID</th><th>Usuario</th><th>Rol Actual</th><th>Solicita</th><th>Motivo</th><th>Fecha</th><th>Acciones</th></tr></thead><tbody>';
+        items.forEach(item => {
+            html += `<tr>
+                <td>${item.id}</td>
+                <td>${escapeHtml(item.username)}</td>
+                <td>${escapeHtml(item.rol_actual || '-')}</td>
+                <td>${escapeHtml(item.rol_solicitado || '-')}</td>
+                <td>${escapeHtml(item.motivo || '')}</td>
+                <td>${formatDateTimeSafe(item.solicitado_en)}</td>
+                <td>
+                    <button type="button" class="btn btn-small" onclick="resolverSolicitudPermisoTemporal(${item.id}, true, 'capture')">Aprobar capture</button>
+                    <button type="button" class="btn btn-small btn-secondary" onclick="resolverSolicitudPermisoTemporal(${item.id}, true, 'admin')">Aprobar admin</button>
+                    <button type="button" class="btn btn-small btn-danger" onclick="resolverSolicitudPermisoTemporal(${item.id}, false, 'capture')">Rechazar</button>
+                </td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (error) {
+        if (showErrors) {
+            console.error('Error:', error);
+            alert('Error cargando solicitudes: ' + error.message);
+        }
+    }
+}
+
+async function resolverSolicitudPermisoTemporal(userId, aprobar, rolAprobado = 'capture') {
+    if (!canAdmin()) return;
+    const mensaje = aprobar
+        ? `¿Aprobar solicitud del usuario ${userId} con rol ${rolAprobado}?`
+        : `¿Rechazar solicitud del usuario ${userId}?`;
+    if (!confirm(mensaje)) return;
+    try {
+        await apiClient.resolverSolicitudPermisoTemporal(userId, {
+            aprobar: Boolean(aprobar),
+            rol_aprobado: rolAprobado,
+        });
+        alert('Solicitud procesada.');
+        cargarUsuarios();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error resolviendo solicitud: ' + error.message);
+    }
+}
+
+async function cargarHistorialTemporales(showErrors = true) {
+    if (!canAdmin()) return;
+    const container = document.getElementById('usuariosTempHistoryContainer');
+    if (!container) return;
+    try {
+        const rows = await apiClient.getHistorialTemporales(120);
+        if (!Array.isArray(rows) || !rows.length) {
+            container.innerHTML = '<p class="hint">No hay historial de temporales eliminados.</p>';
+            return;
+        }
+        let html = '<table class="data-table"><thead><tr><th>ID Hist</th><th>Usuario</th><th>Rol</th><th>Creado</th><th>Expiraba</th><th>Eliminado</th><th>Motivo</th></tr></thead><tbody>';
+        rows.forEach(row => {
+            html += `<tr>
+                <td>${row.id}</td>
+                <td>${escapeHtml(row.username)}</td>
+                <td>${escapeHtml(row.rol || '-')}</td>
+                <td>${formatDateTimeSafe(row.fecha_creacion_usuario)}</td>
+                <td>${formatDateTimeSafe(row.fecha_expiracion)}</td>
+                <td>${formatDateTimeSafe(row.fecha_eliminacion)}</td>
+                <td>${escapeHtml(row.motivo || '-')}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (error) {
+        if (showErrors) {
+            console.error('Error:', error);
+            alert('Error cargando historial de temporales: ' + error.message);
+        }
     }
 }
 

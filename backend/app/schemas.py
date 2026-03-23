@@ -66,6 +66,13 @@ class Usuario(UsuarioBase):
     id: int
     es_activo: bool = True
     es_admin: bool = False
+    es_temporal: bool = False
+    temporal_expira_en: Optional[datetime] = None
+    temporal_renovaciones: int = 0
+    solicitud_permiso_estado: Optional[str] = None
+    solicitud_permiso_rol: Optional[str] = None
+    solicitud_permiso_motivo: Optional[str] = None
+    solicitud_permiso_fecha: Optional[datetime] = None
     fecha_creacion: datetime
     fecha_actualizacion: Optional[datetime] = None
 
@@ -77,6 +84,60 @@ class UsuarioAuth(BaseModel):
     """Esquema para autenticación."""
     username: str
     password: str
+
+
+class UsuarioTemporalCrear(BaseModel):
+    """Crear usuario temporal con vigencia controlada."""
+    username: str = Field(..., min_length=3, max_length=50)
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=100)
+    nombre_completo: Optional[str] = Field(None, max_length=255)
+    dias_vigencia: int = Field(10, ge=1, le=10)
+
+    @validator('password')
+    def password_strength(cls, v):
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Contraseña debe contener mayúscula')
+        if not re.search(r'[0-9]', v):
+            raise ValueError('Contraseña debe contener número')
+        if not re.search(r'[!@#$%^&*]', v):
+            raise ValueError('Contraseña debe contener carácter especial')
+        return v
+
+
+class UsuarioTemporalRenovar(BaseModel):
+    """Renovar vigencia de un usuario temporal."""
+    dias_vigencia: int = Field(10, ge=1, le=10)
+
+
+class SolicitudPermisoCrear(BaseModel):
+    """Solicitud de escalamiento de permisos para usuarios temporales."""
+    rol_solicitado: str = Field("capture", pattern="^(capture|admin)$")
+    motivo: Optional[str] = Field(None, max_length=500)
+
+
+class SolicitudPermisoResolver(BaseModel):
+    """Resolver solicitud de escalamiento."""
+    aprobar: bool = True
+    rol_aprobado: str = Field("capture", pattern="^(capture|admin)$")
+
+
+class TempUsuarioHistorialItem(BaseModel):
+    """Registro histórico de usuario temporal eliminado."""
+    id: int
+    usuario_id: int
+    username: str
+    email: Optional[str] = None
+    rol: str
+    fecha_creacion_usuario: Optional[datetime] = None
+    fecha_expiracion: Optional[datetime] = None
+    fecha_eliminacion: datetime
+    motivo: str
+    eliminado_por: Optional[int] = None
+    detalle_json: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
 class PasswordUpdate(BaseModel):
