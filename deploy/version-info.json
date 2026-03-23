@@ -1,0 +1,26 @@
+{
+  "product": "Database Manager",
+  "channel": "production",
+  "current": {
+    "version": "1.5.0",
+    "revision": 1,
+    "release_date": "2026-03-23",
+    "codename": "Static Agent QR",
+    "summary": "QR estatico por agente, exportacion PDF por lotes, alertas de sistema y mejora mobile/startup"
+  },
+  "history": [
+    {
+      "version": "1.5.0",
+      "revision": 1,
+      "release_date": "2026-03-23",
+      "codename": "Static Agent QR",
+      "changes": [
+        "Se unifica start.bat como script oficial de arranque del servidor.",
+        "Los QRs de agente pasan a ser estaticos por UUID y el servidor resuelve estado actual, linea activa y deuda al momento del escaneo.",
+        "Se agrega exportacion PDF por lotes para hoja y etiquetas fisicas.",
+        "Se agrega registro formal de version y revision accesible solo desde el servidor.",
+        "Se integran alertas de sistema, mejoras de UI responsive y correcciones previas validadas por E2E."
+      ]
+    }
+  ]
+}

@@ -8,7 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from contextlib import asynccontextmanager
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import socket
 import ipaddress
 import signal
@@ -28,9 +28,13 @@ from app.api.auditoria import router as auditoria_router
 from app.api.qr import router as qr_router
 from app.api.export import router as export_router
 from app.api.dashboard import router as dashboard_router
+from app.api.alertas import router as alertas_router
+from app.api.system import router as system_router
+from app.versioning import current_version_payload, current_version_string
 from app.security import get_current_user
 from app.utils.pagos import generar_alertas_miercoles_pendientes
 from app.utils.backups import create_weekly_backup
+from app.utils.startup_tasks import auto_qr_al_inicio, reporte_sin_linea_inicio
 
 # Configurar logging
 logging.basicConfig(
@@ -87,6 +91,17 @@ async def lifespan(app: FastAPI):
 
             resumen_backup = create_weekly_backup(db)
             logger.info(f"Respaldo semanal: {resumen_backup}")
+
+            # Auto-generar QR faltantes y reportar agentes sin línea
+            qr_result = auto_qr_al_inicio(db)
+            logger.info(f"Auto-QR al inicio: {qr_result}")
+
+            sin_linea_result = reporte_sin_linea_inicio(db)
+            if sin_linea_result.get("sin_linea", 0) > 0:
+                logger.warning(
+                    "AVISO: %s agente(s) sin línea asignada — revisar sección 'Sin Línea' en la UI",
+                    sin_linea_result["sin_linea"],
+                )
         finally:
             db.close()
     except Exception as e:
@@ -103,7 +118,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Database Manager API",
     description="API profesional para gestionar base de datos con importación de archivos, QR, autenticación y auditoría",
-    version="1.0.0",
+    version=current_version_string(),
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -227,6 +242,8 @@ app.include_router(auditoria_router)
 app.include_router(qr_router)
 app.include_router(export_router)
 app.include_router(dashboard_router)
+app.include_router(alertas_router)
+app.include_router(system_router)
 
 
 # HEALTH CHECK
@@ -234,10 +251,12 @@ app.include_router(dashboard_router)
 @app.get("/api/health", tags=["Sistema"])
 async def health_check():
     """Health check endpoint."""
+    version_info = current_version_payload()
     return {
         "status": "ok",
-        "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0"
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version": version_info["version_string"],
+        "revision": version_info["revision"]
     }
 
 
@@ -382,7 +401,7 @@ async def upload_branding_logo(
     if len(raw) > 5 * 1024 * 1024:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo supera el límite de 5 MB")
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     safe_name = f"custom-logo-{timestamp}{extension}"
     target_file = SOURCES_DIR / safe_name
     SOURCES_DIR.mkdir(parents=True, exist_ok=True)

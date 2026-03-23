@@ -2,10 +2,12 @@
 
 from sqlalchemy import Column, Integer, String, DateTime, LargeBinary, Boolean, Text, ForeignKey, Date, Float
 from sqlalchemy.orm import declarative_base, relationship
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 Base = declarative_base()
+
+_utcnow = lambda: datetime.now(timezone.utc)
 
 
 class Usuario(Base):
@@ -28,7 +30,7 @@ class Usuario(Base):
     solicitud_permiso_rol = Column(String(20))
     solicitud_permiso_motivo = Column(Text)
     solicitud_permiso_fecha = Column(DateTime)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow)
+    fecha_creacion = Column(DateTime, default=_utcnow)
     fecha_ultima_sesion = Column(DateTime)
     
     # Relaciones
@@ -63,8 +65,8 @@ class DatoImportado(Base):
     # Auditoría
     creado_por = Column(Integer, ForeignKey("usuarios.id"))
     creado_por_usuario = relationship("Usuario", back_populates="registros_creados")
-    fecha_creacion = Column(DateTime, default=datetime.utcnow, index=True)
-    fecha_modificacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    fecha_creacion = Column(DateTime, default=_utcnow, index=True)
+    fecha_modificacion = Column(DateTime, default=_utcnow, onupdate=_utcnow)
     fecha_eliminacion = Column(DateTime)  # Para soft delete
     es_activo = Column(Boolean, default=True, index=True)
     
@@ -90,7 +92,7 @@ class TempUsuarioHistorial(Base):
     rol = Column(String(20), nullable=False, default="viewer")
     fecha_creacion_usuario = Column(DateTime)
     fecha_expiracion = Column(DateTime)
-    fecha_eliminacion = Column(DateTime, default=datetime.utcnow, index=True)
+    fecha_eliminacion = Column(DateTime, default=_utcnow, index=True)
     motivo = Column(String(80), nullable=False, default="expirado", index=True)
     eliminado_por = Column(Integer, ForeignKey("usuarios.id"))
     detalle_json = Column(Text)
@@ -113,8 +115,8 @@ class PagoSemanal(Base):
     pagado = Column(Boolean, default=False, index=True)
     fecha_pago = Column(DateTime)
     observaciones = Column(Text)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow, index=True)
-    fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    fecha_creacion = Column(DateTime, default=_utcnow, index=True)
+    fecha_actualizacion = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     agente = relationship("DatoImportado")
     recibo = relationship("ReciboPago", back_populates="pago", uselist=False)
@@ -131,7 +133,7 @@ class ConfigSistema(Base):
     id = Column(Integer, primary_key=True, index=True)
     clave = Column(String(100), unique=True, nullable=False, index=True)
     valor = Column(String(500), nullable=False)
-    fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    fecha_actualizacion = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     def __repr__(self):
         return f"<ConfigSistema {self.clave}={self.valor}>"
@@ -145,7 +147,7 @@ class AlertaPago(Base):
     id = Column(Integer, primary_key=True, index=True)
     agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
     semana_inicio = Column(Date, nullable=False, index=True)
-    fecha_alerta = Column(DateTime, default=datetime.utcnow, index=True)
+    fecha_alerta = Column(DateTime, default=_utcnow, index=True)
     motivo = Column(String(255), default="Pago semanal pendiente")
     atendida = Column(Boolean, default=False, index=True)
     fecha_atendida = Column(DateTime)
@@ -166,8 +168,8 @@ class LineaTelefonica(Base):
     tipo = Column(String(30), default="VOIP", nullable=False, index=True)
     descripcion = Column(Text)
     es_activa = Column(Boolean, default=True, index=True)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow, index=True)
-    fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    fecha_creacion = Column(DateTime, default=_utcnow, index=True)
+    fecha_actualizacion = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     asignaciones = relationship("AgenteLineaAsignacion", back_populates="linea")
 
@@ -184,7 +186,7 @@ class AgenteLineaAsignacion(Base):
     agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
     linea_id = Column(Integer, ForeignKey("lineas_telefonicas.id"), nullable=False, index=True)
     es_activa = Column(Boolean, default=True, index=True)
-    fecha_asignacion = Column(DateTime, default=datetime.utcnow, index=True)
+    fecha_asignacion = Column(DateTime, default=_utcnow, index=True)
     fecha_liberacion = Column(DateTime)
     observaciones = Column(Text)
 
@@ -204,7 +206,7 @@ class LadaCatalogo(Base):
     codigo = Column(String(10), unique=True, nullable=False, index=True)
     nombre_region = Column(String(120))
     es_activa = Column(Boolean, default=True, index=True)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow, index=True)
+    fecha_creacion = Column(DateTime, default=_utcnow, index=True)
 
     agentes_preferidos = relationship("AgenteLadaPreferencia", back_populates="lada")
 
@@ -221,7 +223,7 @@ class AgenteLadaPreferencia(Base):
     agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
     lada_id = Column(Integer, ForeignKey("ladas_catalogo.id"), nullable=False, index=True)
     prioridad = Column(Integer, default=1, index=True)
-    fecha_creacion = Column(DateTime, default=datetime.utcnow, index=True)
+    fecha_creacion = Column(DateTime, default=_utcnow, index=True)
 
     agente = relationship("DatoImportado", back_populates="ladas_preferidas")
     lada = relationship("LadaCatalogo", back_populates="agentes_preferidos")
@@ -239,7 +241,7 @@ class PapeleraRegistro(Base):
     snapshot_json = Column(Text, nullable=False)          # JSON completo del registro
     tipo_borrado = Column(String(20), nullable=False)      # 'soft' o 'hard'
     borrado_por = Column(Integer, ForeignKey("usuarios.id"))
-    fecha_borrado = Column(DateTime, default=datetime.utcnow, index=True)
+    fecha_borrado = Column(DateTime, default=_utcnow, index=True)
     restaurado = Column(Boolean, default=False, index=True)
     fecha_restauracion = Column(DateTime)
     restaurado_por = Column(Integer, ForeignKey("usuarios.id"))
@@ -263,7 +265,7 @@ class ReciboPago(Base):
     linea_numero = Column(String(50), index=True)
     token_recibo = Column(String(80), nullable=False, unique=True, index=True)
     contenido_json = Column(Text, nullable=False)
-    generado_en = Column(DateTime, default=datetime.utcnow, index=True)
+    generado_en = Column(DateTime, default=_utcnow, index=True)
     expira_en = Column(DateTime, nullable=False, index=True)
     impresiones_count = Column(Integer, default=0)
     ultima_impresion = Column(DateTime)
@@ -301,7 +303,7 @@ class ImportLog(Base):
     # Usuario y auditoría
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     usuario = relationship("Usuario", back_populates="importaciones")
-    fecha_inicio = Column(DateTime, default=datetime.utcnow)
+    fecha_inicio = Column(DateTime, default=_utcnow)
     fecha_fin = Column(DateTime)
     duracion_segundos = Column(Integer)
     
@@ -337,7 +339,7 @@ class AuditoriaAccion(Base):
     ip_origen = Column(String(45))  # IPv4 o IPv6
     user_agent = Column(String(255))
     
-    fecha = Column(DateTime, default=datetime.utcnow, index=True)
+    fecha = Column(DateTime, default=_utcnow, index=True)
     
     def __repr__(self):
         return f"<AuditoriaAccion {self.tipo_accion}>"
@@ -367,8 +369,28 @@ class EsquemaBaseDatos(Base):
     # Metadata
     guardar_por = Column(Integer, ForeignKey("usuarios.id"))
     usuario = relationship("Usuario")
-    fecha_guardado = Column(DateTime, default=datetime.utcnow, index=True)
+    fecha_guardado = Column(DateTime, default=_utcnow, index=True)
     activo = Column(Boolean, default=True, index=True)
     
     def __repr__(self):
         return f"<EsquemaBaseDatos {self.nombre_bd} v{self.version}>"
+
+
+class AlertaSistema(Base):
+    """Alertas enviadas por el super administrador a todos los usuarios."""
+
+    __tablename__ = "alertas_sistema"
+
+    id = Column(Integer, primary_key=True, index=True)
+    titulo = Column(String(255), nullable=False)
+    mensaje = Column(Text, nullable=False)
+    nivel = Column(String(20), default="info", nullable=False, index=True)  # info, warning, danger
+    enviado_por = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    fecha_envio = Column(DateTime, default=_utcnow, index=True)
+    es_activa = Column(Boolean, default=True, index=True)
+    leida_por_json = Column(Text, default="[]")  # JSON array of user IDs
+
+    remitente = relationship("Usuario", foreign_keys=[enviado_por])
+
+    def __repr__(self):
+        return f"<AlertaSistema id={self.id} nivel={self.nivel} titulo={self.titulo[:40]}>"

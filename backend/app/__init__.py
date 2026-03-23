@@ -1,3 +1,5 @@
 """Backend application factory and initialization."""
 
-__version__ = "0.1.0"
+from app.versioning import current_version_string
+
+__version__ = current_version_string()

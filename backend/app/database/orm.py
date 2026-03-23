@@ -314,6 +314,10 @@ def _ensure_core_schema_updates():
                     l.id AS linea_id,
                     l.numero AS extension_numero,
                     l.tipo AS extension_tipo,
+                    CASE
+                        WHEN ala.id IS NULL OR l.id IS NULL THEN 'SIN_LINEA'
+                        ELSE 'ASIGNADA'
+                    END AS linea_estado,
                     p.semana_inicio,
                     COALESCE(p.pagado, 0) AS pagado_semana,
                     COALESCE(p.monto, 0) AS monto_semana,
@@ -355,6 +359,10 @@ def _ensure_core_schema_updates():
                     l.id AS linea_id,
                     l.numero AS linea_numero,
                     l.tipo AS linea_tipo,
+                    CASE
+                        WHEN ala.id IS NULL OR l.id IS NULL THEN 'SIN_LINEA'
+                        ELSE 'ASIGNADA'
+                    END AS linea_estado,
                     p.semana_inicio,
                     COALESCE(p.pagado, 0) AS pagado_semana,
                     COALESCE(p.monto, 0) AS monto_semana,
@@ -452,7 +460,8 @@ class RepositorioBase:
     
     def crear(self, obj_in):
         """Crear nuevo registro."""
-        db_obj = self.model(**obj_in.dict())
+        payload = obj_in.model_dump() if hasattr(obj_in, "model_dump") else obj_in.dict()
+        db_obj = self.model(**payload)
         self.db.add(db_obj)
         self.db.commit()
         self.db.refresh(db_obj)
@@ -473,7 +482,7 @@ class RepositorioBase:
         if not db_obj:
             return None
         
-        update_data = obj_in.dict(exclude_unset=True)
+        update_data = obj_in.model_dump(exclude_unset=True) if hasattr(obj_in, "model_dump") else obj_in.dict(exclude_unset=True)
         for field, value in update_data.items():
             setattr(db_obj, field, value)
         

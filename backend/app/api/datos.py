@@ -84,6 +84,9 @@ def _legacy_text(raw: str | None, max_len: int) -> str:
 
 
 def _sync_legacy_agente_row(db: Session, *, agente_id: int, nombre: str, datos_adicionales: dict | None = None) -> None:
+    dialect = getattr(getattr(db, "bind", None), "dialect", None)
+    if getattr(dialect, "name", "") == "sqlite":
+        return
     extras = datos_adicionales if isinstance(datos_adicionales, dict) else {}
     db.execute(
         text(
@@ -114,6 +117,9 @@ def _sync_legacy_agente_row(db: Session, *, agente_id: int, nombre: str, datos_a
 
 
 def _delete_legacy_agente_row(db: Session, agente_id: int) -> None:
+    dialect = getattr(getattr(db, "bind", None), "dialect", None)
+    if getattr(dialect, "name", "") == "sqlite":
+        return
     db.execute(
         text("DELETE FROM `registro_agentes`.`agentes` WHERE `ID` = :id"),
         {"id": int(agente_id)},
@@ -226,7 +232,7 @@ async def crear_dato(
     repo = RepositorioDatoImportado(db)
     repo_auditoria = RepositorioAuditoria(db)
     
-    dato_dict = dato_in.dict()
+    dato_dict = dato_in.model_dump()
     dato_dict['creado_por'] = current_user['id']
     
     dato = repo.crear(dato_in)
@@ -253,7 +259,7 @@ async def crear_dato(
         tabla="datos_importados",
         registro_id=dato.id,
         descripcion=f"Dato creado: {dato.nombre}",
-        datos_nuevos=json.dumps(dato_in.dict()),
+        datos_nuevos=json.dumps(dato_in.model_dump()),
         resultado="SUCCESS"
     )
     

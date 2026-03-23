@@ -288,6 +288,31 @@ class APIClient {
         return this.request('GET', `/qr/agente/${agenteId}/qr`);
     }
 
+    async exportQrAgentesPdf({ idsCsv = '', search = '', layout = 'sheet', soloActivos = true } = {}) {
+        const params = new URLSearchParams();
+        if (idsCsv) params.append('ids_csv', idsCsv);
+        if (search) params.append('search', search);
+        if (layout) params.append('layout', layout);
+        params.append('solo_activos', String(soloActivos));
+
+        const url = `${this.baseURL}/qr/agentes/export/pdf?${params.toString()}`;
+        const headers = {};
+        const token = this.getToken();
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+        const response = await fetch(url, { method: 'GET', headers, cache: 'no-store' });
+        if (!response.ok) {
+            let detail = `HTTP Error: ${response.status}`;
+            try {
+                const payload = await response.json();
+                detail = payload.detail || payload.mensaje || detail;
+            } catch (_) {}
+            throw new Error(detail);
+        }
+        return response.blob();
+    }
+
     async downloadQrAgente(agenteId) {
         const url = `${this.baseURL}/qr/agente/${agenteId}/qr/download`;
         const headers = {};
@@ -313,6 +338,10 @@ class APIClient {
 
     async restoreBackup(filename) {
         return this.request('POST', '/qr/restore', { filename });
+    }
+
+    async getServerVersion() {
+        return this.request('GET', '/system/version');
     }
 
     async getAlertasPago(semana = '', soloPendientes = true) {

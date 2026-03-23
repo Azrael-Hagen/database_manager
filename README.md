@@ -25,6 +25,10 @@ Aplicación para administración de MariaDB con interfaz web moderna, autenticac
 
 ## Inicio rápido (Windows)
 
+Script oficial de arranque del servidor: `start.bat`
+
+Script de conveniencia para usuario final: `start_easy.bat` (abre navegador y delega al script oficial)
+
 ```cmd
 cd C:\ruta\database_manager
 start.bat

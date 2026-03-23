@@ -1011,30 +1011,96 @@ footer {
     transform: translateY(-2px);
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1200px) {
     :root {
-        --navbar-h: 156px;
+        --navbar-h: 168px;
+    }
+
+    .brand-logo {
+        width: 132px;
+        height: 132px;
+    }
+
+    #brandTitle {
+        font-size: 1.58rem;
     }
 
     .sidebar {
-        width: 82px;
-    }
-
-    .sidebar .menu-item {
-        font-size: 0.78rem;
-        padding: 0.8rem 0.6rem;
-        gap: 0.3rem;
-    }
-
-    .menu-icon {
-        width: 14px;
-        height: 14px;
-        flex-basis: 14px;
+        width: 220px;
     }
 
     .main-container {
-        margin-left: 82px;
+        margin-left: 220px;
     }
+}
+
+/* === ESTADO DE AGENTES — Estilos === */
+
+/* Fila destacada en tabla de estado de agentes */
+tr.row-estado-agosto {
+    background-color: #fff9e0;
+    border-left: 4px solid #f5a623;
+}
+tr.row-estado-agosto:hover {
+    background-color: #fff3c0;
+}
+
+/* Badge de alerta en el menú lateral */
+.menu-badge-warning {
+    display: inline-block;
+    background: #f5a623;
+    color: #fff;
+    border-radius: 50%;
+    font-size: 0.65rem;
+    font-weight: 700;
+    min-width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    padding: 0 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+/* Banner de conteo Estado de Agentes */
+.estado-agentes-banner {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: #fff3cd;
+    border: 2px solid #f5a623;
+    border-radius: 10px;
+    padding: 12px 24px;
+    margin-top: 10px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #7d4a00;
+}
+
+.estado-agentes-count {
+    font-size: 2.2rem;
+    font-weight: 900;
+    color: #d97706;
+    line-height: 1;
+}
+
+/* Botón de advertencia */
+.btn-warning {
+    background: #f5a623;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.45rem 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.18s;
+}
+.btn-warning:hover {
+    background: #d97706;
+}
+.btn-warning:disabled {
+    background: #e0c48a;
+    cursor: not-allowed;
 }
 
 @media (max-width: 680px) {
@@ -1075,14 +1141,6 @@ footer {
 
     #serverAccessValue {
         max-width: 44vw;
-    }
-
-    .sidebar {
-        position: static;
-        width: 100%;
-        height: auto;
-        border-right: 0;
-        border-bottom: 1px solid #1d3245;
     }
 
     .main-container {
@@ -1204,3 +1262,169 @@ footer {
 .text-success { color: #27ae60; }
 .text-warning { color: #f39c12; }
 .text-info { color: #3498db; }
+
+/* === SIDEBAR TOGGLE (hamburger) === */
+.sidebar-toggle {
+    display: none;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 1.3rem;
+    padding: 0.3rem 0.6rem;
+    cursor: pointer;
+    line-height: 1;
+    transition: background 0.18s;
+}
+.sidebar-toggle:hover {
+    background: rgba(255,255,255,0.12);
+}
+
+/* === MENU BADGE DANGER === */
+.menu-badge-danger {
+    display: inline-block;
+    background: #e74c3c;
+    color: #fff;
+    border-radius: 50%;
+    font-size: 0.65rem;
+    font-weight: 700;
+    min-width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    padding: 0 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+/* === ALERTAS SISTEMA === */
+.alerta-compose-panel {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 10px;
+    padding: 1.2rem 1.4rem;
+    margin-top: 12px;
+}
+.alerta-compose-panel h3 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    color: #2c3e50;
+    font-size: 1rem;
+}
+.alerta-compose-panel input,
+.alerta-compose-panel textarea,
+.alerta-compose-panel select {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 0.45rem 0.7rem;
+    font-size: 0.92rem;
+    margin-top: 4px;
+    font-family: inherit;
+}
+.alerta-compose-panel textarea {
+    resize: vertical;
+}
+
+/* Tarjetas de alertas */
+.alerta-item {
+    border-left: 4px solid #3498db;
+    background: #fff;
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    margin-bottom: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+    position: relative;
+}
+.alerta-item.nivel-info    { border-left-color: #3498db; background: #eaf4fb; }
+.alerta-item.nivel-warning { border-left-color: #f5a623; background: #fff8e8; }
+.alerta-item.nivel-danger  { border-left-color: #e74c3c; background: #fdf0ef; }
+.alerta-item.leida         { opacity: 0.65; }
+.alerta-item-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+}
+.alerta-item-title {
+    font-weight: 700;
+    font-size: 0.97rem;
+    flex: 1;
+}
+.alerta-item-meta {
+    font-size: 0.76rem;
+    color: #777;
+    margin-bottom: 6px;
+}
+.alerta-item-body {
+    font-size: 0.9rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+.alerta-item-actions {
+    margin-top: 8px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.badge-nivel {
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 12px;
+    text-transform: uppercase;
+}
+.badge-nivel.info    { background: #3498db; color: #fff; }
+.badge-nivel.warning { background: #f5a623; color: #fff; }
+.badge-nivel.danger  { background: #e74c3c; color: #fff; }
+
+/* === MOBILE SIDEBAR (<=768px) === */
+@media (max-width: 768px) {
+    .sidebar-toggle { display: inline-block; }
+
+    .navbar .container {
+        align-items: center;
+        gap: 0.65rem;
+    }
+
+    .user-menu {
+        width: 100%;
+        justify-content: flex-start;
+        gap: 0.6rem;
+    }
+
+    .server-access {
+        max-width: 100%;
+    }
+
+    .sidebar {
+        position: fixed !important;
+        top: var(--navbar-h);
+        left: -260px;
+        width: 220px !important;
+        height: calc(100vh - var(--navbar-h)) !important;
+        z-index: 9999;
+        transition: left 0.25s ease;
+        overflow-y: auto;
+        border-bottom: none !important;
+        padding-top: 1rem;
+    }
+    .sidebar.sidebar-open {
+        left: 0;
+        box-shadow: 4px 0 16px rgba(0,0,0,0.35);
+    }
+    .sidebar-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.45);
+        z-index: 9998;
+    }
+    .main-container {
+        margin-left: 0 !important;
+    }
+}
+.sidebar-overlay {
+    display: none;
+}

@@ -1,6 +1,6 @@
 """Endpoints para gestión de usuarios."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Request
 from sqlalchemy.orm import Session
 from app.database.orm import get_db
@@ -24,6 +24,7 @@ from app.security import (
     require_server_machine_request,
     ROLE_ADMIN,
     ROLE_CAPTURE,
+    require_super_admin_role,
 )
 from app.models import Usuario as UsuarioModel, TempUsuarioHistorial
 import logging
@@ -50,7 +51,7 @@ def _archive_temp_user(
         rol=normalize_role(user.rol, user.es_admin),
         fecha_creacion_usuario=user.fecha_creacion,
         fecha_expiracion=user.temporal_expira_en,
-        fecha_eliminacion=datetime.utcnow(),
+        fecha_eliminacion=datetime.now(timezone.utc),
         motivo=motivo,
         eliminado_por=eliminado_por,
         detalle_json=json.dumps(detalle or {}, ensure_ascii=False),
@@ -59,7 +60,7 @@ def _archive_temp_user(
 
 
 def _purge_expired_temp_users(db: Session, actor_user_id: int | None = None) -> list[dict]:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     repo = RepositorioUsuario(db)
     expired = (
         db.query(UsuarioModel)
@@ -141,7 +142,7 @@ async def crear_usuario_temporal(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El email ya está registrado")
 
     dias_vigencia = min(int(payload.dias_vigencia or TEMP_USER_MAX_DAYS), TEMP_USER_MAX_DAYS)
-    expira_en = datetime.utcnow() + timedelta(days=dias_vigencia)
+    expira_en = datetime.now(timezone.utc) + timedelta(days=dias_vigencia)
     user_data = {
         "username": payload.username,
         "email": payload.email,
@@ -188,7 +189,7 @@ async def renovar_usuario_temporal(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El usuario no es temporal")
 
     dias_vigencia = min(int(payload.dias_vigencia or TEMP_USER_MAX_DAYS), TEMP_USER_MAX_DAYS)
-    nueva_expiracion = datetime.utcnow() + timedelta(days=dias_vigencia)
+    nueva_expiracion = datetime.now(timezone.utc) + timedelta(days=dias_vigencia)
     usuario_actualizado = repo.actualizar_usuario(
         user_id,
         {
@@ -237,7 +238,7 @@ async def solicitar_escalamiento_permisos(
             "solicitud_permiso_estado": "pending",
             "solicitud_permiso_rol": rol_solicitado,
             "solicitud_permiso_motivo": payload.motivo,
-            "solicitud_permiso_fecha": datetime.utcnow(),
+            "solicitud_permiso_fecha": datetime.now(timezone.utc),
         },
     )
 
@@ -385,6 +386,10 @@ async def crear_usuario(
     """Crear nuevo usuario (solo admin)."""
     require_admin_role(current_user, "Solo administradores pueden crear usuarios")
 
+    requested_role = normalize_role(usuario_in.rol, bool(usuario_in.es_admin))
+    if requested_role == "super_admin":
+        require_super_admin_role(current_user, "Solo super_admin puede crear otros super_admin")
+
     repo = RepositorioUsuario(db)
     repo_auditoria = RepositorioAuditoria(db)
 
@@ -456,13 +461,17 @@ async def actualizar_usuario(
         "es_admin": usuario.es_admin,
         "es_activo": usuario.es_activo
     }
-
     # Si no es admin, no puede cambiar permisos
     if not current_user.get('es_admin', False):
         usuario_in.es_admin = usuario.es_admin
         usuario_in.rol = normalize_role(usuario.rol, usuario.es_admin)
 
-    usuario_actualizado = repo.actualizar_usuario(user_id, usuario_in.dict(exclude_unset=True))
+    update_payload = usuario_in.dict(exclude_unset=True)
+    requested_role = normalize_role(update_payload.get("rol"), bool(update_payload.get("es_admin", usuario.es_admin)))
+    if requested_role == "super_admin":
+        require_super_admin_role(current_user, "Solo super_admin puede asignar rol super_admin")
+
+    usuario_actualizado = repo.actualizar_usuario(user_id, update_payload)
 
     # Auditoría
     repo_auditoria.registrar_accion(
@@ -472,7 +481,7 @@ async def actualizar_usuario(
         registro_id=user_id,
         descripcion=f"Usuario actualizado: {usuario.username}",
         datos_anteriores=json.dumps(datos_anteriores),
-        datos_nuevos=json.dumps(usuario_in.dict(exclude_unset=True)),
+        datos_nuevos=json.dumps(update_payload),
         resultado="SUCCESS"
     )
 
@@ -537,7 +546,7 @@ async def resumen_mantenimiento_usuarios(
     """Mostrar candidatos para depuración y reclasificación de usuarios."""
     require_admin_role(current_user, "Solo administradores pueden depurar usuarios")
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     stale_cutoff = now - timedelta(days=60)
     users = db.query(UsuarioModel).order_by(UsuarioModel.fecha_creacion.desc()).all()
 
@@ -638,7 +647,7 @@ async def purgar_usuarios_temporales(
     repo = RepositorioUsuario(db)
     repo_auditoria = RepositorioAuditoria(db)
 
-    stale_cutoff = datetime.utcnow() - timedelta(days=60)
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(days=60)
     users = db.query(UsuarioModel).all()
     purged = []
     for user in users:

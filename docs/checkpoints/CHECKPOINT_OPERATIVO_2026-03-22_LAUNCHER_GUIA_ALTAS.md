@@ -8,8 +8,8 @@
 
 ## Cambios implementados
 - Launcher simplificado:
-  - `start_easy.bat` en raiz para inicio de un clic.
-  - `backend/run_server_easy.bat` para encapsular arranque backend sin configuracion manual.
+  - `start.bat` en raiz como script oficial de arranque del servidor.
+  - `start_easy.bat` en raiz como wrapper UX de un clic que abre la UI y delega al script oficial.
 - Accesos directos de escritorio:
   - `scripts/create-desktop-shortcuts.ps1` crea:
     - `Database Manager - Iniciar.lnk`

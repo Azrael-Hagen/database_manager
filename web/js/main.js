@@ -1,4 +1,4 @@
-// === CONFIGURACIÓN GLOBAL ===
+﻿// === CONFIGURACIÓN GLOBAL ===
 const API_URL = `${window.location.origin}/api`;
 let authToken = null;
 let currentUser = null;
@@ -208,6 +208,10 @@ function canSuperAdmin() {
     return getCurrentRole() === 'super_admin' || currentUser?.es_super_admin === true;
 }
 
+function isMobileViewport() {
+    return window.matchMedia('(max-width: 768px)').matches;
+}
+
 function canAccessSection(section) {
     const role = getCurrentRole();
     if (role === 'super_admin' || role === 'admin') return true;
@@ -240,7 +244,9 @@ function applyRoleBasedUI() {
         usuarios: canAdmin(),
         auditoria: canAdmin(),
         papelera: canSuperAdmin(),
-    };
+        sinLinea: canCapture(),
+                alertas: canAdmin(),
+        };
     Object.entries(menuRules).forEach(([section, visible]) => {
         const item = document.querySelector(`.menu-item[onclick*="'${section}'"]`);
         if (item) {
@@ -500,6 +506,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('scroll', updateScrollTopButton, { passive: true });
+    window.addEventListener('resize', () => {
+        if (!isMobileViewport()) {
+            toggleSidebar(false);
+        }
+    });
     updateScrollTopButton();
     setDefaultWeeklyDates();
     loadBrandingConfig();
@@ -612,7 +623,7 @@ async function validarSesionActiva() {
 
 // === AUTENTICACIÓN ===
 function showLogin() {
-    const ids = ['loginSection', 'registerSection', 'dashboardSection', 'datosSection', 'databasesSection', 'importarSection', 'altasAgentesSection', 'cambiosBajasSection', 'qrSection', 'usuariosSection', 'auditoriaSection'];
+    const ids = ['loginSection', 'registerSection', 'dashboardSection', 'datosSection', 'databasesSection', 'importarSection', 'altasAgentesSection', 'cambiosBajasSection', 'qrSection', 'usuariosSection', 'auditoriaSection', 'sinLineaSection', 'alertasSection'];
     ids.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = id === 'loginSection' ? 'block' : 'none';
@@ -624,6 +635,7 @@ function showLogin() {
     if (nav) nav.style.display = 'none';
     if (sidebar) sidebar.style.display = 'none';
     if (footer) footer.style.display = 'none';
+    toggleSidebar(false);
     stopRealtimeUpdates();
 }
 
@@ -638,7 +650,9 @@ function showApp() {
     document.querySelector('.navbar').style.display = 'flex';
     document.querySelector('.sidebar').style.display = 'block';
     document.querySelector('footer').style.display = 'block';
+    toggleSidebar(false);
     applyRoleBasedUI();
+    loadServerVersionInfo();
     cargarAccesoServidorLocal();
     cargarPermisosBrandingAdmin();
     syncRealtimeControls();
@@ -995,6 +1009,10 @@ function loadSection(section, eventRef = null) {
     document.getElementById('qrSection').style.display = 'none';
     document.getElementById('usuariosSection').style.display = 'none';
     document.getElementById('auditoriaSection').style.display = 'none';
+    const _sinLineaEl = document.getElementById('sinLineaSection');
+    if (_sinLineaEl) _sinLineaEl.style.display = 'none';
+    const _alertasEl = document.getElementById('alertasSection');
+    if (_alertasEl) _alertasEl.style.display = 'none';
 
     // Remover clase active
     document.querySelectorAll('.menu-item').forEach(item => item.classList.remove('active'));
@@ -1049,6 +1067,14 @@ function loadSection(section, eventRef = null) {
             document.getElementById('auditoriaSection').style.display = 'block';
             cargarAuditoria();
             break;
+        case 'sinLinea':
+            document.getElementById('sinLineaSection').style.display = 'block';
+            cargarAgentesSinLinea();
+            break;
+        case 'alertas':
+            document.getElementById('alertasSection').style.display = 'block';
+            cargarAlertas();
+            break;
     }
 
     if (eventRef?.target) {
@@ -1058,6 +1084,10 @@ function loadSection(section, eventRef = null) {
         if (active) {
             active.classList.add('active');
         }
+    }
+
+    if (isMobileViewport()) {
+        toggleSidebar(false);
     }
 }
 
@@ -1143,6 +1173,18 @@ async function loadDashboardData(showErrors = true) {
         document.getElementById('totalInactivos').textContent = totals.registros_inactivos ?? 0;
         document.getElementById('totalQrPendientes').textContent = totals.qr_pendientes ?? 0;
         document.getElementById('totalAlertasPago').textContent = totals.alertas_pago_pendientes ?? 0;
+
+        // Badge del menú Sin Línea
+        const sinLineaMenuBadge = document.getElementById('sinLineaMenuBadge');
+        const sinLineaMenuLi = document.getElementById('menuSinLinea');
+        const sinLineaTotal = totals.sin_linea ?? 0;
+        if (sinLineaMenuBadge) {
+            sinLineaMenuBadge.style.display = sinLineaTotal > 0 ? 'inline-block' : 'none';
+            sinLineaMenuBadge.textContent = sinLineaTotal > 0 ? sinLineaTotal : '!';
+        }
+        if (sinLineaMenuLi) {
+            sinLineaMenuLi.style.fontWeight = sinLineaTotal > 0 ? 'bold' : '';
+        }
 
         const alertSummary = document.getElementById('alertSummary');
         if (alertSummary) {
@@ -1912,6 +1954,43 @@ async function descargarQrAgente(agenteId) {
     } catch (error) {
         console.error('Error:', error);
         alert('Error descargando QR: ' + error.message);
+    }
+}
+
+async function exportarQRLote() {
+    const result = document.getElementById('qrExportResult');
+    const idsCsv = document.getElementById('qrExportIds')?.value?.trim() || '';
+    const search = document.getElementById('qrExportSearch')?.value?.trim() || '';
+    const layout = document.getElementById('qrExportLayout')?.value || 'sheet';
+
+    if (result) result.innerHTML = '<p class="hint">Generando PDF...</p>';
+    try {
+        const blob = await apiClient.exportQrAgentesPdf({ idsCsv, search, layout, soloActivos: true });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `agentes_qr_${layout}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        if (result) result.innerHTML = '<p style="color:green;">PDF generado correctamente.</p>';
+    } catch (error) {
+        console.error('Error:', error);
+        if (result) result.innerHTML = `<p style="color:red;">Error exportando PDF: ${escapeHtml(error.message)}</p>`;
+    }
+}
+
+async function loadServerVersionInfo() {
+    const el = document.getElementById('serverVersionInfo');
+    if (!el || !authToken) return;
+    el.textContent = 'Consultando versión del servidor...';
+    try {
+        const payload = await apiClient.getServerVersion();
+        const current = payload.current || {};
+        el.textContent = `Versión ${current.version_string || current.version || '-'} · revisión ${current.revision || '-'} · ${current.codename || 'Producción'}`;
+    } catch (_error) {
+        el.textContent = 'Versión del servidor no visible fuera del servidor.';
     }
 }
 
@@ -3259,12 +3338,14 @@ async function cargarVistaAgentesPago() {
         }
 
         let html = '<table class="data-table"><thead><tr>';
-        html += '<th>ID</th><th>Agente</th><th>Extensión</th><th>Semana</th><th>Estado Pago</th><th>Monto</th><th>Fecha Pago</th>';
+        html += '<th>ID</th><th>Agente</th><th>Estado Línea</th><th>Extensión</th><th>Semana</th><th>Estado Pago</th><th>Monto</th><th>Fecha Pago</th>';
         html += '</tr></thead><tbody>';
         rows.forEach(row => {
+            const lineaEstado = (row.linea_estado || (row.extension_numero ? 'ASIGNADA' : 'SIN_LINEA')).replace('_', ' ');
             html += `<tr>
                 <td>${row.agente_id}</td>
                 <td>${row.nombre || ''}</td>
+                <td>${lineaEstado}</td>
                 <td>${row.extension_numero || '-'}</td>
                 <td>${row.semana_inicio || '-'}</td>
                 <td><span class="payment-pill ${row.pagado ? 'paid' : 'unpaid'}">${row.estado_pago || (row.pagado ? 'PAGADO' : 'DEBE')}</span></td>
@@ -3469,10 +3550,10 @@ async function generarQRVerificacion(e) {
         const result = await apiClient.getQrAgente(agenteId);
         const data = result.data || {};
         if (!data.public_url) {
-            throw new Error('No se pudo generar URL de verificación segura');
+            throw new Error('No se pudo generar URL de verificación estática');
         }
         renderSimpleQR(data.public_url);
-        alert(`QR seguro generado para línea ${data.linea_activa?.numero || '-'}; queda ligado al agente y su asignación actual.`);
+        alert(`QR estático generado para el agente ${agenteId}. El servidor validará la línea y el estado actual al escanear.`);
     } catch (error) {
         console.error('Error:', error);
         alert('Error generando QR de verificación: ' + error.message);
@@ -4090,6 +4171,95 @@ async function importarABD(e) {
     }
 }
 
+// === ESTADO DE AGENTES ===
+async function cargarEstadoAgentes() {
+    const search = (document.getElementById('estadoAgentesSearch')?.value || '').trim();
+    const container = document.getElementById('estadoAgentesContainer');
+    const result = document.getElementById('estadoAgentesResult');
+    if (!container) return;
+    container.innerHTML = '<p class="hint">Cargando...</p>';
+    if (result) result.innerHTML = '';
+    try {
+        const url = `${API_URL}/qr/agentes/sin-linea${search ? '?search=' + encodeURIComponent(search) : ''}`;
+        const data = await fetchJson(url, { headers: { 'Authorization': `Bearer ${authToken}` } });
+
+        const countEl = document.getElementById('sinLineaCount');
+        if (countEl) countEl.textContent = data.total ?? 0;
+
+        if (!data.data || !data.data.length) {
+            container.innerHTML = '<p class="hint" style="color:green;">✓ Todos los agentes activos tienen línea asignada.</p>';
+            return;
+        }
+
+        let html = `<table class="data-table">
+            <thead><tr>
+                <th>ID</th><th>Nombre</th><th>Alias</th><th>Teléfono</th><th>QR</th><th>Alta</th><th>Acciones</th>
+            </tr></thead><tbody>`;
+        data.data.forEach(ag => {
+            const alias = ag.alias || ag.datos_adicionales?.alias || '—';
+            const telefono = ag.telefono || '—';
+            const tieneQr = ag.tiene_qr ? '✓ Sí' : '✗ No';
+            const qrClass = ag.tiene_qr ? 'color:green;' : 'color:#b37400;';
+            const alta = ag.fecha_creacion ? new Date(ag.fecha_creacion).toLocaleDateString() : '—';
+            html += `<tr class="row-sin-linea">
+                <td>${ag.id}</td>
+                <td>${escapeHtml(ag.nombre || '—')}</td>
+                <td>${escapeHtml(String(alias))}</td>
+                <td>${escapeHtml(String(telefono))}</td>
+                <td style="${qrClass}">${tieneQr}</td>
+                <td>${escapeHtml(alta)}</td>
+                <td>
+                    <button type="button" class="btn btn-small" onclick="generarQRAgenteIndividual(${ag.id})">&#9889; QR</button>
+                    <button type="button" class="btn btn-small btn-secondary" onclick="loadSection('altasAgentes', event)">Asignar Línea</button>
+                </td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<p style="color:red;">Error al cargar agentes sin línea: ${escapeHtml(err.message)}</p>`;
+    }
+}
+
+async function generarQRMasivo() {
+    const btn = document.getElementById('btnGenerarQRMasivo');
+    const result = document.getElementById('sinLineaResult');
+    if (!confirm('¿Generar QR automático para todos los agentes que aún no lo tienen?')) return;
+    if (btn) btn.disabled = true;
+    if (result) result.innerHTML = '<p class="hint">Generando QRs, espera...</p>';
+    try {
+        const data = await fetchJson(`${API_URL}/qr/agentes/generar-qr-masivo`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${authToken}`, 'Content-Type': 'application/json' }
+        });
+        if (result) {
+            result.innerHTML = `<p style="color:green;">✓ QRs generados: <strong>${data.generados ?? 0}</strong> de ${data.total_sin_qr ?? 0} agentes sin QR.${data.errores?.length ? ` (${data.errores.length} errores)` : ''}</p>`;
+        }
+        cargarAgentesSinLinea();
+    } catch (err) {
+        if (result) result.innerHTML = `<p style="color:red;">Error: ${escapeHtml(err.message)}</p>`;
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function generarQRAgenteIndividual(agenteId) {
+    const result = document.getElementById('sinLineaResult');
+    if (result) result.innerHTML = '<p class="hint">Generando QR...</p>';
+    try {
+        const data = await fetchJson(`${API_URL}/qr/agente/${agenteId}/qr`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        if (result) {
+            result.innerHTML = `<p style="color:green;">✓ QR generado para agente ${agenteId}.</p>`;
+        }
+        cargarAgentesSinLinea();
+    } catch (err) {
+        if (result) result.innerHTML = `<p style="color:red;">Error al generar QR: ${escapeHtml(err.message)}</p>`;
+    }
+}
+
 // === GESTIÓN DE USUARIOS ===
 async function cargarUsuarios() {
     try {
@@ -4505,5 +4675,120 @@ async function eliminarUsuario(userId, hardDelete = false) {
     } catch (error) {
         console.error('Error:', error);
         alert('Error al eliminar usuario: ' + error.message);
+    }
+}
+
+
+// === SIDEBAR TOGGLE (movil) ===
+function toggleSidebar(forceOpen = null) {
+    const sidebar = document.getElementById('appSidebar') || document.querySelector('.sidebar');
+    const overlay = document.getElementById('sidebarOverlay') || document.querySelector('.sidebar-overlay');
+    if (!sidebar) return;
+    const isOpen = forceOpen === null ? !sidebar.classList.contains('sidebar-open') : Boolean(forceOpen);
+    sidebar.classList.toggle('sidebar-open', isOpen);
+    if (overlay) {
+        overlay.style.display = isOpen ? 'block' : 'none';
+    }
+    document.body.style.overflow = isOpen && isMobileViewport() ? 'hidden' : '';
+}
+
+// === ALERTAS DEL SISTEMA ===
+async function cargarAlertas() {
+    const container = document.getElementById('alertasContainer');
+    const envioPanel = document.getElementById('alertasEnvioPanel');
+    const noEnvioHint = document.getElementById('alertasNoEnvioHint');
+    if (!container) return;
+    container.innerHTML = '<p class="hint">Cargando alertas...</p>';
+
+    const isSuperAdmin = canSuperAdmin();
+    if (envioPanel) envioPanel.style.display = isSuperAdmin ? 'block' : 'none';
+    if (noEnvioHint) noEnvioHint.style.display = isSuperAdmin ? 'none' : 'block';
+
+    try {
+        const data = await fetchJson(`${API_URL}/alertas/?solo_activas=false`, {
+            headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        const alertas = Array.isArray(data) ? data : (data.alertas || []);
+
+        if (!alertas.length) {
+            container.innerHTML = '<p class="hint">No hay alertas activas.</p>';
+            return;
+        }
+
+        container.innerHTML = alertas.map(a => {
+            const nivelLabel = { info: 'Info', warning: 'Advertencia', danger: 'Urgente' }[a.nivel] || a.nivel;
+            const leida = a.leida ? 'leida' : '';
+            const fecha = a.fecha_envio ? new Date(a.fecha_envio).toLocaleString() : '';
+            return `
+                <div class="alerta-item nivel-${a.nivel} ${leida}" id="alerta-${a.id}">
+                    <div class="alerta-item-header">
+                        <span class="alerta-item-title">${a.titulo}</span>
+                        <span class="badge-nivel ${a.nivel}">${nivelLabel}</span>
+                    </div>
+                    <div class="alerta-item-meta">Enviado por: ${a.enviado_por_username || ''} &middot; ${fecha}</div>
+                    <div class="alerta-item-body">${a.mensaje}</div>
+                    <div class="alerta-item-actions">
+                        ${!a.leida ? '<button class="btn btn-small btn-secondary" onclick="marcarAlertaLeida(' + a.id + ')">&#10003; Marcar le\u00edda</button>' : '<span style="font-size:0.8rem;color:#888;">&#10003; Le\u00edda</span>'}
+                        ${isSuperAdmin ? '<button class="btn btn-small" style="background:#e74c3c;color:#fff;" onclick="desactivarAlerta(' + a.id + ')">&#128465; Desactivar</button>' : ''}
+                    </div>
+                </div>`;
+        }).join('');
+
+    } catch (error) {
+        container.innerHTML = `<p style="color:red;">Error al cargar alertas: ${error.message}</p>`;
+    }
+}
+
+async function enviarAlerta(event) {
+    event.preventDefault();
+    const titulo = document.getElementById('alertaTitulo')?.value?.trim();
+    const nivel = document.getElementById('alertaNivel')?.value || 'warning';
+    const mensaje = document.getElementById('alertaMensaje')?.value?.trim();
+    const result = document.getElementById('alertaEnvioResult');
+
+    if (!titulo || !mensaje) {
+        if (result) result.innerHTML = '<p style="color:orange;">T\u00edtulo y mensaje son obligatorios.</p>';
+        return;
+    }
+    if (result) result.innerHTML = '<p class="hint">Enviando...</p>';
+
+    try {
+        await fetchJson(`${API_URL}/alertas/enviar-json`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ titulo, mensaje, nivel })
+        });
+        if (result) result.innerHTML = '<p style="color:green;">&#10003; Alerta enviada correctamente.</p>';
+        document.getElementById('alertaTitulo').value = '';
+        document.getElementById('alertaMensaje').value = '';
+        document.getElementById('alertaNivel').value = 'warning';
+        setTimeout(() => cargarAlertas(), 500);
+    } catch (error) {
+        if (result) result.innerHTML = `<p style="color:red;">Error: ${error.message}</p>`;
+    }
+}
+
+async function marcarAlertaLeida(id) {
+    try {
+        await fetchJson(`${API_URL}/alertas/${id}/leer`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        cargarAlertas();
+    } catch (error) {
+        alert('Error al marcar alerta: ' + error.message);
+    }
+}
+
+async function desactivarAlerta(id) {
+    if (!confirm('\u00bfDesactivar esta alerta? Dejar\u00e1 de ser visible para los dem\u00e1s.')) return;
+    try {
+        await fetchJson(`${API_URL}/alertas/${id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        cargarAlertas();
+    } catch (error) {
+        alert('Error al desactivar alerta: ' + error.message);
     }
 }

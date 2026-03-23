@@ -18,6 +18,8 @@
                     <small id="brandSubtitle">database_manager</small>
                 </div>
             </div>
+            <!-- Hamburger button for mobile -->
+            <button type="button" id="sidebarToggle" class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Menú">&#9776;</button>
             <div class="user-menu" id="userMenu">
                 <div class="server-access" id="serverAccessWrap" title="URL local para compartir en red">
                     <span class="server-access-label">LAN</span>
@@ -37,7 +39,7 @@
     </nav>
 
     <!-- Sidebar -->
-    <div class="sidebar">
+    <div class="sidebar" id="appSidebar">
         <ul class="menu">
             <li><a href="#" onclick="loadSection('dashboard', event)" class="menu-item active"><img class="menu-icon" src="sources/iconfinder-home-4341294_120570.ico" alt="">Dashboard</a></li>
             <li><a href="#" onclick="loadSection('datos', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-image-4341296_120549.ico" alt="">Datos</a></li>
@@ -49,8 +51,11 @@
             <li><a href="#" onclick="loadSection('qr', event)" class="menu-item"><img class="menu-icon" src="sources/map_98439.ico" alt="">Generar QR</a></li>
             <li><a href="#" onclick="loadSection('usuarios', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-key-4341299_120569.ico" alt="">Usuarios</a></li>
             <li><a href="#" onclick="loadSection('auditoria', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-mail-4341305_120538.ico" alt="">Auditoría</a></li>
+            <li id="menuEstadoAgentes"><a href="#" onclick="loadSection('estadoAgentes', event)" class="menu-item" id="menuEstadoAgentesLink"><img class="menu-icon" src="sources/iconfinder-settings-4341324_120534.ico" alt="">Estado de Agentes <span id="estadoAgentesMenuBadge" class="menu-badge-warning" style="display:none;">!</span></a></li>
+            <li id="menuAlertas"><a href="#" onclick="loadSection('alertas', event)" class="menu-item" id="menuAlertasLink"><img class="menu-icon" src="sources/iconfinder-mail-4341305_120538.ico" alt="">Alertas <span id="alertasMenuBadge" class="menu-badge-danger" style="display:none;"></span></a></li>
         </ul>
     </div>
+    <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar(false)" aria-hidden="true"></div>
 
     <!-- Contenido Principal -->
     <main class="main-container">
@@ -632,6 +637,21 @@
                 </div>
                 <div id="recibosHistoricosContainer" class="table-responsive" style="margin-top: 12px;"></div>
 
+                <h3 style="margin-top: 22px;">Exportación de QR por Lotes</h3>
+                <div class="card" style="margin-top: 10px; padding: 14px; border: 1px solid #d8e6f4; border-radius: 12px; background: #f9fcff; color: #173049;">
+                    <p class="hint">Los QRs de agentes son estáticos por agente. El servidor resuelve en tiempo real si el agente tiene línea activa, si sigue vigente y su estado actual al escanear.</p>
+                    <div class="search-bar" style="margin-top: 8px;">
+                        <input type="text" id="qrExportIds" placeholder="IDs separados por coma. Vacío = todos los activos">
+                        <input type="text" id="qrExportSearch" placeholder="Filtrar por nombre o teléfono (opcional)">
+                        <select id="qrExportLayout">
+                            <option value="sheet">Hoja carta</option>
+                            <option value="labels">Etiquetas</option>
+                        </select>
+                        <button type="button" class="btn" onclick="exportarQRLote()">Exportar PDF</button>
+                    </div>
+                    <div id="qrExportResult" style="margin-top: 10px;"></div>
+                </div>
+
                 <h3 style="margin-top: 22px;">QR Manual</h3>
                 <form onsubmit="generarQR(event)">
                     <div class="form-group">
@@ -692,6 +712,68 @@
                     <button onclick="cargarAuditoria()" class="btn btn-secondary">Actualizar</button>
                 </div>
                 <div id="auditoriaContainer" class="table-responsive"></div>
+            </section>
+
+            <!-- Sección Estado de Agentes -->
+            <section id="estadoAgentesSection" class="panel" style="display: none;">
+                <h1>&#128288; Estado de Agentes</h1>
+                <p class="hint">Vista del estado operativo de todos los agentes activos. Identifica rápidamente quién tiene línea asignada, quién no, y gestiona sus QRs. Los agentes sin línea asignada deben recibirla desde <em>Altas de Agentes</em> antes de ir a producción.</p>
+
+                <div class="estado-agentes-banner" id="estadoAgentesBanner">
+                    <span id="estadoAgentesCount" class="estado-agentes-count">0</span>
+                    agentes sin línea asignada
+                </div>
+
+                <div class="search-bar" style="margin-top:14px; flex-wrap: wrap; gap: 8px;">
+                    <input type="text" id="estadoAgentesSearch" placeholder="Buscar por nombre o teléfono" oninput="cargarEstadoAgentes()" style="flex:1; min-width:200px;">
+                    <button type="button" class="btn" onclick="cargarEstadoAgentes()">&#128269; Buscar / Refrescar</button>
+                    <button type="button" class="btn btn-warning" id="btnGenerarQRMasivo" onclick="generarQRMasivo()">&#9889; Generar QR para todos sin QR</button>
+                    <button type="button" class="btn btn-secondary" onclick="loadSection('altasAgentes', event)">&#10133; Asignar Líneas</button>
+                </div>
+
+                <div id="estadoAgentesResult" style="margin-top:8px;"></div>
+                <div id="estadoAgentesContainer" class="table-responsive" style="margin-top:14px;"></div>
+            </section>
+
+            <!-- Sección Alertas Sistema -->
+            <section id="alertasSection" class="panel" style="display: none;">
+                <h1>&#128276; Alertas del Sistema</h1>
+                <p class="hint">Mensajes enviados por el administrador principal a todos los operadores. Solo el super administrador desde el servidor puede enviar alertas.</p>
+
+                <!-- Panel envío (solo super admin desde servidor) -->
+                <div id="alertasEnvioPanel" class="alerta-compose-panel" style="display:none;">
+                    <h3>Enviar Nueva Alerta</h3>
+                    <form onsubmit="enviarAlerta(event)">
+                        <div class="form-group">
+                            <label>Título:</label>
+                            <input type="text" id="alertaTitulo" placeholder="Asunto de la alerta" required maxlength="255" autocomplete="off">
+                        </div>
+                        <div class="form-group">
+                            <label>Nivel:</label>
+                            <select id="alertaNivel">
+                                <option value="info">Informativo</option>
+                                <option value="warning" selected>Advertencia</option>
+                                <option value="danger">Urgente</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Mensaje:</label>
+                            <textarea id="alertaMensaje" rows="4" placeholder="Escribe el mensaje de la alerta..." required></textarea>
+                        </div>
+                        <button type="submit" class="btn">&#128276; Enviar Alerta</button>
+                    </form>
+                    <div id="alertaEnvioResult" style="margin-top:8px;"></div>
+                </div>
+
+                <div id="alertasNoEnvioHint" class="hint" style="display:none; margin-top:8px; padding:8px; background:#fff8e8; border:1px solid #f5d88a; border-radius:8px;">
+                    &#128274; El envío de alertas está disponible solo para el super administrador desde el servidor principal.
+                </div>
+
+                <div style="margin-top:14px;">
+                    <button type="button" class="btn btn-secondary" onclick="cargarAlertas()">&#128260; Actualizar</button>
+                </div>
+
+                <div id="alertasContainer" style="margin-top:14px;"></div>
             </section>
 
             <!-- Modal Crear Usuario -->
@@ -781,7 +863,7 @@
     </main>
 
     <footer>
-        <p>&copy; 2026 Database Manager. Versión 1.0.0 - PRODUCCIÓN</p>
+        <p>&copy; 2026 Database Manager. <span id="serverVersionInfo">Versión del servidor no visible fuera del servidor.</span></p>
     </footer>
 
     <button type="button" id="scrollTopBtn" class="scroll-top-btn" onclick="scrollToTop()" aria-label="Volver arriba" title="Volver arriba">

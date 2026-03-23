@@ -12,7 +12,7 @@ import secrets
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -38,6 +38,7 @@ from app.utils.backups import (
     restore_backup,
     set_backup_dir,
 )
+from app.utils.qr_print import build_agent_qr_pdf
 from app.utils.pagos import (
     generar_alertas_miercoles_pendientes,
     get_cuota_semanal,
@@ -129,6 +130,11 @@ def _active_assignment_for_agent(db: Session, agente_id: int) -> AgenteLineaAsig
         AgenteLineaAsignacion.agente_id == agente_id,
         AgenteLineaAsignacion.es_activa.is_(True),
     ).order_by(AgenteLineaAsignacion.fecha_asignacion.desc()).first()
+
+
+def _build_static_agent_public_url(agente: DatoImportado) -> str:
+    public_base_url = config.get_public_base_url()
+    return f"{public_base_url}/api/qr/public/verify/{agente.uuid}"
 
 
 def _validate_secure_qr_token(db: Session, token: str, *, require_current: bool = True) -> tuple[DatoImportado, LineaTelefonica | None, dict]:
@@ -547,24 +553,118 @@ def _sync_legacy_agente_row(db: Session, *, agente_id: int, nombre: str, datos_a
     )
 
 
+def _legacy_agent_display_name(raw_name: str | None, raw_alias: str | None, agente_id: int) -> str:
+    nombre = str(raw_name or "").strip()
+    alias = str(raw_alias or "").strip()
+    if nombre:
+        return nombre
+    if alias:
+        return alias
+    return f"Agente {int(agente_id)}"
+
+
+def _sync_agents_from_legacy_table(db: Session, *, activate_existing: bool = True, limit: int = 2000) -> dict[str, int]:
+    """Sincronizar agentes legacy (registro_agentes.agentes) hacia datos_importados sin asignar línea."""
+    db_name = _safe_sql_identifier(LEGACY_AGENTES_DB, "registro_agentes")
+    table_name = _safe_sql_identifier(LEGACY_AGENTES_TABLE, "agentes")
+    max_rows = max(1, min(int(limit or 2000), 20000))
+
+    rows = db.execute(
+        text(
+            f"""
+            SELECT
+                `ID` AS agente_id,
+                `Nombre` AS nombre,
+                `alias` AS alias,
+                `Ubicacion` AS ubicacion,
+                `FP` AS fp,
+                `FC` AS fc,
+                `Grupo` AS grupo
+            FROM `{db_name}`.`{table_name}`
+            WHERE `ID` IS NOT NULL
+            ORDER BY `ID` ASC
+            LIMIT :max_rows
+            """
+        ),
+        {"max_rows": max_rows},
+    ).mappings().all()
+
+    created = 0
+    updated = 0
+    reactivated = 0
+    skipped = 0
+
+    for row in rows:
+        agente_id = int(row.get("agente_id") or 0)
+        if agente_id <= 0:
+            skipped += 1
+            continue
+
+        extras = {
+            "alias": _legacy_text(row.get("alias"), 50) or None,
+            "ubicacion": _legacy_text(row.get("ubicacion"), 20) or None,
+            "fp": _legacy_text(row.get("fp"), 20) or None,
+            "fc": _legacy_text(row.get("fc"), 20) or None,
+            "grupo": _legacy_text(row.get("grupo"), 20) or None,
+        }
+        extras = {k: v for k, v in extras.items() if v not in (None, "")}
+
+        nombre_final = _legacy_agent_display_name(row.get("nombre"), row.get("alias"), agente_id)
+        existing = db.query(DatoImportado).filter(DatoImportado.id == agente_id).first()
+
+        if not existing:
+            nuevo = DatoImportado(
+                id=agente_id,
+                nombre=nombre_final,
+                telefono=None,
+                email=None,
+                empresa=None,
+                ciudad=None,
+                pais=None,
+                datos_adicionales=json.dumps(extras, ensure_ascii=False) if extras else None,
+                estatus_codigo="ACTIVO",
+                es_activo=True,
+            )
+            db.add(nuevo)
+            created += 1
+            continue
+
+        changed = False
+        if activate_existing and not bool(existing.es_activo):
+            existing.es_activo = True
+            reactivated += 1
+            changed = True
+
+        if not str(existing.nombre or "").strip():
+            existing.nombre = nombre_final
+            changed = True
+
+        current_extras = _safe_json_object(existing.datos_adicionales)
+        merged = dict(current_extras)
+        for key, value in extras.items():
+            if key not in merged or not str(merged.get(key) or "").strip():
+                merged[key] = value
+                changed = True
+        if changed:
+            existing.datos_adicionales = json.dumps(merged, ensure_ascii=False) if merged else None
+            updated += 1
+
+    db.flush()
+    return {
+        "legacy_rows": len(rows),
+        "created": created,
+        "updated": updated,
+        "reactivated": reactivated,
+        "skipped": skipped,
+        "limit": max_rows,
+    }
+
+
 def _refresh_agent_qr_for_state(db: Session, agente: DatoImportado, request: Request | None = None) -> dict:
-    """Generar QR por agente: seguro si tiene linea activa, fallback por UUID si no."""
+    """Generar QR estatico por agente y guardar snapshot operativo actual."""
     active_assignment = _active_assignment_for_agent(db, agente.id)
     linea = active_assignment.linea if active_assignment and active_assignment.linea and active_assignment.linea.es_activa else None
-    public_base_url = config.get_public_base_url(request)
-
-    secure_token = None
-    qr_mode = "uuid_fallback"
-    if linea:
-        secure_token = _build_secure_qr_token(
-            agente_id=agente.id,
-            linea_id=linea.id,
-            linea_numero=linea.numero,
-        )
-        public_url = f"{public_base_url}/api/qr/public/verify-secure/{secure_token}"
-        qr_mode = "secure_line_bound"
-    else:
-        public_url = f"{public_base_url}/api/qr/public/verify/{agente.uuid}"
+    public_url = _build_static_agent_public_url(agente)
 
     lineas_agente = _agent_active_lines(db, agente.id)
     payload = {
@@ -573,21 +673,23 @@ def _refresh_agent_qr_for_state(db: Session, agente: DatoImportado, request: Req
         "nombre": agente.nombre,
         "telefono": agente.telefono,
         "numero_voip": _extract_voip(agente),
-        "tiene_asignacion": _has_assignment(agente) or bool(lineas_agente),
+        "tiene_asignacion": bool(lineas_agente),
         "lineas": lineas_agente,
         "linea_activa": {
             "linea_id": linea.id if linea else None,
             "numero": linea.numero if linea else None,
             "tipo": linea.tipo if linea else None,
         } if linea else None,
-        "qr_mode": qr_mode,
-        "es_qr_seguro": bool(linea),
-        "secure_token": secure_token,
+        "linea_estado": "asignada" if linea else "sin_linea",
+        "qr_mode": "static_uuid",
+        "es_qr_estatico": True,
+        "es_qr_seguro": False,
+        "secure_token": None,
         "public_url": public_url,
     }
 
     generator = QRGenerator()
-    filename = f"agente_{agente.id}_{'linea_'+str(linea.id) if linea else 'sin_linea'}_{agente.uuid}.png"
+    filename = f"agente_{agente.id}_{agente.uuid}.png"
     filepath = generator.generate_qr_from_text(public_url, filename)
 
     agente.qr_filename = filename
@@ -599,7 +701,7 @@ def _refresh_agent_qr_for_state(db: Session, agente: DatoImportado, request: Req
 
 
 def _has_assignment(dato: DatoImportado) -> bool:
-    return bool((dato.telefono or '').strip() or (_extract_voip(dato) or '').strip())
+    return False
 
 
 def _active_line_assignments_map(db: Session) -> dict[int, AgenteLineaAsignacion]:
@@ -1022,7 +1124,7 @@ async def verificar_agente(
     ).first()
     resumen_pago = resumen_cobranza_agente(db, agente, semana_ref)
     lineas_agente = _agent_active_lines(db, agente.id)
-    tiene_asignacion = _has_assignment(agente) or bool(lineas_agente)
+    tiene_asignacion = bool(lineas_agente)
 
     return {
         "status": "success",
@@ -1146,6 +1248,30 @@ async def listar_agentes_qr(
             }
             for a in agentes
         ],
+    }
+
+
+@router.post("/agentes/sync-legacy")
+async def sincronizar_agentes_legacy(
+    payload: dict | None = None,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Sincronizar agentes de registro_agentes.agentes hacia datos_importados sin asignar línea."""
+    require_capture_role(current_user)
+    activate_existing = bool((payload or {}).get("activate_existing", True))
+    limit = int((payload or {}).get("limit", 2000) or 2000)
+
+    result = _sync_agents_from_legacy_table(
+        db,
+        activate_existing=activate_existing,
+        limit=limit,
+    )
+    db.commit()
+    return {
+        "status": "success",
+        "message": "Sincronizacion legacy completada",
+        "data": result,
     }
 
 
@@ -1658,21 +1784,78 @@ async def listar_agentes_extension_estado_pago(
     db: Session = Depends(get_db),
 ):
     """Vista operativa de agentes con linea activa y estado de pago."""
+    activos_operativos = int(
+        db.query(DatoImportado)
+        .filter(DatoImportado.es_activo.is_(True))
+        .count()
+    )
+    if activos_operativos == 0:
+        try:
+            _sync_agents_from_legacy_table(db, activate_existing=True, limit=5000)
+            db.commit()
+        except Exception:
+            db.rollback()
+
     if semana is None:
         params = {}
         where_sql = ""
         if search:
             where_sql = " WHERE nombre LIKE :term OR extension_numero LIKE :term "
             params["term"] = f"%{search.strip()}%"
-        rows = db.execute(
-            text(
-                "SELECT * FROM vw_agentes_extensiones_pago_actual"
-                f"{where_sql}"
-                " ORDER BY nombre ASC"
-            ),
-            params,
-        ).mappings().all()
         week_label = monday_of_week(date.today()).isoformat()
+        try:
+            rows = db.execute(
+                text(
+                    "SELECT * FROM vw_agentes_extensiones_pago_actual"
+                    f"{where_sql}"
+                    " ORDER BY nombre ASC"
+                ),
+                params,
+            ).mappings().all()
+        except Exception:
+            fallback_params = {"week_ref": monday_of_week(date.today())}
+            fallback_where_parts = []
+            if search:
+                fallback_where_parts.append("(d.nombre LIKE :term OR l.numero LIKE :term)")
+                fallback_params["term"] = f"%{search.strip()}%"
+            fallback_where_clause = f" AND {' AND '.join(fallback_where_parts)}" if fallback_where_parts else ""
+            rows = db.execute(
+                text(
+                    """
+                    SELECT
+                        d.id AS agente_id,
+                        d.uuid,
+                        d.nombre,
+                        COALESCE(d.es_activo, 1) AS es_activo,
+                        l.id AS linea_id,
+                        l.numero AS extension_numero,
+                        l.tipo AS extension_tipo,
+                        CASE
+                            WHEN ala.id IS NULL OR l.id IS NULL THEN 'SIN_LINEA'
+                            ELSE 'ASIGNADA'
+                        END AS linea_estado,
+                        p.semana_inicio,
+                        COALESCE(p.pagado, 0) AS pagado_semana,
+                        COALESCE(p.monto, 0) AS monto_semana,
+                        p.fecha_pago,
+                        CASE
+                            WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'DEBE'
+                            ELSE 'PAGADO'
+                        END AS estado_pago
+                    FROM datos_importados d
+                    LEFT JOIN agente_linea_asignaciones ala
+                        ON ala.agente_id = d.id AND ala.es_activa = 1
+                    LEFT JOIN lineas_telefonicas l
+                        ON l.id = ala.linea_id AND COALESCE(l.es_activa, 1) = 1
+                    LEFT JOIN pagos_semanales p
+                        ON p.agente_id = d.id AND p.semana_inicio = :week_ref
+                    WHERE COALESCE(d.es_activo, 1) = 1
+                    """
+                    + fallback_where_clause
+                    + " ORDER BY d.nombre ASC"
+                ),
+                fallback_params,
+            ).mappings().all()
     else:
         semana_ref = monday_of_week(semana)
         params = {"week_ref": semana_ref}
@@ -1692,6 +1875,10 @@ async def listar_agentes_extension_estado_pago(
                     l.id AS linea_id,
                     l.numero AS extension_numero,
                     l.tipo AS extension_tipo,
+                    CASE
+                        WHEN ala.id IS NULL OR l.id IS NULL THEN 'SIN_LINEA'
+                        ELSE 'ASIGNADA'
+                    END AS linea_estado,
                     p.semana_inicio,
                     COALESCE(p.pagado, 0) AS pagado_semana,
                     COALESCE(p.monto, 0) AS monto_semana,
@@ -1725,6 +1912,7 @@ async def listar_agentes_extension_estado_pago(
             "linea_id": row.get("linea_id"),
             "extension_numero": row.get("extension_numero"),
             "extension_tipo": row.get("extension_tipo"),
+            "linea_estado": row.get("linea_estado") or ("ASIGNADA" if row.get("linea_id") else "SIN_LINEA"),
             "semana_inicio": row.get("semana_inicio").isoformat() if row.get("semana_inicio") else week_label,
             "pagado": bool(row.get("pagado_semana")),
             "monto": float(row.get("monto_semana") or 0),
@@ -1737,6 +1925,191 @@ async def listar_agentes_extension_estado_pago(
         "semana_inicio": week_label,
         "data": data,
     }
+
+
+@router.get("/agentes/estado")
+async def listar_agentes_estado(
+    search: str | None = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Listar agentes activos y su estado de línea (asignada o sin asignar).
+    Incluye estado de QR para facilitar la gestión masiva.
+    """
+    params: dict = {}
+    search_clause = ""
+    if search:
+        search_clause = " AND (d.nombre LIKE :term OR d.telefono LIKE :term) "
+        params["term"] = f"%{search.strip()}%"
+
+    rows = db.execute(
+        text(
+            f"""
+            SELECT
+                d.id,
+                d.uuid,
+                d.nombre,
+                d.telefono,
+                d.datos_adicionales,
+                CASE WHEN d.qr_filename IS NOT NULL AND d.qr_filename <> '' THEN 1 ELSE 0 END AS tiene_qr,
+                d.qr_filename,
+                d.fecha_creacion
+            FROM datos_importados d
+            LEFT JOIN agente_linea_asignaciones ala
+                ON ala.agente_id = d.id AND ala.es_activa = 1
+            WHERE COALESCE(d.es_activo, 1) = 1
+              AND ala.id IS NULL
+              {search_clause}
+            ORDER BY d.nombre ASC
+            LIMIT 500
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    data = []
+    for row in rows:
+        extras = _safe_json_object(row.get("datos_adicionales"))
+        created = row.get("fecha_creacion")
+        if hasattr(created, "isoformat"):
+            created_value = created.isoformat()
+        elif created is not None:
+            created_value = str(created)
+        else:
+            created_value = None
+        data.append(
+            {
+                "id": int(row.get("id") or 0),
+                "uuid": row.get("uuid"),
+                "nombre": row.get("nombre") or f"Agente {row.get('id')}",
+                "telefono": row.get("telefono"),
+                "alias": extras.get("alias"),
+                "tiene_qr": bool(int(row.get("tiene_qr") or 0)),
+                "qr_filename": row.get("qr_filename"),
+                "fecha_creacion": created_value,
+            }
+        )
+
+    return {
+        "status": "success",
+        "total": len(data),
+        "data": data,
+    }
+
+
+@router.post("/agentes/generar-qr-masivo")
+async def generar_qr_masivo_sin_qr(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Genera QR para todos los agentes activos que aún no tienen uno.
+    El QR generado es tipo UUID-fallback (seguro si el agente tiene línea activa).
+    Requiere rol de captura o superior.
+    """
+    require_capture_role(current_user)
+
+    agentes_sin_qr = (
+        db.query(DatoImportado)
+        .filter(
+            DatoImportado.es_activo.is_(True),
+            (DatoImportado.qr_filename.is_(None) | (DatoImportado.qr_filename == "")),
+        )
+        .all()
+    )
+
+    generados = 0
+    errores: list[dict] = []
+
+    for agente in agentes_sin_qr:
+        try:
+            _refresh_agent_qr_for_state(db, agente, request=request)
+            generados += 1
+        except Exception as exc:
+            errores.append(
+                {
+                    "agente_id": agente.id,
+                    "nombre": agente.nombre,
+                    "error": str(exc),
+                }
+            )
+
+    if generados > 0:
+        db.commit()
+
+    return {
+        "status": "success",
+        "total_sin_qr": len(agentes_sin_qr),
+        "generados": generados,
+        "errores": errores,
+    }
+
+
+@router.get("/agentes/export/pdf")
+async def exportar_qr_agentes_pdf(
+    request: Request,
+    ids_csv: str | None = Query(None, description="IDs de agentes separados por coma"),
+    search: str | None = Query(None, description="Filtro parcial por nombre o telefono"),
+    layout: str = Query("sheet", pattern="^(sheet|labels)$"),
+    solo_activos: bool = Query(True),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Exportar QRs estaticos de agentes en PDF listo para hoja o etiquetas."""
+    require_capture_role(current_user)
+
+    query = db.query(DatoImportado)
+    if solo_activos:
+        query = query.filter(DatoImportado.es_activo.is_(True))
+
+    agent_ids: list[int] = []
+    if ids_csv:
+        for raw in str(ids_csv).split(","):
+            value = raw.strip()
+            if not value:
+                continue
+            if not value.isdigit():
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"ID de agente invalido: {value}")
+            agent_ids.append(int(value))
+
+    if agent_ids:
+        query = query.filter(DatoImportado.id.in_(agent_ids))
+
+    if search:
+        term = f"%{search.strip()}%"
+        query = query.filter(
+            (DatoImportado.nombre.ilike(term)) |
+            (DatoImportado.telefono.ilike(term)) |
+            (DatoImportado.email.ilike(term))
+        )
+
+    agentes = query.order_by(DatoImportado.nombre.asc(), DatoImportado.id.asc()).limit(500).all()
+    if not agentes:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No se encontraron agentes para exportar")
+
+    export_rows: list[dict] = []
+    for agente in agentes:
+        payload = _refresh_agent_qr_for_state(db, agente, request=request)
+        export_rows.append(
+            {
+                "id": agente.id,
+                "uuid": agente.uuid,
+                "nombre": agente.nombre,
+                "telefono": agente.telefono,
+                "linea_activa": (payload.get("linea_activa") or {}).get("numero"),
+                "linea_estado": payload.get("linea_estado") or "sin_linea",
+                "public_url": payload.get("public_url"),
+                "qr_path": payload.get("qr_path"),
+            }
+        )
+
+    db.commit()
+    pdf_bytes = build_agent_qr_pdf(export_rows, layout=layout)
+    filename = f"agentes_qr_{layout}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers=headers)
 
 
 @router.get("/recibos")
@@ -1973,6 +2346,8 @@ async def verificar_publico_por_uuid(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agente no encontrado")
 
     semana_ref = monday_of_week(semana or date.today())
+    active_assignment = _active_assignment_for_agent(db, agente.id)
+    linea = active_assignment.linea if active_assignment and active_assignment.linea and active_assignment.linea.es_activa else None
     pago = db.query(PagoSemanal).filter(
         PagoSemanal.agente_id == agente.id,
         PagoSemanal.semana_inicio == semana_ref
@@ -1988,7 +2363,9 @@ async def verificar_publico_por_uuid(
             "uuid": agente.uuid,
             "nombre": agente.nombre,
             "telefono": agente.telefono,
-            "tiene_asignacion": _has_assignment(agente),
+            "tiene_asignacion": bool(linea),
+            "linea": linea.numero if linea else None,
+            "linea_estado": "asignada" if linea else "sin_linea",
         },
         "semana_inicio": semana_ref.isoformat(),
         "pagado": bool(pago.pagado) if pago else False,
@@ -2018,6 +2395,8 @@ async def verificar_publico_por_id(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agente no encontrado")
 
     semana_ref = monday_of_week(semana or date.today())
+    active_assignment = _active_assignment_for_agent(db, agente.id)
+    linea = active_assignment.linea if active_assignment and active_assignment.linea and active_assignment.linea.es_activa else None
     pago = db.query(PagoSemanal).filter(
         PagoSemanal.agente_id == agente.id,
         PagoSemanal.semana_inicio == semana_ref
@@ -2033,7 +2412,9 @@ async def verificar_publico_por_id(
             "uuid": agente.uuid,
             "nombre": agente.nombre,
             "telefono": agente.telefono,
-            "tiene_asignacion": _has_assignment(agente),
+            "tiene_asignacion": bool(linea),
+            "linea": linea.numero if linea else None,
+            "linea_estado": "asignada" if linea else "sin_linea",
         },
         "semana_inicio": semana_ref.isoformat(),
         "pagado": bool(pago.pagado) if pago else False,

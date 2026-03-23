@@ -14,9 +14,9 @@ from app.models import (
     Usuario,
 )
 from app.schemas import UsuarioCrear, DatoImportadoCrear, DatoImportadoActualizar
-from app.security import ROLE_ADMIN, normalize_role, hash_password, verify_password
+from app.security import ROLE_ADMIN, ROLE_SUPER_ADMIN, normalize_role, hash_password, verify_password
 from app.database.orm import RepositorioBase
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 import logging
 
@@ -45,7 +45,7 @@ class RepositorioUsuario(RepositorioBase):
         """Crear nuevo usuario desde dict."""
         role = normalize_role(usuario_dict.get("rol"), bool(usuario_dict.get("es_admin")))
         usuario_dict["rol"] = role
-        usuario_dict["es_admin"] = role == ROLE_ADMIN
+        usuario_dict["es_admin"] = role in {ROLE_ADMIN, ROLE_SUPER_ADMIN}
         usuario = Usuario(**usuario_dict)
         self.db.add(usuario)
         self.db.commit()
@@ -60,7 +60,7 @@ class RepositorioUsuario(RepositorioBase):
             if "rol" in updates or "es_admin" in updates:
                 role = normalize_role(updates.get("rol", usuario.rol), bool(updates.get("es_admin", usuario.es_admin)))
                 updates["rol"] = role
-                updates["es_admin"] = role == ROLE_ADMIN
+                updates["es_admin"] = role in {ROLE_ADMIN, ROLE_SUPER_ADMIN}
             for key, value in updates.items():
                 if hasattr(usuario, key):
                     setattr(usuario, key, value)
@@ -89,12 +89,12 @@ class RepositorioUsuario(RepositorioBase):
     
     def crear(self, usuario_in: UsuarioCrear) -> Usuario:
         """Crear nuevo usuario (método legacy)."""
-        usuario_dict = usuario_in.dict()
+        usuario_dict = usuario_in.model_dump()
         password = usuario_dict.pop("password")
         usuario_dict["hashed_password"] = hash_password(password)
         role = normalize_role(usuario_dict.get("rol"), bool(usuario_dict.get("es_admin")))
         usuario_dict["rol"] = role
-        usuario_dict["es_admin"] = role == ROLE_ADMIN
+        usuario_dict["es_admin"] = role in {ROLE_ADMIN, ROLE_SUPER_ADMIN}
         
         usuario = Usuario(**usuario_dict)
         self.db.add(usuario)
@@ -114,7 +114,7 @@ class RepositorioUsuario(RepositorioBase):
         """Actualizar fecha de última sesión."""
         usuario = self.obtener_por_id(usuario_id)
         if usuario:
-            usuario.fecha_ultima_sesion = datetime.utcnow()
+            usuario.fecha_ultima_sesion = datetime.now(timezone.utc)
             self.db.add(usuario)
             self.db.commit()
 
@@ -252,7 +252,7 @@ class RepositorioImportLog(RepositorioBase):
             importacion.registros_fallidos = registros_fallidos
             importacion.estado = estado
             importacion.duracion_segundos = duracion
-            importacion.fecha_fin = datetime.utcnow()
+            importacion.fecha_fin = datetime.now(timezone.utc)
             importacion.mensaje_error = mensaje_error
             
             self.db.add(importacion)

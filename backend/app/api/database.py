@@ -644,6 +644,10 @@ async def create_useful_views(
                     l.id AS linea_id,
                     l.numero AS extension_numero,
                     l.tipo AS extension_tipo,
+                    CASE
+                        WHEN ala.id IS NULL OR l.id IS NULL THEN 'SIN_LINEA'
+                        ELSE 'ASIGNADA'
+                    END AS linea_estado,
                     p.semana_inicio,
                     COALESCE(p.pagado, 0) AS pagado_semana,
                     COALESCE(p.monto, 0) AS monto_semana,

@@ -12,7 +12,7 @@ class UsuarioBase(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: EmailStr
     nombre_completo: Optional[str] = Field(None, max_length=255)
-    rol: str = Field("viewer", pattern="^(viewer|capture|admin)$")
+    rol: str = Field("viewer", pattern="^(viewer|capture|admin|super_admin)$")
 
 
 class UsuarioCrear(UsuarioBase):
@@ -26,7 +26,7 @@ class UsuarioCrear(UsuarioBase):
         role = str(value or "").strip().lower()
         if not role:
             role = "admin" if values.get('es_admin') else "viewer"
-        if role not in {"viewer", "capture", "admin"}:
+        if role not in {"viewer", "capture", "admin", "super_admin"}:
             raise ValueError('Rol inválido')
         return role
 
@@ -49,14 +49,14 @@ class UsuarioActualizar(BaseModel):
     nombre_completo: Optional[str] = Field(None, max_length=255)
     es_activo: Optional[bool] = None
     es_admin: Optional[bool] = None
-    rol: Optional[str] = Field(None, pattern="^(viewer|capture|admin)$")
+    rol: Optional[str] = Field(None, pattern="^(viewer|capture|admin|super_admin)$")
 
     @validator('rol')
     def normalize_role_for_update(cls, value):
         if value is None:
             return value
         role = str(value).strip().lower()
-        if role not in {"viewer", "capture", "admin"}:
+        if role not in {"viewer", "capture", "admin", "super_admin"}:
             raise ValueError('Rol inválido')
         return role
 

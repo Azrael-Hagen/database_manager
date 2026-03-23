@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api/export", tags=["Export & Schema"])
 async def export_table_csv(
     db_name: str,
     table_name: str,
-    format: str = Query("csv", regex="^(csv|excel)$"),
+    format: str = Query("csv", pattern="^(csv|excel)$"),
     limit: Optional[int] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -63,7 +63,7 @@ async def export_table_csv(
 
 @router.get("/agentes")
 async def export_agentes(
-    format: str = Query("csv", regex="^(csv|excel)$"),
+    format: str = Query("csv", pattern="^(csv|excel)$"),
     with_pagos: bool = Query(False),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),

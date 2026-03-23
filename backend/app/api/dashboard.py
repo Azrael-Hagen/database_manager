@@ -1,6 +1,6 @@
 """Endpoints de dashboard operativo."""
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -32,7 +32,7 @@ def _normalize_day(raw_value) -> str | None:
 
 def _build_activity_series(agent_rows: list[dict], import_rows: list[dict]) -> list[dict]:
     """Construir serie diaria de 7 dias combinando agentes e importaciones."""
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).date()
     days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
 
     agent_map = {
@@ -74,7 +74,7 @@ def _fetch_agent_snapshot(db: Session) -> dict:
         ("registro_agentes.datos_importados", "registro_agentes"),
         ("datos_importados", "database_manager"),
     ]
-    since = datetime.utcnow() - timedelta(days=6)
+    since = datetime.now(timezone.utc) - timedelta(days=6)
 
     for table_ref, source_name in candidates:
         try:
@@ -169,7 +169,8 @@ def _fetch_agent_snapshot(db: Session) -> dict:
         }
         for item in recent_agents
     ]
-    recent_items = db.query(DatoImportado).filter(DatoImportado.fecha_creacion >= since).all()
+    since_naive = since.replace(tzinfo=None)
+    recent_items = db.query(DatoImportado).filter(DatoImportado.fecha_creacion >= since_naive).all()
     activity_map: dict[str, dict[str, int]] = {}
     for item in recent_items:
         if not item.fecha_creacion:
@@ -211,6 +212,7 @@ def _build_operational_alerts(
     alertas_pago_pendientes: int,
     lineas_activas: int,
     lineas_asignadas_activas: int,
+    sin_linea: int = 0,
 ) -> list[dict]:
     """Armar alertas accionables para el dashboard."""
     alerts: list[dict] = []
@@ -231,6 +233,16 @@ def _build_operational_alerts(
                 "title": "Todos los agentes estan inactivos",
                 "detail": "Hay historico en BD, pero no existen agentes activos para la operacion actual.",
                 "action_section": "cambiosBajas",
+            }
+        )
+
+    if sin_linea > 0:
+        alerts.append(
+            {
+                "level": "warning",
+                "title": "Agentes pendiente de asignación de línea",
+                "detail": f"Hay {sin_linea} agente(s) activos sin número de línea. Asigna líneas desde 'Estado de Agentes'.",
+                "action_section": "estadoAgentes",
             }
         )
 
@@ -274,7 +286,7 @@ def _build_operational_alerts(
             }
         )
 
-    return alerts[:5]
+    return alerts[:6]
 
 
 @router.get("/summary")
@@ -283,7 +295,7 @@ async def dashboard_summary(
     db: Session = Depends(get_db),
 ):
     """Resumen operativo para dashboard principal."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     online_window = now - timedelta(minutes=30)
     week_start = (now - timedelta(days=now.weekday())).date()
 
@@ -313,6 +325,20 @@ async def dashboard_summary(
     ).count()
     alertas_pago_pendientes = db.query(AlertaPago).filter(AlertaPago.atendida.is_(False)).count()
 
+    # Agentes activos sin línea telefónica asignada
+    sin_linea_count = db.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM datos_importados d
+            LEFT JOIN agente_linea_asignaciones ala
+                ON ala.agente_id = d.id AND ala.es_activa = 1
+            WHERE COALESCE(d.es_activo, 1) = 1
+              AND ala.id IS NULL
+            """
+        )
+    ).scalar()
+
     online_users = db.query(Usuario).filter(
         Usuario.es_activo.is_(True),
         Usuario.fecha_ultima_sesion.isnot(None),
@@ -320,7 +346,10 @@ async def dashboard_summary(
 
     online_users_data = []
     for u in online_users:
-        seconds_ago = max(0, int((now - u.fecha_ultima_sesion).total_seconds())) if u.fecha_ultima_sesion else None
+        last_session = u.fecha_ultima_sesion
+        if last_session and last_session.tzinfo is None:
+            last_session = last_session.replace(tzinfo=timezone.utc)
+        seconds_ago = max(0, int((now - last_session).total_seconds())) if last_session else None
         online_users_data.append(
             {
                 "id": u.id,
@@ -329,7 +358,7 @@ async def dashboard_summary(
                 "es_admin": bool(u.es_admin),
                 "fecha_ultima_sesion": u.fecha_ultima_sesion.isoformat() if u.fecha_ultima_sesion else None,
                 "seconds_since_last_session": seconds_ago,
-                "is_online": bool(u.fecha_ultima_sesion and u.fecha_ultima_sesion >= online_window),
+                "is_online": bool(last_session and last_session >= online_window),
             }
         )
 
@@ -387,28 +416,54 @@ async def dashboard_summary(
         alertas_pago_pendientes=int(alertas_pago_pendientes or 0),
         lineas_activas=int(lineas_activas or 0),
         lineas_asignadas_activas=int(lineas_asignadas_activas or 0),
+        sin_linea=int(sin_linea_count or 0),
     )
 
     # Metadatos de esquema para apoyar visualización operativa.
-    db_name = db.execute(text("SELECT DATABASE()")).scalar()
-    table_count = db.execute(
-        text(
-            """
-            SELECT COUNT(*)
-            FROM information_schema.tables
-            WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'
-            """
-        )
-    ).scalar()
-    view_count = db.execute(
-        text(
-            """
-            SELECT COUNT(*)
-            FROM information_schema.tables
-            WHERE table_schema = DATABASE() AND table_type = 'VIEW'
-            """
-        )
-    ).scalar()
+    # En producción (MariaDB) se usa information_schema. Para tests SQLite,
+    # se usa sqlite_master para evitar errores por funciones no soportadas.
+    dialect = getattr(getattr(db, "bind", None), "dialect", None)
+    dialect_name = getattr(dialect, "name", "")
+    if dialect_name == "sqlite":
+        db_name = "sqlite"
+        table_count = db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                """
+            )
+        ).scalar()
+        view_count = db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM sqlite_master
+                WHERE type = 'view'
+                """
+            )
+        ).scalar()
+    else:
+        db_name = db.execute(text("SELECT DATABASE()")).scalar()
+        table_count = db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.tables
+                WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'
+                """
+            )
+        ).scalar()
+        view_count = db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM information_schema.tables
+                WHERE table_schema = DATABASE() AND table_type = 'VIEW'
+                """
+            )
+        ).scalar()
 
     return {
         "status": "success",
@@ -435,6 +490,7 @@ async def dashboard_summary(
             "lineas_asignadas_activas": int(lineas_asignadas_activas or 0),
             "alertas_pago_pendientes": int(alertas_pago_pendientes or 0),
             "pagos_pendientes_semana": int(pagos_pendientes_semana or 0),
+            "sin_linea": int(sin_linea_count or 0),
         },
         "online_window_minutes": 30,
         "alerts": alerts,

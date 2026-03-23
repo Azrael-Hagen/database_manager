@@ -27,13 +27,13 @@ if defined IS_RUNNING (
     exit /b 0
 )
 
-echo [1/3] Iniciando servidor en una nueva ventana...
-if not exist "%ROOT%backend\run_server_easy.bat" (
-    echo [ERROR] No se encontró backend\run_server_easy.bat
+echo [1/3] Iniciando servidor oficial en una nueva ventana...
+if not exist "%ROOT%start.bat" (
+    echo [ERROR] No se encontró start.bat
     pause
     exit /b 1
 )
-start "Database Manager Server" "%ROOT%backend\run_server_easy.bat"
+start "Database Manager Server" "%ROOT%start.bat"
 
 echo [2/3] Esperando disponibilidad del servidor...
 set "READY="
@@ -54,5 +54,6 @@ echo [3/3] Abriendo interfaz: %URL%
 start "" "%URL%"
 echo.
 echo [OK] Inicio completado.
+echo Script oficial de arranque del servidor: start.bat
 echo Para detener el servidor usa: stop.bat
 exit /b 0
