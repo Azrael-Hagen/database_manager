@@ -14,6 +14,8 @@ let showHiddenDatabases = false;
 let currentImportDB = '';
 let currentVerificationData = null;
 let qrScannerInstance = null;
+let qrAvailableCameras = [];
+let qrCurrentCameraId = '';
 let currentWeeklyReportRows = [];
 let lastReceiptData = null;
 let currentDatosDatabase = '';
@@ -100,7 +102,7 @@ function mondayISO(today = new Date()) {
 
 function setDefaultWeeklyDates() {
     const week = mondayISO();
-    ['qrSemana', 'pagoSemana', 'reporteSemanaInput'].forEach(id => {
+    ['qrSemana', 'qrScanSemana', 'pagoSemana', 'reporteSemanaInput'].forEach(id => {
         const input = document.getElementById(id);
         if (input && !input.value) {
             input.value = week;
@@ -206,6 +208,7 @@ function applyRoleBasedUI() {
         importar: canCapture(),
         altasAgentes: canCapture(),
         cambiosBajas: canAdmin(),
+        qrScan: canAdmin(),
         qr: canAdmin(),
         usuarios: canAdmin(),
         auditoria: canAdmin(),
@@ -915,6 +918,7 @@ function loadSection(section, eventRef = null) {
     document.getElementById('importarSection').style.display = 'none';
     document.getElementById('altasAgentesSection').style.display = 'none';
     document.getElementById('cambiosBajasSection').style.display = 'none';
+    document.getElementById('qrScanSection').style.display = 'none';
     document.getElementById('qrSection').style.display = 'none';
     document.getElementById('usuariosSection').style.display = 'none';
     document.getElementById('auditoriaSection').style.display = 'none';
@@ -947,6 +951,13 @@ function loadSection(section, eventRef = null) {
             document.getElementById('cambiosBajasSection').style.display = 'block';
             cargarAgentesGestion();
             break;
+        case 'qrScan':
+            document.getElementById('qrScanSection').style.display = 'block';
+            setDefaultWeeklyDates();
+            setTimeout(() => {
+                cargarCamarasDisponibles(true).catch(() => {});
+            }, 120);
+            break;
         case 'qr':
             document.getElementById('qrSection').style.display = 'block';
             cargarCuotaSemanal();
@@ -956,6 +967,9 @@ function loadSection(section, eventRef = null) {
             cargarRecibosPersistidos();
             cargarRespaldos();
             cargarLineasYAgentes();
+            setTimeout(() => {
+                cargarCamarasDisponibles(true).catch(() => {});
+            }, 120);
             break;
         case 'usuarios':
             document.getElementById('usuariosSection').style.display = 'block';
@@ -1643,8 +1657,169 @@ function previsualizarQrGestion(agenteId) {
     });
 }
 
+function getActiveQrScannerId() {
+    return currentSection === 'qrScan' ? 'qrScanScanner' : 'qrScanner';
+}
+
+function getActiveQrCameraSelectId() {
+    return currentSection === 'qrScan' ? 'qrScanCameraSelect' : 'qrCameraSelect';
+}
+
+function getActiveQrManualInputId() {
+    return currentSection === 'qrScan' ? 'qrScanCodigoManual' : 'codigoEscaneadoManual';
+}
+
+function getActiveQrWeek() {
+    const primaryId = currentSection === 'qrScan' ? 'qrScanSemana' : 'qrSemana';
+    const primary = document.getElementById(primaryId)?.value || '';
+    if (primary) return primary;
+    return document.getElementById('qrSemana')?.value || '';
+}
+
+function formatIsoDateLocal(isoDate) {
+    if (!isoDate) return '-';
+    const dt = new Date(`${isoDate}T00:00:00`);
+    if (Number.isNaN(dt.getTime())) return isoDate;
+    return dt.toLocaleDateString();
+}
+
+function getDueDateSaturday(weekIso) {
+    if (!weekIso) return null;
+    const monday = new Date(`${weekIso}T00:00:00`);
+    if (Number.isNaN(monday.getTime())) return null;
+    monday.setDate(monday.getDate() + 5);
+    return monday;
+}
+
+function renderEscaneoResumen(data) {
+    const badge = document.getElementById('qrScanEstadoBadge');
+    const content = document.getElementById('qrScanSummaryContent');
+    if (!badge || !content) return;
+
+    const a = data?.agente || {};
+    const v = data?.verificacion || {};
+    const deuda = Number(v.saldo_acumulado ?? 0);
+    const cuota = Number(v.cuota_semanal ?? 0);
+    const debe = deuda > 0.009 || !v.pagado;
+    const debeTxt = debe ? 'Debe pagar' : 'Sin adeudo';
+    const dueDate = getDueDateSaturday(v.semana_inicio);
+    const dueDateTxt = dueDate
+        ? `${dueDate.toLocaleDateString()} (sábado)`
+        : 'No disponible';
+    const lineas = Array.isArray(a.lineas) ? a.lineas : [];
+    const lineasTxt = lineas.length ? lineas.map(x => x.numero).join(', ') : 'Sin líneas';
+
+    badge.textContent = debe ? 'PENDIENTE' : 'AL CORRIENTE';
+    badge.className = `payment-pill ${debe ? 'unpaid' : 'paid'}`;
+
+    content.innerHTML = `
+        <div class="qr-scan-kpis">
+            <div><strong>Agente:</strong> ${escapeHtml(a.nombre || '-')} (ID ${a.id || '-'})</div>
+            <div><strong>Estado:</strong> ${escapeHtml(debeTxt)}</div>
+            <div><strong>Límite sugerido:</strong> ${escapeHtml(dueDateTxt)}</div>
+            <div><strong>Semana:</strong> ${escapeHtml(formatIsoDateLocal(v.semana_inicio || ''))}</div>
+            <div><strong>Líneas:</strong> ${escapeHtml(lineasTxt)}</div>
+            <div><strong>Teléfono:</strong> ${escapeHtml(a.telefono || '-')}</div>
+        </div>
+        <div class="qr-scan-kpis" style="margin-top:8px;">
+            <div><strong>Cuota semanal:</strong> $${cuota.toFixed(2)} MXN</div>
+            <div><strong>Monto semana:</strong> $${Number(v.monto ?? 0).toFixed(2)} MXN</div>
+            <div><strong>Total abonado:</strong> $${Number(v.total_abonado ?? 0).toFixed(2)} MXN</div>
+            <div><strong>Saldo acumulado:</strong> $${deuda.toFixed(2)} MXN</div>
+            <div><strong>Semanas pendientes:</strong> ${Number(v.semanas_pendientes ?? 0)}</div>
+            <div><strong>Último pago:</strong> ${v.fecha_pago ? new Date(v.fecha_pago).toLocaleString() : 'Sin pago'}</div>
+        </div>
+    `;
+}
+
+async function registrarPagoDesdeEscaneo(mode = 'abono') {
+    if (!currentVerificationData) {
+        alert('Primero escanea y verifica un agente.');
+        return;
+    }
+
+    const a = currentVerificationData.agente || {};
+    const v = currentVerificationData.verificacion || {};
+    const saldo = Number(v.saldo_acumulado ?? 0);
+    const cuota = Number(v.cuota_semanal ?? 0);
+    const semana = v.semana_inicio || getActiveQrWeek() || mondayISO();
+
+    if (mode === 'liquidar' && saldo <= 0.009) {
+        alert('El agente no tiene adeudo acumulado para liquidar.');
+        return;
+    }
+
+    const monto = mode === 'liquidar'
+        ? Math.max(saldo, 0)
+        : (saldo > 0.009 ? Math.min(saldo, cuota || saldo) : (cuota || 0));
+
+    if (monto <= 0) {
+        alert('No hay monto válido para registrar pago.');
+        return;
+    }
+
+    const payload = {
+        agente_id: Number(a.id || 0),
+        telefono: a.telefono || null,
+        numero_voip: a.numero_voip || null,
+        semana_inicio: semana,
+        monto,
+        pagado: true,
+        liquidar_total: mode === 'liquidar',
+        observaciones: mode === 'liquidar'
+            ? 'Pago procesado desde escaneo QR (liquidación total).'
+            : 'Pago procesado desde escaneo QR (abono semanal).',
+    };
+
+    if (!payload.agente_id) {
+        alert('No se pudo identificar al agente escaneado.');
+        return;
+    }
+
+    try {
+        await apiClient.registrarPagoSemanal(payload);
+        alert(mode === 'liquidar'
+            ? 'Adeudo total liquidado correctamente.'
+            : 'Abono semanal registrado correctamente.');
+
+        document.getElementById('pagoAgenteId').value = payload.agente_id;
+        document.getElementById('pagoTelefono').value = payload.telefono || '';
+        document.getElementById('pagoVoip').value = payload.numero_voip || '';
+        document.getElementById('pagoSemana').value = payload.semana_inicio;
+        document.getElementById('pagoMonto').value = Number(payload.monto).toFixed(2);
+        const liquidarEl = document.getElementById('pagoLiquidarTotal');
+        if (liquidarEl) liquidarEl.checked = !!payload.liquidar_total;
+
+        const refreshed = await apiClient.verificarAgenteQR(payload.agente_id, payload.telefono || '', payload.numero_voip || '', payload.semana_inicio);
+        currentVerificationData = { agente: refreshed.agente || {}, verificacion: refreshed.verificacion || {} };
+        renderEscaneoResumen(currentVerificationData);
+        await consultarResumenPagoActual(false);
+        cargarReporteSemanal();
+        cargarRecibosPersistidos();
+        if (currentSection !== 'qr') {
+            loadSection('qr');
+        }
+    } catch (error) {
+        console.error('Error procesando pago rápido desde escaneo:', error);
+        alert('No se pudo procesar el pago: ' + error.message);
+    }
+}
+
+function abrirGestionPagoCompletaDesdeEscaneo() {
+    if (currentVerificationData) {
+        const a = currentVerificationData.agente || {};
+        const v = currentVerificationData.verificacion || {};
+        document.getElementById('pagoAgenteId').value = a.id || '';
+        document.getElementById('pagoTelefono').value = a.telefono || '';
+        document.getElementById('pagoVoip').value = a.numero_voip || '';
+        document.getElementById('pagoSemana').value = v.semana_inicio || mondayISO();
+        document.getElementById('pagoMonto').value = Number(v.cuota_semanal || 0).toFixed(2);
+    }
+    loadSection('qr');
+}
+
 async function leerCodigoManual() {
-    const input = document.getElementById('codigoEscaneadoManual');
+    const input = document.getElementById(getActiveQrManualInputId());
     const value = (input?.value || '').trim();
     if (!value) {
         alert('Ingresa o pega un código para leer.');
@@ -1670,6 +1845,81 @@ async function descargarQrAgente(agenteId) {
     }
 }
 
+function _renderCameraSelector(cameras, preferredDeviceId = '') {
+    qrAvailableCameras = Array.isArray(cameras) ? cameras : [];
+    const rear = qrAvailableCameras.find(c => /back|rear|trasera|environment/i.test(c.label || ''));
+    const ordered = rear
+        ? [rear, ...qrAvailableCameras.filter(c => c.deviceId !== rear.deviceId)]
+        : qrAvailableCameras;
+
+    ['qrCameraSelect', 'qrScanCameraSelect'].forEach(selectId => {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+
+        if (!ordered.length) {
+            select.innerHTML = '<option value="">-- Sin cámaras detectadas --</option>';
+            return;
+        }
+
+        select.innerHTML = ordered
+            .map(c => `<option value="${c.deviceId}">${(c.label || c.deviceId).replace(/</g, '&lt;')}</option>`)
+            .join('');
+
+        const preferred = preferredDeviceId || qrCurrentCameraId || rear?.deviceId || ordered[0].deviceId;
+        select.value = ordered.some(c => c.deviceId === preferred) ? preferred : ordered[0].deviceId;
+        qrCurrentCameraId = select.value;
+    });
+
+    if (!ordered.length) {
+        qrCurrentCameraId = '';
+    }
+}
+
+async function cargarCamarasDisponibles(silent = false) {
+    if (typeof Html5Qrcode === 'undefined') {
+        if (!silent) alert('Librería de escaneo no disponible.');
+        return [];
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        if (!silent) alert('El navegador no permite acceso a cámaras en este contexto.');
+        _renderCameraSelector([]);
+        return [];
+    }
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(t => t.stop());
+    } catch (_) {
+        // Si no concede permisos, igual intentamos enumerar por si hay labels previos
+    }
+
+    let cameras = [];
+    try {
+        cameras = await Html5Qrcode.getCameras();
+    } catch (_) {
+        cameras = [];
+    }
+    _renderCameraSelector(cameras);
+    if (!cameras.length && !silent) {
+        alert('No se detectaron cámaras disponibles.');
+    }
+    return cameras;
+}
+
+async function iniciarEscanerQRCamaraSeleccionada() {
+    const select = document.getElementById(getActiveQrCameraSelectId());
+    const deviceId = (select?.value || '').trim();
+    if (!deviceId) {
+        alert('Selecciona una cámara primero.');
+        return;
+    }
+    await detenerEscanerQR();
+    const container = document.getElementById(getActiveQrScannerId());
+    if (container) container.innerHTML = '';
+    qrCurrentCameraId = deviceId;
+    await iniciarEscanerQRManual();
+}
+
 async function iniciarEscanerQR() {
     if (typeof Html5Qrcode === 'undefined') {
         alert('Librería de escaneo no disponible.');
@@ -1679,7 +1929,8 @@ async function iniciarEscanerQR() {
         return;
     }
 
-    const qrEl = document.getElementById('qrScanner');
+    const scannerContainerId = getActiveQrScannerId();
+    const qrEl = document.getElementById(scannerContainerId);
 
     function mostrarErrorCamara(msg) {
         if (qrEl) {
@@ -1732,7 +1983,7 @@ async function iniciarEscanerQR() {
 
     async function tryStart(cameraIdOrConstraint) {
         limpiarContenedor();
-        const scanner = new Html5Qrcode('qrScanner');
+        const scanner = new Html5Qrcode(scannerContainerId);
         await scanner.start(cameraIdOrConstraint, scanConfig, onScan, onError);
         return scanner;
     }
@@ -1763,6 +2014,8 @@ async function iniciarEscanerQR() {
     try {
         cameras = await Html5Qrcode.getCameras();
     } catch (_) {}
+
+    _renderCameraSelector(cameras);
 
     // Preferir cámara trasera por etiqueta
     const rearCamera = cameras.find(c => /back|rear|trasera|environment/i.test(c.label));
@@ -1815,17 +2068,20 @@ async function iniciarEscanerQR() {
 
 async function iniciarEscanerQRManual() {
     const sel = document.getElementById('cameraSelector');
-    if (!sel) return;
-    const deviceId = sel.value;
-    const el = document.getElementById('qrScanner');
+    const globalSel = document.getElementById(getActiveQrCameraSelectId());
+    const deviceId = (globalSel?.value || sel?.value || '').trim();
+    if (!deviceId) return;
+    const scannerContainerId = getActiveQrScannerId();
+    const el = document.getElementById(scannerContainerId);
     if (el) el.innerHTML = '';
+    qrCurrentCameraId = deviceId;
 
     const formats = (typeof Html5QrcodeSupportedFormats !== 'undefined')
         ? [Html5QrcodeSupportedFormats.QR_CODE, Html5QrcodeSupportedFormats.CODE_128,
            Html5QrcodeSupportedFormats.CODE_39, Html5QrcodeSupportedFormats.EAN_13]
         : undefined;
     try {
-        qrScannerInstance = new Html5Qrcode('qrScanner');
+        qrScannerInstance = new Html5Qrcode(scannerContainerId);
         await qrScannerInstance.start(
             { deviceId: { exact: deviceId } },
             { fps: 10, qrbox: { width: 240, height: 240 }, formatsToSupport: formats },
@@ -1851,15 +2107,40 @@ async function detenerEscanerQR() {
 
 async function manejarQRLeido(decodedText) {
     await detenerEscanerQR();
-    const week = document.getElementById('qrSemana').value;
+    const week = getActiveQrWeek();
 
     try {
         const result = await apiClient.verificarCodigoEscaneado(decodedText, week);
         const agente = result.agente || {};
-        document.getElementById('qrAgenteId').value = agente.id || '';
-        document.getElementById('qrTelefono').value = agente.telefono || '';
-        document.getElementById('qrVoip').value = agente.numero_voip || '';
-        await verificarAgenteQR();
+        const verificacion = result.verificacion || {};
+        currentVerificationData = { agente, verificacion };
+
+        const qrAgente = document.getElementById('qrAgenteId');
+        const qrTelefono = document.getElementById('qrTelefono');
+        const qrVoip = document.getElementById('qrVoip');
+        const qrSemana = document.getElementById('qrSemana');
+        if (qrAgente) qrAgente.value = agente.id || '';
+        if (qrTelefono) qrTelefono.value = agente.telefono || '';
+        if (qrVoip) qrVoip.value = agente.numero_voip || '';
+        if (qrSemana && !qrSemana.value && verificacion.semana_inicio) qrSemana.value = verificacion.semana_inicio;
+
+        const pagoAgente = document.getElementById('pagoAgenteId');
+        const pagoTelefono = document.getElementById('pagoTelefono');
+        const pagoVoip = document.getElementById('pagoVoip');
+        const pagoSemana = document.getElementById('pagoSemana');
+        const pagoMonto = document.getElementById('pagoMonto');
+        if (pagoAgente) pagoAgente.value = agente.id || '';
+        if (pagoTelefono) pagoTelefono.value = agente.telefono || '';
+        if (pagoVoip) pagoVoip.value = agente.numero_voip || '';
+        if (pagoSemana && verificacion.semana_inicio) pagoSemana.value = verificacion.semana_inicio;
+        if (pagoMonto) pagoMonto.value = Number(verificacion.cuota_semanal || 0).toFixed(2);
+
+        if (currentSection === 'qrScan') {
+            renderEscaneoResumen(currentVerificationData);
+            await consultarResumenPagoActual(false);
+        } else {
+            await verificarAgenteQR();
+        }
     } catch (error) {
         console.error('Error de escaneo:', error);
         alert('No se pudo validar el código escaneado: ' + error.message);

@@ -508,6 +508,13 @@ def _safe_json_object(raw: str | None) -> dict:
         return {}
 
 
+def _legacy_text(raw: str | None, max_len: int) -> str:
+    value = str(raw or "").strip()
+    if len(value) > max_len:
+        return value[:max_len]
+    return value
+
+
 def _sync_legacy_agente_row(db: Session, *, agente_id: int, nombre: str, datos_adicionales: dict | None = None) -> None:
     extras = datos_adicionales if isinstance(datos_adicionales, dict) else {}
     db_name = _safe_sql_identifier(LEGACY_AGENTES_DB, "registro_agentes")
@@ -530,12 +537,12 @@ def _sync_legacy_agente_row(db: Session, *, agente_id: int, nombre: str, datos_a
         ),
         {
             "id": int(agente_id),
-            "nombre": str(nombre or "").strip(),
-            "alias": str(extras.get("alias") or "").strip() or None,
-            "ubicacion": str(extras.get("ubicacion") or "").strip() or None,
-            "fp": str(extras.get("fp") or "").strip() or None,
-            "fc": str(extras.get("fc") or "").strip() or None,
-            "grupo": str(extras.get("grupo") or "").strip() or None,
+            "nombre": _legacy_text(nombre, 50),
+            "alias": _legacy_text(extras.get("alias"), 50),
+            "ubicacion": _legacy_text(extras.get("ubicacion"), 10),
+            "fp": _legacy_text(extras.get("fp"), 10),
+            "fc": _legacy_text(extras.get("fc"), 10),
+            "grupo": _legacy_text(extras.get("grupo"), 10),
         },
     )
 

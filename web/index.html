@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Database Manager - Panel de Control</title>
+    <link rel="icon" type="image/x-icon" href="sources/iconfinder-server2-4417099_116631.ico">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -36,15 +37,16 @@
     <!-- Sidebar -->
     <div class="sidebar">
         <ul class="menu">
-            <li><a href="#" onclick="loadSection('dashboard', event)" class="menu-item active">Dashboard</a></li>
-            <li><a href="#" onclick="loadSection('datos', event)" class="menu-item">Datos</a></li>
-            <li><a href="#" onclick="loadSection('databases', event)" class="menu-item">Bases de Datos</a></li>
-            <li><a href="#" onclick="loadSection('importar', event)" class="menu-item">Importar</a></li>
-            <li><a href="#" onclick="loadSection('altasAgentes', event)" class="menu-item">Altas de Agentes</a></li>
-            <li><a href="#" onclick="loadSection('cambiosBajas', event)" class="menu-item">Cambios y Bajas</a></li>
-            <li><a href="#" onclick="loadSection('qr', event)" class="menu-item">Generar QR</a></li>
-            <li><a href="#" onclick="loadSection('usuarios', event)" class="menu-item">Usuarios</a></li>
-            <li><a href="#" onclick="loadSection('auditoria', event)" class="menu-item">Auditoría</a></li>
+            <li><a href="#" onclick="loadSection('dashboard', event)" class="menu-item active"><img class="menu-icon" src="sources/iconfinder-home-4341294_120570.ico" alt="">Dashboard</a></li>
+            <li><a href="#" onclick="loadSection('datos', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-image-4341296_120549.ico" alt="">Datos</a></li>
+            <li><a href="#" onclick="loadSection('databases', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-server-4417119_116634.ico" alt="">Bases de Datos</a></li>
+            <li><a href="#" onclick="loadSection('importar', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-download-4341287_120571.ico" alt="">Importar</a></li>
+            <li><a href="#" onclick="loadSection('altasAgentes', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-check-4341282_120572.ico" alt="">Altas de Agentes</a></li>
+            <li><a href="#" onclick="loadSection('cambiosBajas', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-settings-4341324_120534.ico" alt="">Cambios y Bajas</a></li>
+            <li><a href="#" onclick="loadSection('qrScan', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-security-4341326_120558.ico" alt="">Escaneo QR</a></li>
+            <li><a href="#" onclick="loadSection('qr', event)" class="menu-item"><img class="menu-icon" src="sources/map_98439.ico" alt="">Generar QR</a></li>
+            <li><a href="#" onclick="loadSection('usuarios', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-key-4341299_120569.ico" alt="">Usuarios</a></li>
+            <li><a href="#" onclick="loadSection('auditoria', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-mail-4341305_120538.ico" alt="">Auditoría</a></li>
         </ul>
     </div>
 
@@ -442,9 +444,56 @@
                 <div id="gestionAgenteQrContainer" style="margin-top: 18px; text-align: center;"></div>
             </section>
 
+            <!-- Sección Exclusiva de Escaneo QR -->
+            <section id="qrScanSection" class="panel" style="display: none;">
+                <h1 class="panel-title-icon"><img class="heading-icon" src="sources/iconfinder-security-4341326_120558.ico" alt="">Escaneo QR Operativo</h1>
+                <p class="hint">Escanea y obtén resumen inmediato del agente: estado, deuda, fecha límite de pago y acciones rápidas.</p>
+
+                <div class="search-bar" style="margin-top: 10px;">
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label>Semana operativa (lunes):</label>
+                        <input type="date" id="qrScanSemana">
+                    </div>
+                    <button type="button" class="btn btn-secondary" onclick="iniciarEscanerQR()">Escanear con Cámara</button>
+                    <button type="button" class="btn btn-secondary" onclick="detenerEscanerQR()">Detener Cámara</button>
+                </div>
+
+                <div class="search-bar qr-camera-tools" style="margin-top: 8px;">
+                    <select id="qrScanCameraSelect">
+                        <option value="">-- Selecciona cámara --</option>
+                    </select>
+                    <button type="button" class="btn btn-secondary" onclick="cargarCamarasDisponibles()">Actualizar Cámaras</button>
+                    <button type="button" class="btn btn-secondary" onclick="iniciarEscanerQRCamaraSeleccionada()">Usar Cámara Seleccionada</button>
+                </div>
+
+                <div class="search-bar" style="margin-top: 8px;">
+                    <input type="text" id="qrScanCodigoManual" placeholder="Pega aquí contenido QR/código y presiona Leer">
+                    <button type="button" class="btn" onclick="leerCodigoManual()">Leer Código</button>
+                </div>
+
+                <p class="hint">Lectura compatible con URL QR del sistema, UUID, ID de agente y número de línea.</p>
+                <div id="qrScanScanner" style="width:100%;max-width:420px;margin-top:12px;"></div>
+
+                <div class="qr-scan-summary-card" style="margin-top:18px;">
+                    <div class="qr-scan-header">
+                        <h3 style="margin:0;">Resumen de Cobro por Escaneo</h3>
+                        <span id="qrScanEstadoBadge" class="payment-pill unpaid">Sin escaneo</span>
+                    </div>
+                    <div id="qrScanSummaryContent" class="qr-scan-summary-body">
+                        Escanea un código para ver si debe pagar, cuánto debe y la fecha límite sugerida (sábado).
+                    </div>
+                    <div class="qr-scan-actions" style="margin-top:12px;">
+                        <button type="button" class="btn" onclick="registrarPagoDesdeEscaneo('abono')"><img class="action-icon" src="sources/iconfinder-money-4341308_120564.ico" alt="">Registrar Abono Semanal</button>
+                        <button type="button" class="btn btn-secondary" onclick="registrarPagoDesdeEscaneo('liquidar')"><img class="action-icon" src="sources/goblet_98435.ico" alt="">Liquidar Adeudo Total</button>
+                        <button type="button" class="btn btn-secondary" onclick="abrirGestionPagoCompletaDesdeEscaneo()"><img class="action-icon" src="sources/iconfinder-ring-4341316_120544.ico" alt="">Abrir Gestión Completa</button>
+                        <button type="button" class="btn btn-secondary" onclick="loadSection('cambiosBajas')"><img class="action-icon" src="sources/iconfinder-settings-4341324_120534.ico" alt="">Ir a Cambios y Bajas</button>
+                    </div>
+                </div>
+            </section>
+
             <!-- Sección de QR -->
             <section id="qrSection" class="panel" style="display: none;">
-                <h1>QR de Verificación de Agente</h1>
+                <h1 class="panel-title-icon"><img class="heading-icon" src="sources/map_98439.ico" alt="">QR de Verificación de Agente</h1>
                 <form onsubmit="generarQRVerificacion(event)">
                     <div class="form-group">
                         <label>ID del Agente:</label>
@@ -471,11 +520,18 @@
                     <button type="button" class="btn btn-secondary" onclick="iniciarEscanerQR()">Escanear con Cámara</button>
                     <button type="button" class="btn btn-secondary" onclick="detenerEscanerQR()">Detener Cámara</button>
                 </div>
+                <div class="search-bar qr-camera-tools" style="margin-top: 8px;">
+                    <select id="qrCameraSelect">
+                        <option value="">-- Selecciona cámara --</option>
+                    </select>
+                    <button type="button" class="btn btn-secondary" onclick="cargarCamarasDisponibles()">Actualizar Cámaras</button>
+                    <button type="button" class="btn btn-secondary" onclick="iniciarEscanerQRCamaraSeleccionada()">Usar Cámara Seleccionada</button>
+                </div>
                 <div class="search-bar" style="margin-top: 8px;">
                     <input type="text" id="codigoEscaneadoManual" placeholder="Pega aquí contenido QR/código y presiona Leer">
                     <button type="button" class="btn" onclick="leerCodigoManual()">Leer Código</button>
                 </div>
-                <p class="hint">La lectura acepta URL QR del sistema, UUID, ID de agente y número de línea.</p>
+                <p class="hint">La lectura acepta URL QR del sistema, UUID, ID de agente y número de línea. En móvil puedes cambiar de cámara desde el selector.</p>
                 <div id="qrScanner" style="width:100%;max-width:420px;margin-top:12px;"></div>
 
                 <div class="card" style="margin-top: 22px; padding: 14px; border: 1px solid #d8e6f4; border-radius: 12px; background: #f9fcff; color: #173049;">

@@ -203,6 +203,18 @@ body {
     transition: all 0.25s ease;
     font-weight: 500;
     letter-spacing: 0.01em;
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+}
+
+.menu-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    box-shadow: 0 0 0 1px rgba(136, 209, 255, 0.25);
+    background: rgba(9, 32, 55, 0.25);
+    flex: 0 0 16px;
 }
 
 .sidebar .menu-item:hover {
@@ -251,6 +263,19 @@ body {
     color: var(--brand-strong);
     margin-bottom: 1rem;
     letter-spacing: 0.01em;
+}
+
+.panel-title-icon {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.heading-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    box-shadow: 0 0 0 1px rgba(29, 95, 146, 0.2);
 }
 
 .dashboard-banner {
@@ -732,6 +757,14 @@ body {
     font-size: 0.84rem;
 }
 
+.action-icon {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    margin-right: 6px;
+    vertical-align: -2px;
+}
+
 .hint {
     color: #5e7ea2;
     margin-bottom: 0.7rem;
@@ -799,6 +832,56 @@ body {
     grid-template-columns: 2fr 1fr;
     gap: 0.7rem;
     margin-bottom: 1rem;
+}
+
+.qr-camera-tools {
+    grid-template-columns: 1.6fr 1fr 1fr;
+}
+
+#qrScanner {
+    width: 100% !important;
+    max-width: 520px !important;
+}
+
+#qrScanScanner {
+    width: 100% !important;
+    max-width: 520px !important;
+}
+
+.qr-scan-summary-card {
+    border: 1px solid #c9deef;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #ffffff 0%, #f6fbff 100%);
+    padding: 14px;
+    color: #173049;
+}
+
+.qr-scan-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.qr-scan-summary-body {
+    border: 1px solid #e1edf8;
+    border-radius: 10px;
+    padding: 10px;
+    background: #ffffff;
+}
+
+.qr-scan-kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 6px 10px;
+    color: #23496f;
+}
+
+.qr-scan-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 8px;
 }
 
 .progress-bar {
@@ -894,6 +977,13 @@ footer {
     .sidebar .menu-item {
         font-size: 0.78rem;
         padding: 0.8rem 0.6rem;
+        gap: 0.3rem;
+    }
+
+    .menu-icon {
+        width: 14px;
+        height: 14px;
+        flex-basis: 14px;
     }
 
     .main-container {
@@ -956,6 +1046,23 @@ footer {
 
     .search-bar {
         grid-template-columns: 1fr;
+    }
+
+    .qr-camera-tools {
+        grid-template-columns: 1fr;
+    }
+
+    #qrScanner {
+        max-width: 100% !important;
+    }
+
+    #qrScanScanner {
+        max-width: 100% !important;
+    }
+
+    .qr-scan-header {
+        align-items: flex-start;
+        flex-direction: column;
     }
 
     .btn {

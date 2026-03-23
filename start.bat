@@ -100,6 +100,7 @@ echo.
 echo URL:              http://localhost:8000
 echo Documentacion:    http://localhost:8000/docs
 echo Stop rapido:      .\stop.bat
+echo Auto inicio:      .\manage_autostart.bat install logon
 echo Frontend activo:  carpeta web\ (no frontend\)
 echo Usuario:          admin
 echo Contrasena:       Admin123!
