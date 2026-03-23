@@ -1,6 +1,6 @@
 """Esquemas Pydantic para validación de datos."""
 
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 import re
@@ -21,16 +21,18 @@ class UsuarioCrear(UsuarioBase):
     es_admin: bool = False
     es_activo: bool = True
 
-    @validator('rol', pre=True, always=True)
-    def normalize_role_for_create(cls, value, values):
-        role = str(value or "").strip().lower()
+    @model_validator(mode='after')
+    def normalize_role_for_create(self):
+        role = str(self.rol or "").strip().lower()
         if not role:
-            role = "admin" if values.get('es_admin') else "viewer"
+            role = "admin" if self.es_admin else "viewer"
         if role not in {"viewer", "capture", "admin", "super_admin"}:
             raise ValueError('Rol inválido')
-        return role
+        self.rol = role
+        return self
 
-    @validator('password')
+    @field_validator('password')
+    @classmethod
     def password_strength(cls, v):
         """Validar fortaleza de contraseña."""
         if not re.search(r'[A-Z]', v):
@@ -51,7 +53,8 @@ class UsuarioActualizar(BaseModel):
     es_admin: Optional[bool] = None
     rol: Optional[str] = Field(None, pattern="^(viewer|capture|admin|super_admin)$")
 
-    @validator('rol')
+    @field_validator('rol')
+    @classmethod
     def normalize_role_for_update(cls, value):
         if value is None:
             return value
@@ -76,8 +79,7 @@ class Usuario(UsuarioBase):
     fecha_creacion: datetime
     fecha_actualizacion: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UsuarioAuth(BaseModel):
@@ -94,7 +96,8 @@ class UsuarioTemporalCrear(BaseModel):
     nombre_completo: Optional[str] = Field(None, max_length=255)
     dias_vigencia: int = Field(10, ge=1, le=10)
 
-    @validator('password')
+    @field_validator('password')
+    @classmethod
     def password_strength(cls, v):
         if not re.search(r'[A-Z]', v):
             raise ValueError('Contraseña debe contener mayúscula')
@@ -136,15 +139,15 @@ class TempUsuarioHistorialItem(BaseModel):
     eliminado_por: Optional[int] = None
     detalle_json: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PasswordUpdate(BaseModel):
     """Esquema para actualizar contraseña."""
     password: str = Field(..., min_length=8, max_length=100)
 
-    @validator('password')
+    @field_validator('password')
+    @classmethod
     def password_strength(cls, v):
         """Validar fortaleza de contraseña."""
         if not re.search(r'[A-Z]', v):
@@ -173,7 +176,8 @@ class DatoImportadoBase(BaseModel):
     pais: Optional[str] = Field(None, max_length=100)
     datos_adicionales: Optional[Dict[str, Any]] = None
     
-    @validator('telefono')
+    @field_validator('telefono')
+    @classmethod
     def validate_telefono(cls, v):
         """Validar formato de teléfono."""
         if v and not re.match(r'^[\d\-\+\s\(\)]{7,}$', v):
@@ -194,14 +198,14 @@ class DatoImportadoActualizar(BaseModel):
     empresa: Optional[str] = None
     ciudad: Optional[str] = None
     pais: Optional[str] = None
+    es_activo: Optional[bool] = None
     datos_adicionales: Optional[Dict[str, Any]] = None
 
 
 class DatoImportado(DatoImportadoBase):
     """Esquema de dato importado (lectura)."""
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
     
     id: int
     uuid: str
@@ -226,8 +230,7 @@ class ImportLogCrear(ImportLogBase):
 class ImportLog(ImportLogBase):
     """Esquema de log de importación (lectura)."""
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
     
     id: int
     uuid: str
@@ -306,5 +309,4 @@ class PagoSemanalRespuesta(BaseModel):
     fecha_pago: Optional[datetime] = None
     observaciones: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

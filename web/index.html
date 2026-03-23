@@ -277,6 +277,7 @@
                         <button type="button" class="btn" onclick="cargarResumenMantenimiento()">Analizar</button>
                         <button type="button" class="btn btn-secondary" onclick="crearVistasUtilesUI()">Crear Vistas Útiles</button>
                         <button type="button" class="btn btn-danger" onclick="depurarObjetosTemporales()">Eliminar Temporales</button>
+                        <button type="button" class="btn btn-danger" onclick="depurarAgentesRedundantesUI()">Depurar Agentes Redundantes</button>
                     </div>
                     <p class="hint" style="margin-top:10px;">La depuración automática solo elimina objetos temporales/de prueba claramente identificados. No toca tablas operativas base y solo puede ejecutarse desde la máquina servidor.</p>
                     <div id="dbMaintenanceResult" style="margin-top:12px;"></div>
@@ -422,7 +423,13 @@
                     <select id="lineasLadaFilter" onchange="cargarLineasYAgentes()">
                         <option value="">-- Filtrar líneas por lada --</option>
                     </select>
+                    <select id="lineasEstadoFiltro" onchange="cargarLineasYAgentes()">
+                        <option value="todas">-- Todas las líneas --</option>
+                        <option value="libres">Solo libres</option>
+                        <option value="ocupadas">Solo ocupadas</option>
+                    </select>
                 </div>
+                <p class="hint">Costo base operativo: <strong>$300.00 MXN por línea por semana</strong>. Un agente puede tener una o más líneas y mantiene un solo QR.</p>
                 <div id="lineasEstadoContainer" class="table-responsive" style="margin-top: 12px;"></div>
             </section>
 
@@ -520,10 +527,6 @@
                         <input type="number" id="qrAgenteId" required>
                     </div>
                     <div class="form-group">
-                        <label>Teléfono esperado:</label>
-                        <input type="text" id="qrTelefono" placeholder="Ej: 523325051104">
-                    </div>
-                    <div class="form-group">
                         <label>Número VoIP esperado:</label>
                         <input type="text" id="qrVoip" placeholder="Ej: 1001 o extensión">
                     </div>
@@ -591,14 +594,14 @@
                 </form>
                 <div id="resumenPagoAgenteContainer" style="margin-top: 10px;"></div>
 
-                <h3 style="margin-top: 22px;">Configuración de Cuota</h3>
+                <h3 style="margin-top: 22px;">Configuración de Tarifa por Línea</h3>
                 <form onsubmit="guardarCuotaSemanal(event)">
                     <div class="form-group">
-                        <label>Cuota semanal (MXN):</label>
+                        <label>Tarifa semanal por línea (MXN):</label>
                         <input type="number" id="cuotaSemanalInput" min="1" step="1" value="300" required>
                     </div>
-                    <button type="submit" class="btn">Guardar Cuota</button>
-                    <button type="button" class="btn btn-secondary" onclick="cargarCuotaSemanal()">Recargar Cuota</button>
+                    <button type="submit" class="btn">Guardar Tarifa</button>
+                    <button type="button" class="btn btn-secondary" onclick="cargarCuotaSemanal()">Recargar Tarifa</button>
                 </form>
 
                 <h3 style="margin-top: 22px;">Reporte Semanal de Cobro</h3>
@@ -717,7 +720,7 @@
             <!-- Sección Estado de Agentes -->
             <section id="estadoAgentesSection" class="panel" style="display: none;">
                 <h1>&#128288; Estado de Agentes</h1>
-                <p class="hint">Vista del estado operativo de todos los agentes activos. Identifica rápidamente quién tiene línea asignada, quién no, y gestiona sus QRs. Los agentes sin línea asignada deben recibirla desde <em>Altas de Agentes</em> antes de ir a producción.</p>
+                <p class="hint">Vista consolidada por agente (una fila por agente): muestra todas sus líneas activas y el conteo total. El cobro semanal se calcula por línea activa; si no tiene líneas, no debe generar adeudo. El QR se mantiene único por agente.</p>
 
                 <div class="estado-agentes-banner" id="estadoAgentesBanner">
                     <span id="estadoAgentesCount" class="estado-agentes-count">0</span>
@@ -728,10 +731,11 @@
                     <input type="text" id="estadoAgentesSearch" placeholder="Buscar por nombre o teléfono" oninput="cargarEstadoAgentes()" style="flex:1; min-width:200px;">
                     <button type="button" class="btn" onclick="cargarEstadoAgentes()">&#128269; Buscar / Refrescar</button>
                     <button type="button" class="btn btn-warning" id="btnGenerarQRMasivo" onclick="generarQRMasivo()">&#9889; Generar QR para todos sin QR</button>
-                    <button type="button" class="btn btn-secondary" onclick="loadSection('altasAgentes', event)">&#10133; Asignar Líneas</button>
+                    <button type="button" class="btn btn-secondary" onclick="loadSection('altasAgentes')">&#10133; Asignar Líneas</button>
                 </div>
 
                 <div id="estadoAgentesResult" style="margin-top:8px;"></div>
+                <div id="estadoAgentesQrPreview" style="margin-top:8px;"></div>
                 <div id="estadoAgentesContainer" class="table-responsive" style="margin-top:14px;"></div>
             </section>
 

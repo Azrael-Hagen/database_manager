@@ -266,7 +266,7 @@ class TestDashboardSinLinea:
         _mk_agente("Dash alerta")
         resp = client.get("/api/dashboard/summary", headers=self.admin_headers)
         alerts = resp.json().get("alerts", [])
-        assert any(a.get("action_section") == "sinLinea" for a in alerts)
+        assert any(a.get("action_section") == "estadoAgentes" for a in alerts)
 
 
 class TestVistaEstadoPagoSinLinea:
@@ -361,14 +361,14 @@ class TestQrStaticoYExportacion:
 class TestFrontendAssets:
     def test_index_tiene_menu_y_seccion(self):
         html = open(_INDEX_HTML, encoding="utf-8").read()
-        assert "sinLineaSection" in html
-        assert "sinLineaMenuBadge" in html
-        assert "loadSection('sinLinea'" in html
+        assert "estadoAgentesSection" in html
+        assert "estadoAgentesMenuBadge" in html
+        assert "loadSection('estadoAgentes'" in html
 
     def test_index_tiene_controles(self):
         html = open(_INDEX_HTML, encoding="utf-8").read()
-        assert "sinLineaSearch" in html
-        assert "sinLineaContainer" in html
+        assert "estadoAgentesSearch" in html
+        assert "estadoAgentesContainer" in html
         assert "generarQRMasivo()" in html
         assert "qrExportIds" in html
         assert "qrExportLayout" in html
@@ -376,7 +376,7 @@ class TestFrontendAssets:
 
     def test_js_tiene_funciones(self):
         js = open(_MAIN_JS, encoding="utf-8").read()
-        assert "async function cargarAgentesSinLinea" in js
+        assert "async function cargarEstadoAgentes" in js
         assert "async function generarQRMasivo" in js
         assert "async function generarQRAgenteIndividual" in js
         assert "async function exportarQRLote" in js
@@ -384,13 +384,13 @@ class TestFrontendAssets:
 
     def test_js_tiene_wiring_menu_dashboard(self):
         js = open(_MAIN_JS, encoding="utf-8").read()
-        assert "case 'sinLinea'" in js
-        assert "sinLinea: canCapture()" in js
+        assert "case 'estadoAgentes'" in js
+        assert "estadoAgentes: canCapture()" in js
         assert "totals.sin_linea" in js
 
     def test_css_tiene_estilos_sin_linea(self):
         css = open(_STYLE_CSS, encoding="utf-8").read()
         assert ".row-sin-linea" in css
         assert ".menu-badge-warning" in css
-        assert ".sin-linea-banner" in css
+        assert ".estado-agentes-banner" in css
         assert ".btn-warning" in css

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.models import DatoImportado
 from app.qr import QRGenerator
 from app.config import config
+from app.utils.agent_cleanup import cleanup_redundant_agents
 
 logger = logging.getLogger(__name__)
 
@@ -122,3 +123,25 @@ def reporte_sin_linea_inicio(db: Session) -> dict:
     except Exception as exc:
         logger.warning("No se pudo calcular agentes sin linea en inicio: %s", exc)
         return {"sin_linea": -1}
+
+
+def depuracion_agentes_inicio(db: Session) -> dict:
+    """Depura agentes redundantes/de prueba al inicio si está habilitado por configuración."""
+    if not bool(getattr(config, "AUTO_AGENT_DATA_CLEANUP_ON_STARTUP", False)):
+        return {"status": "skipped", "reason": "disabled_by_config"}
+
+    try:
+        result = cleanup_redundant_agents(db, apply_changes=True, sync_legacy=True)
+        db.commit()
+        logger.info(
+            "Inicio: depuracion agentes aplicada=%s eliminados=%s test=%s duplicados=%s",
+            result.get("applied"),
+            result.get("deleted"),
+            result.get("test_like_candidates"),
+            result.get("duplicate_candidates"),
+        )
+        return {"status": "ok", **result}
+    except Exception as exc:
+        db.rollback()
+        logger.warning("No se pudo depurar agentes redundantes en inicio: %s", exc)
+        return {"status": "error", "reason": str(exc)}

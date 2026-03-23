@@ -1,6 +1,5 @@
 """Endpoints para envío y consulta de alertas del sistema (super admin)."""
 
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from app.database.orm import get_db
@@ -8,8 +7,6 @@ from app.models import AlertaSistema, Usuario
 from app.security import (
     get_current_user,
     require_super_admin_role,
-    require_server_machine_request,
-    require_admin_role,
 )
 import json
 import logging
@@ -32,13 +29,15 @@ def _parse_leida_por(leida_por_json: str | None) -> list[int]:
 
 def _alerta_to_dict(alerta: AlertaSistema, current_user_id: int) -> dict:
     leida_por = _parse_leida_por(alerta.leida_por_json)
+    remitente_username = alerta.remitente.username if alerta.remitente else None
     return {
         "id": alerta.id,
         "titulo": alerta.titulo,
         "mensaje": alerta.mensaje,
         "nivel": alerta.nivel,
         "enviado_por": alerta.enviado_por,
-        "remitente_username": alerta.remitente.username if alerta.remitente else None,
+        "remitente_username": remitente_username,
+        "enviado_por_username": remitente_username,
         "fecha_envio": alerta.fecha_envio.isoformat() if alerta.fecha_envio else None,
         "es_activa": alerta.es_activa,
         "leida": current_user_id in leida_por,
@@ -55,9 +54,8 @@ async def enviar_alerta(
     mensaje: str = Query(..., min_length=1),
     nivel: str = Query("warning"),
 ):
-    """Enviar alerta a todos los usuarios. Solo super_admin desde la máquina servidor."""
+    """Enviar alerta a todos los usuarios. Solo super_admin."""
     require_super_admin_role(current_user, "Solo el super administrador puede enviar alertas")
-    require_server_machine_request(request, "El envío de alertas solo se permite desde la máquina servidor")
 
     nivel_normalizado = nivel.lower() if nivel.lower() in _NIVELES else "warning"
 
@@ -82,9 +80,8 @@ async def enviar_alerta_json(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Enviar alerta con body JSON. Solo super_admin desde la máquina servidor."""
+    """Enviar alerta con body JSON. Solo super_admin."""
     require_super_admin_role(current_user, "Solo el super administrador puede enviar alertas")
-    require_server_machine_request(request, "El envío de alertas solo se permite desde la máquina servidor")
 
     try:
         body = await request.json()
@@ -124,8 +121,7 @@ async def listar_alertas(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Listar alertas del sistema (admin y super_admin)."""
-    require_admin_role(current_user, "Solo administradores pueden ver alertas del sistema")
+    """Listar alertas del sistema para cualquier usuario autenticado."""
 
     query = db.query(AlertaSistema)
     if solo_activas:
@@ -147,7 +143,6 @@ async def marcar_alerta_leida(
     db: Session = Depends(get_db),
 ):
     """Marcar alerta como leída por el usuario actual."""
-    require_admin_role(current_user, "Solo administradores pueden marcar alertas")
 
     alerta = db.query(AlertaSistema).filter(AlertaSistema.id == alerta_id).first()
     if not alerta:
@@ -170,9 +165,8 @@ async def desactivar_alerta(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Desactivar una alerta (solo super_admin desde el servidor)."""
+    """Desactivar una alerta (solo super_admin)."""
     require_super_admin_role(current_user, "Solo el super administrador puede desactivar alertas")
-    require_server_machine_request(request, "Acción permitida solo desde la máquina servidor")
 
     alerta = db.query(AlertaSistema).filter(AlertaSistema.id == alerta_id).first()
     if not alerta:

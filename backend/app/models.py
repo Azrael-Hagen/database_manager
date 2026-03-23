@@ -1,6 +1,6 @@
 """Modelos de base de datos con SQLAlchemy ORM."""
 
-from sqlalchemy import Column, Integer, String, DateTime, LargeBinary, Boolean, Text, ForeignKey, Date, Float
+from sqlalchemy import Column, Integer, String, DateTime, LargeBinary, Boolean, Text, ForeignKey, Date, Float, Numeric
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime, timezone
 import uuid
@@ -187,6 +187,8 @@ class AgenteLineaAsignacion(Base):
     linea_id = Column(Integer, ForeignKey("lineas_telefonicas.id"), nullable=False, index=True)
     es_activa = Column(Boolean, default=True, index=True)
     fecha_asignacion = Column(DateTime, default=_utcnow, index=True)
+    cobro_desde_semana = Column(Date, index=True)
+    cargo_inicial = Column(Numeric(10, 2), default=0)
     fecha_liberacion = Column(DateTime)
     observaciones = Column(Text)
 

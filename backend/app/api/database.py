@@ -5,6 +5,7 @@ from sqlalchemy import text, inspect
 from sqlalchemy.orm import Session
 from app.database.orm import get_db
 from app.security import get_current_user, require_admin_role, require_capture_role, require_server_machine_request
+from app.utils.agent_cleanup import cleanup_redundant_agents
 import logging
 import json
 import csv
@@ -725,3 +726,51 @@ async def purge_temporary_objects(
 
     db.commit()
     return {"status": "success", "database": db_name, "dropped": dropped, "message": f"Se eliminaron {len(dropped)} objetos temporales"}
+
+
+@router.post("/{db_name}/maintenance/cleanup-redundant-agents")
+async def cleanup_redundant_agents_maintenance(
+    db_name: str,
+    request: Request,
+    dry_run: bool = Query(False, description="Si es true, solo analiza y no elimina"),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Depuración segura de agentes test/duplicados sin referencias operativas."""
+    db_name = _safe_ident(db_name, "Base de datos")
+    require_admin_role(current_user, "Solo administradores pueden depurar agentes")
+    require_server_machine_request(request)
+
+    if db_name != "database_manager":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Esta depuración solo aplica sobre database_manager",
+        )
+
+    db.execute(text("USE `database_manager`"))
+    try:
+        result = cleanup_redundant_agents(db, apply_changes=not dry_run, sync_legacy=True)
+        if dry_run:
+            db.rollback()
+            return {
+                "status": "success",
+                "database": db_name,
+                "dry_run": True,
+                "message": "Análisis completado. No se aplicaron cambios.",
+                "data": result,
+            }
+
+        db.commit()
+        return {
+            "status": "success",
+            "database": db_name,
+            "dry_run": False,
+            "message": f"Depuración completada. Eliminados: {result.get('deleted', 0)}",
+            "data": result,
+        }
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error depurando agentes redundantes: {str(exc)}",
+        )

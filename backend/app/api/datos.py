@@ -293,7 +293,7 @@ async def actualizar_dato(
         "empresa": dato.empresa
     }
     
-    update_data = dato_in.dict(exclude_unset=True)
+    update_data = dato_in.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         if field == "datos_adicionales" and value is not None:
             clean_json = {k: v for k, v in value.items() if v not in (None, "")}
@@ -302,12 +302,15 @@ async def actualizar_dato(
             setattr(dato, field, value)
 
     try:
-        _sync_legacy_agente_row(
-            db,
-            agente_id=dato.id,
-            nombre=dato.nombre,
-            datos_adicionales=_safe_json_object(dato.datos_adicionales),
-        )
+        if bool(dato.es_activo):
+            _sync_legacy_agente_row(
+                db,
+                agente_id=dato.id,
+                nombre=dato.nombre,
+                datos_adicionales=_safe_json_object(dato.datos_adicionales),
+            )
+        else:
+            _delete_legacy_agente_row(db, dato.id)
     except Exception as exc:
         logger.exception("No se pudo sincronizar actualizacion en registro_agentes.agentes")
         raise HTTPException(
@@ -327,7 +330,7 @@ async def actualizar_dato(
         registro_id=dato_id,
         descripcion=f"Dato actualizado: {dato.nombre}",
         datos_anteriores=json.dumps(datos_anteriores),
-        datos_nuevos=json.dumps(dato_in.dict(exclude_unset=True)),
+        datos_nuevos=json.dumps(dato_in.model_dump(exclude_unset=True)),
         resultado="SUCCESS"
     )
     

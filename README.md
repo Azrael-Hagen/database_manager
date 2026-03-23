@@ -15,6 +15,7 @@ Aplicación para administración de MariaDB con interfaz web moderna, autenticac
 - Gestión de líneas: inventario de líneas y asignación agente-línea con estado ocupada/libre.
 - Alta manual de agentes: formulario rápido (Nombre, alias, ubicación, FP, FC, grupo) con asignación de línea automática o manual.
 - Catálogo de ladas: filtros por lada y preferencia por agente para priorizar asignación automática.
+- Depuración operacional de agentes: limpieza de test data y duplicados sin referencias operativas (manual y automática).
 - Tiempo real configurable: actualización periódica con modo ligero para ahorrar recursos.
 
 ## Requisitos
@@ -106,6 +107,26 @@ Modo ligero incorporado:
 
 - Si la pestaña está inactiva, pausa auto-refresh.
 - Al volver a la pestaña, reanuda según configuración.
+
+## Depuración de agentes redundantes
+
+Se agregó mantenimiento específico para mantener la operación limpia:
+
+- Botón en UI: Gestión de Bases de Datos > Depurar Esquema > Depurar Agentes Redundantes.
+- Flujo seguro: primero analiza (`dry run`) y luego solicita confirmación para aplicar.
+- Regla de seguridad: nunca elimina agentes con referencias en asignaciones, pagos o recibos.
+
+También puede ejecutarse automáticamente al iniciar servidor mediante `.env`:
+
+```env
+AUTO_AGENT_DATA_CLEANUP_ON_STARTUP=true
+```
+
+Para desactivar limpieza automática:
+
+```env
+AUTO_AGENT_DATA_CLEANUP_ON_STARTUP=false
+```
 
 ## Acceso desde red local y remoto
 

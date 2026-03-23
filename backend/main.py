@@ -34,7 +34,7 @@ from app.versioning import current_version_payload, current_version_string
 from app.security import get_current_user
 from app.utils.pagos import generar_alertas_miercoles_pendientes
 from app.utils.backups import create_weekly_backup
-from app.utils.startup_tasks import auto_qr_al_inicio, reporte_sin_linea_inicio
+from app.utils.startup_tasks import auto_qr_al_inicio, reporte_sin_linea_inicio, depuracion_agentes_inicio
 
 # Configurar logging
 logging.basicConfig(
@@ -95,6 +95,9 @@ async def lifespan(app: FastAPI):
             # Auto-generar QR faltantes y reportar agentes sin línea
             qr_result = auto_qr_al_inicio(db)
             logger.info(f"Auto-QR al inicio: {qr_result}")
+
+            dep_result = depuracion_agentes_inicio(db)
+            logger.info(f"Depuración de agentes al inicio: {dep_result}")
 
             sin_linea_result = reporte_sin_linea_inicio(db)
             if sin_linea_result.get("sin_linea", 0) > 0:

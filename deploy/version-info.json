@@ -3,12 +3,37 @@
   "channel": "production",
   "current": {
     "version": "1.5.0",
-    "revision": 1,
+    "revision": 3,
     "release_date": "2026-03-23",
     "codename": "Static Agent QR",
-    "summary": "QR estatico por agente, exportacion PDF por lotes, alertas de sistema y mejora mobile/startup"
+    "summary": "Cobro semanal por linea con estado consolidado por agente y filtros de ocupacion"
   },
   "history": [
+    {
+      "version": "1.5.0",
+      "revision": 3,
+      "release_date": "2026-03-23",
+      "codename": "Static Agent QR",
+      "changes": [
+        "Se consolida la regla de cobro por linea activa por semana con soporte de cargo inicial y semana de inicio por asignacion.",
+        "Se agrega filtro operativo de lineas por estado (todas/libres/ocupadas) en Altas de Agentes.",
+        "Estado de Agentes ahora muestra una sola fila por agente con conteo y listado de lineas activas.",
+        "Se mantiene un QR unico por agente aun cuando tenga multiples lineas activas.",
+        "Se valida entorno limpio: dependencias instaladas y suite de pruebas en verde (44 passed)."
+      ]
+    },
+    {
+      "version": "1.5.0",
+      "revision": 2,
+      "release_date": "2026-03-23",
+      "codename": "Static Agent QR",
+      "changes": [
+        "Se agrega depuracion automatica de agentes redundantes al arranque del servidor con bandera de entorno.",
+        "Se agrega endpoint seguro de mantenimiento para limpieza de agentes test/duplicados con modo dry-run.",
+        "Se corrige Cambios y Bajas para evitar repeticion Alias/Nombre y ocultar duplicados por nombre+alias en UI operativa.",
+        "Se ejecuta depuracion adicional de registros duplicados por nombre+alias sin referencias operativas en database_manager y registro_agentes."
+      ]
+    },
     {
       "version": "1.5.0",
       "revision": 1,

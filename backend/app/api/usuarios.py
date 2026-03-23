@@ -407,7 +407,7 @@ async def crear_usuario(
         )
 
     # Crear usuario
-    usuario_dict = usuario_in.dict()
+    usuario_dict = usuario_in.model_dump()
     usuario_dict['hashed_password'] = hash_password(usuario_in.password)
     usuario_dict.pop('password')  # Remover password del dict
 
@@ -466,7 +466,7 @@ async def actualizar_usuario(
         usuario_in.es_admin = usuario.es_admin
         usuario_in.rol = normalize_role(usuario.rol, usuario.es_admin)
 
-    update_payload = usuario_in.dict(exclude_unset=True)
+    update_payload = usuario_in.model_dump(exclude_unset=True)
     requested_role = normalize_role(update_payload.get("rol"), bool(update_payload.get("es_admin", usuario.es_admin)))
     if requested_role == "super_admin":
         require_super_admin_role(current_user, "Solo super_admin puede asignar rol super_admin")

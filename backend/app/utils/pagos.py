@@ -5,7 +5,7 @@ from typing import Iterable
 
 from sqlalchemy.orm import Session
 
-from app.models import AlertaPago, ConfigSistema, DatoImportado, PagoSemanal
+from app.models import AgenteLineaAsignacion, AlertaPago, ConfigSistema, DatoImportado, PagoSemanal
 
 CUOTA_SEMANAL_KEY = "CUOTA_SEMANAL"
 LAST_ALERT_CHECK_KEY = "LAST_ALERT_CHECK_DATE"
@@ -77,13 +77,45 @@ def _agent_start_week(db: Session, agente: DatoImportado, semana_ref: date) -> d
     return monday_of_week(created)
 
 
+def _active_billable_assignments(db: Session, agente_id: int, semana_ref: date) -> list[dict]:
+    rows = db.query(AgenteLineaAsignacion).filter(
+        AgenteLineaAsignacion.agente_id == agente_id,
+        AgenteLineaAsignacion.es_activa.is_(True),
+    ).all()
+
+    items: list[dict] = []
+    for row in rows:
+        if not row.linea or not row.linea.es_activa:
+            continue
+        raw_start = row.cobro_desde_semana
+        if raw_start is None and row.fecha_asignacion:
+            raw_start = row.fecha_asignacion.date()
+        start_week = monday_of_week(raw_start or semana_ref)
+        if start_week > semana_ref:
+            continue
+        items.append(
+            {
+                "linea_id": int(row.linea_id),
+                "start_week": start_week,
+                "cargo_inicial": float(row.cargo_inicial or 0),
+            }
+        )
+    return items
+
+
 def resumen_cobranza_agente(db: Session, agente: DatoImportado, semana: date | None = None) -> dict:
     """Resumen de deuda acumulada y estado semanal de un agente."""
     semana_ref = monday_of_week(semana or date.today())
-    cuota = get_cuota_semanal(db)
-    start_week = _agent_start_week(db, agente, semana_ref)
-    weeks_due = max(1, _weeks_between(start_week, semana_ref))
-    deuda_total = float(cuota) * float(weeks_due)
+    tarifa_por_linea = float(get_cuota_semanal(db))
+    assignments = _active_billable_assignments(db, agente.id, semana_ref)
+    lineas_activas = len(assignments)
+
+    cuota_semanal_total = float(tarifa_por_linea) * float(lineas_activas)
+    deuda_total = 0.0
+    for item in assignments:
+        weeks_due = _weeks_between(item["start_week"], semana_ref)
+        deuda_total += float(tarifa_por_linea) * float(weeks_due)
+        deuda_total += float(item["cargo_inicial"])
 
     total_abonado_rows = db.query(PagoSemanal.monto).filter(
         PagoSemanal.agente_id == agente.id,
@@ -99,15 +131,23 @@ def resumen_cobranza_agente(db: Session, agente: DatoImportado, semana: date | N
     ).first()
     abonado_semana = float(pago_semana.monto or 0) if pago_semana else 0.0
     pagado_semana = bool(pago_semana.pagado) if pago_semana else False
-    saldo_semana = max(float(cuota) - abonado_semana, 0.0)
+    saldo_semana = max(float(cuota_semanal_total) - abonado_semana, 0.0)
 
-    semanas_pendientes = int(saldo_acumulado // float(cuota))
-    if saldo_acumulado % float(cuota) > 0.0001:
-        semanas_pendientes += 1
+    if tarifa_por_linea <= 0:
+        semanas_pendientes = 0
+    else:
+        semanas_pendientes = int(saldo_acumulado // float(tarifa_por_linea))
+        if saldo_acumulado % float(tarifa_por_linea) > 0.0001:
+            semanas_pendientes += 1
+
+    if lineas_activas == 0:
+        pagado_semana = True
 
     return {
         "semana_inicio": semana_ref,
-        "cuota_semanal": float(cuota),
+        "tarifa_linea_semanal": float(tarifa_por_linea),
+        "lineas_activas": int(lineas_activas),
+        "cuota_semanal": float(cuota_semanal_total),
         "deuda_total": float(deuda_total),
         "total_abonado": float(total_abonado),
         "saldo_acumulado": float(saldo_acumulado),
@@ -147,6 +187,9 @@ def generar_alertas_miercoles_pendientes(db: Session, today: date | None = None)
         semanas_revisadas.add(semana.isoformat())
 
         for agente in agentes:
+            resumen = resumen_cobranza_agente(db, agente, semana)
+            if int(resumen.get("lineas_activas") or 0) == 0:
+                continue
             pago = db.query(PagoSemanal).filter(
                 PagoSemanal.agente_id == agente.id,
                 PagoSemanal.semana_inicio == semana,
@@ -189,7 +232,7 @@ def obtener_reporte_semanal(
 ) -> dict:
     """Build weekly payment report per active agent."""
     semana_ref = monday_of_week(semana or date.today())
-    cuota = get_cuota_semanal(db)
+    tarifa_linea = get_cuota_semanal(db)
 
     query = db.query(DatoImportado).filter(DatoImportado.es_activo.is_(True))
     if agente_buscar:
@@ -216,8 +259,12 @@ def obtener_reporte_semanal(
 
         pagado = bool(pago.pagado) if pago else False
         monto_pagado = float(pago.monto) if pago else 0.0
-        saldo = max(cuota - monto_pagado, 0.0)
         resumen = resumen_cobranza_agente(db, agente, semana_ref)
+        cuota_agente = float(resumen.get("cuota_semanal") or 0)
+        saldo = max(cuota_agente - monto_pagado, 0.0)
+
+        if float(resumen.get("saldo_acumulado") or 0) <= 0.0001:
+            pagado = True
 
         if pagado:
             total_pagados += 1
@@ -233,7 +280,9 @@ def obtener_reporte_semanal(
             "empresa": agente.empresa,
             "pagado": pagado,
             "monto_pagado": monto_pagado,
-            "cuota": cuota,
+            "cuota": cuota_agente,
+            "lineas_activas": int(resumen.get("lineas_activas") or 0),
+            "tarifa_linea_semanal": float(resumen.get("tarifa_linea_semanal") or tarifa_linea),
             "saldo": saldo,
             "deuda_total": resumen["deuda_total"],
             "total_abonado": resumen["total_abonado"],
@@ -248,7 +297,7 @@ def obtener_reporte_semanal(
 
     return {
         "semana_inicio": semana_ref.isoformat(),
-        "cuota_semanal": cuota,
+        "cuota_semanal": tarifa_linea,
         "filtros": {
             "agente": agente_buscar or "",
             "empresa": empresa_buscar or "",

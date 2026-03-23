@@ -192,6 +192,20 @@ def _ensure_core_schema_updates():
                 )
             )
 
+        if not _column_exists(connection, "agente_linea_asignaciones", "cobro_desde_semana"):
+            connection.execute(
+                text(
+                    "ALTER TABLE `agente_linea_asignaciones` ADD COLUMN `cobro_desde_semana` DATE NULL"
+                )
+            )
+
+        if not _column_exists(connection, "agente_linea_asignaciones", "cargo_inicial"):
+            connection.execute(
+                text(
+                    "ALTER TABLE `agente_linea_asignaciones` ADD COLUMN `cargo_inicial` DECIMAL(10,2) NOT NULL DEFAULT 0"
+                )
+            )
+
         if not _index_exists(connection, "pagos_semanales", "ix_pagos_semanales_agente_semana_pagado"):
             connection.execute(
                 text(

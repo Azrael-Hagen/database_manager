@@ -25,6 +25,8 @@ let brandingManageEnabled = false;
 let currentAgentManagementRows = [];
 let currentEditingAgentId = null;
 let currentBackupDir = '';
+let pendingAltaAgentId = null;
+let currentAltasAgents = [];
 let currentTableBrowserState = { database: '', table: '', orderBy: 'id', direction: 'desc', limit: 50 };
 let currentUsuariosRows = [];
 let altasTourActive = false;
@@ -32,7 +34,9 @@ let altasTourStepIndex = 0;
 let altasTourBackdrop = null;
 let altasTourPanel = null;
 let altasTourCurrentElement = null;
-const DEFAULT_AGENT_DATABASE = 'registro_agentes';
+let alertPollingPromise = null;
+let lastAlertNotificationStamp = null;
+const DEFAULT_AGENT_DATABASE = 'database_manager';
 const BRANDING_DEFAULTS = {
     appName: 'Database Manager',
     subtitle: 'database_manager',
@@ -216,9 +220,9 @@ function canAccessSection(section) {
     const role = getCurrentRole();
     if (role === 'super_admin' || role === 'admin') return true;
     if (role === 'capture') {
-        return ['dashboard', 'datos', 'importar', 'altasAgentes'].includes(section);
+        return ['dashboard', 'datos', 'importar', 'altasAgentes', 'estadoAgentes', 'alertas'].includes(section);
     }
-    return ['dashboard', 'datos'].includes(section);
+    return ['dashboard', 'datos', 'alertas'].includes(section);
 }
 
 function applyRoleBasedUI() {
@@ -244,8 +248,8 @@ function applyRoleBasedUI() {
         usuarios: canAdmin(),
         auditoria: canAdmin(),
         papelera: canSuperAdmin(),
-        sinLinea: canCapture(),
-                alertas: canAdmin(),
+        estadoAgentes: canCapture(),
+        alertas: true,
         };
     Object.entries(menuRules).forEach(([section, visible]) => {
         const item = document.querySelector(`.menu-item[onclick*="'${section}'"]`);
@@ -623,7 +627,7 @@ async function validarSesionActiva() {
 
 // === AUTENTICACIÓN ===
 function showLogin() {
-    const ids = ['loginSection', 'registerSection', 'dashboardSection', 'datosSection', 'databasesSection', 'importarSection', 'altasAgentesSection', 'cambiosBajasSection', 'qrSection', 'usuariosSection', 'auditoriaSection', 'sinLineaSection', 'alertasSection'];
+    const ids = ['loginSection', 'registerSection', 'dashboardSection', 'datosSection', 'databasesSection', 'importarSection', 'altasAgentesSection', 'cambiosBajasSection', 'qrSection', 'usuariosSection', 'auditoriaSection', 'estadoAgentesSection', 'alertasSection'];
     ids.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = id === 'loginSection' ? 'block' : 'none';
@@ -658,6 +662,7 @@ function showApp() {
     syncRealtimeControls();
     loadSection('dashboard');
     startRealtimeUpdates();
+    refreshAlertBadgeAndNotify(true);
     setTimeout(() => {
         applyQrDeepLinkIfPresent().catch((err) => console.warn('Deep link QR no aplicado:', err?.message || err));
     }, 120);
@@ -931,6 +936,7 @@ function startRealtimeUpdates() {
     realtimeInterval = setInterval(async () => {
         if (!authToken) return;
         try {
+            await refreshAlertBadgeAndNotify(false);
             if (currentSection === 'dashboard') {
                 await loadDashboardData(false);
             }
@@ -952,6 +958,38 @@ function stopRealtimeUpdates() {
         clearInterval(realtimeInterval);
         realtimeInterval = null;
     }
+}
+
+async function refreshAlertBadgeAndNotify(showPopup = false) {
+    if (!authToken || alertPollingPromise) return;
+    alertPollingPromise = (async () => {
+        try {
+            const data = await fetchJson(`${API_URL}/alertas/?solo_activas=true&limit=20`, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            const items = Array.isArray(data?.items) ? data.items : [];
+            const unread = items.filter(a => !a.leida);
+            const badge = document.getElementById('alertasMenuBadge');
+            if (badge) {
+                badge.style.display = unread.length > 0 ? 'inline-block' : 'none';
+                badge.textContent = unread.length > 99 ? '99+' : String(unread.length || '');
+            }
+
+            if (showPopup && unread.length > 0) {
+                const newest = unread[0];
+                const stamp = `${newest.id}:${newest.fecha_envio || ''}`;
+                if (stamp !== lastAlertNotificationStamp) {
+                    lastAlertNotificationStamp = stamp;
+                    alert(`Nueva alerta del sistema: ${newest.titulo}\n\n${newest.mensaje}`);
+                }
+            }
+        } catch (_) {
+            // Ignore transient alert refresh failures.
+        } finally {
+            alertPollingPromise = null;
+        }
+    })();
+    await alertPollingPromise;
 }
 
 function syncRealtimeControls() {
@@ -1009,8 +1047,8 @@ function loadSection(section, eventRef = null) {
     document.getElementById('qrSection').style.display = 'none';
     document.getElementById('usuariosSection').style.display = 'none';
     document.getElementById('auditoriaSection').style.display = 'none';
-    const _sinLineaEl = document.getElementById('sinLineaSection');
-    if (_sinLineaEl) _sinLineaEl.style.display = 'none';
+    const _estadoAgentesEl = document.getElementById('estadoAgentesSection');
+    if (_estadoAgentesEl) _estadoAgentesEl.style.display = 'none';
     const _alertasEl = document.getElementById('alertasSection');
     if (_alertasEl) _alertasEl.style.display = 'none';
 
@@ -1067,9 +1105,9 @@ function loadSection(section, eventRef = null) {
             document.getElementById('auditoriaSection').style.display = 'block';
             cargarAuditoria();
             break;
-        case 'sinLinea':
-            document.getElementById('sinLineaSection').style.display = 'block';
-            cargarAgentesSinLinea();
+        case 'estadoAgentes':
+            document.getElementById('estadoAgentesSection').style.display = 'block';
+            cargarEstadoAgentes();
             break;
         case 'alertas':
             document.getElementById('alertasSection').style.display = 'block';
@@ -1150,7 +1188,7 @@ async function applyQrDeepLinkIfPresent() {
 }
 
 function isAgentDataTableContext(dbName, tableName) {
-    return tableName === 'datos_importados' && (dbName === DEFAULT_AGENT_DATABASE || dbName === 'database_manager');
+    return tableName === 'datos_importados' && dbName === 'database_manager';
 }
 
 // === DASHBOARD ===
@@ -1175,8 +1213,8 @@ async function loadDashboardData(showErrors = true) {
         document.getElementById('totalAlertasPago').textContent = totals.alertas_pago_pendientes ?? 0;
 
         // Badge del menú Sin Línea
-        const sinLineaMenuBadge = document.getElementById('sinLineaMenuBadge');
-        const sinLineaMenuLi = document.getElementById('menuSinLinea');
+        const sinLineaMenuBadge = document.getElementById('estadoAgentesMenuBadge');
+        const sinLineaMenuLi = document.getElementById('menuEstadoAgentes');
         const sinLineaTotal = totals.sin_linea ?? 0;
         if (sinLineaMenuBadge) {
             sinLineaMenuBadge.style.display = sinLineaTotal > 0 ? 'inline-block' : 'none';
@@ -1394,6 +1432,10 @@ async function cargarTodosLosDatos() {
         const sort = getDatosSortConfig();
         const data = await apiClient.getTableData(dbName, tableName, 500, 0, sort.orderBy, sort.direction);
         let rows = data.data || [];
+        // Filtrar inactivos si es tabla de agentes
+        if (isAgentDataTableContext(dbName, tableName)) {
+            rows = rows.filter(r => r.es_activo !== false);
+        }
         if (search) {
             const s = search.toLowerCase();
             rows = rows.filter(row => Object.values(row).some(v => String(v ?? '').toLowerCase().includes(s)));
@@ -1583,7 +1625,7 @@ function mostrarDatos(datos) {
         if (editableContext && Number.isFinite(Number(fila.id))) {
             let actionHtml = `<td style="display: flex; gap: 4px; flex-wrap: wrap;">`;
             if (canAdmin()) {
-                actionHtml += `<button onclick="editarDato(${fila.id})" class="btn btn-small" title="Editar registro">✏️ Editar</button>`;
+                actionHtml += `<button onclick="editarDato(${fila.id}, '${(fila.uuid || '').replace(/'/g, "\\'")}')" class="btn btn-small" title="Editar registro">✏️ Editar</button>`;
             }
             
             // Si es agente y tiene QR, mostrar botón para verlo
@@ -1596,7 +1638,7 @@ function mostrarDatos(datos) {
             }
             
             if (canAdmin()) {
-                actionHtml += `<button onclick="eliminarDato(${fila.id})" class="btn btn-small" title="Eliminar registro">🗑️</button>`;
+                actionHtml += `<button onclick="eliminarDato(${fila.id}, '${(fila.uuid || '').replace(/'/g, "\\'")}')" class="btn btn-small" title="Eliminar registro">🗑️</button>`;
                 if (canSuperAdmin()) {
                     actionHtml += `<button onclick="eliminarDatoDefinitivo(${fila.id})" class="btn btn-small btn-danger" title="Eliminar definitivamente (super admin)">🔥</button>`;
                     actionHtml += `<button onclick="rollbackDato(${fila.id})" class="btn btn-small" title="Restaurar desde papelera">↩️</button>`;
@@ -1605,7 +1647,8 @@ function mostrarDatos(datos) {
             actionHtml += `</td></tr>`;
             html += actionHtml;
         } else {
-            html += `<td><span class="hint">Solo lectura</span></td></tr>`;
+            const roReason = tableName === 'datos_importados' ? 'Solo lectura en esta base. Para editar/eliminar usa database_manager.datos_importados.' : 'Solo lectura';
+            html += `<td><span class="hint">${roReason}</span></td></tr>`;
         }
     });
 
@@ -1613,30 +1656,46 @@ function mostrarDatos(datos) {
     container.innerHTML = html;
 }
 
-async function editarDato(id) {
+async function editarDato(id, uuid = '') {
     if (!canAdmin()) {
         alert('Solo administradores pueden editar registros existentes.');
         return;
     }
-    const nuevoValor = prompt('Nuevo valor:');
+    const nuevoValor = prompt('Nuevo nombre del agente:');
     if (!nuevoValor) return;
+    const esActivo = confirm('¿Debe quedar ACTIVO este agente?\nAceptar = activo / Cancelar = inactivo');
 
     try {
-        const response = await fetch(`${API_URL}/datos/${id}`, {
+        let targetId = id;
+        try {
+            const dato = await apiClient.getDato(id);
+            targetId = dato?.id || id;
+        } catch (_) {
+            if (uuid) {
+                const datoUuid = await apiClient.getDatoByUUID(uuid);
+                targetId = datoUuid?.id || id;
+            }
+        }
+
+        const response = await fetch(`${API_URL}/datos/${targetId}`, {
             method: 'PUT',
             headers: {
                 'Authorization': `Bearer ${authToken}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ nombre: nuevoValor })
+            body: JSON.stringify({ nombre: nuevoValor, es_activo: esActivo })
         });
 
         if (response.ok) {
             alert('Dato actualizado');
             buscarDatos();
+            return;
         }
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || 'No se pudo actualizar el dato');
     } catch (error) {
         console.error('Error:', error);
+        alert('Error al editar: ' + error.message);
     }
 }
 
@@ -1811,7 +1870,9 @@ function renderEscaneoResumen(data) {
     const a = data?.agente || {};
     const v = data?.verificacion || {};
     const deuda = Number(v.saldo_acumulado ?? 0);
-    const cuota = Number(v.cuota_semanal ?? 0);
+    const tarifaLinea = Number(v.tarifa_linea_semanal ?? v.cuota_semanal ?? 0);
+    const lineasActivas = Number(v.lineas_activas ?? (Array.isArray(a.lineas) ? a.lineas.length : 0));
+    const cuota = Number(v.cuota_semanal ?? (tarifaLinea * lineasActivas));
     const debe = deuda > 0.009 || !v.pagado;
     const debeTxt = debe ? 'Debe pagar' : 'Sin adeudo';
     const dueDate = getDueDateSaturday(v.semana_inicio);
@@ -1834,7 +1895,9 @@ function renderEscaneoResumen(data) {
             <div><strong>Teléfono:</strong> ${escapeHtml(a.telefono || '-')}</div>
         </div>
         <div class="qr-scan-kpis" style="margin-top:8px;">
-            <div><strong>Cuota semanal:</strong> $${cuota.toFixed(2)} MXN</div>
+            <div><strong>Tarifa por línea:</strong> $${tarifaLinea.toFixed(2)} MXN</div>
+            <div><strong>Líneas activas:</strong> ${lineasActivas}</div>
+            <div><strong>Cargo semanal actual:</strong> $${cuota.toFixed(2)} MXN</div>
             <div><strong>Monto semana:</strong> $${Number(v.monto ?? 0).toFixed(2)} MXN</div>
             <div><strong>Total abonado:</strong> $${Number(v.total_abonado ?? 0).toFixed(2)} MXN</div>
             <div><strong>Saldo acumulado:</strong> $${deuda.toFixed(2)} MXN</div>
@@ -2265,11 +2328,9 @@ async function manejarQRLeido(decodedText) {
         currentVerificationData = { agente, verificacion };
 
         const qrAgente = document.getElementById('qrAgenteId');
-        const qrTelefono = document.getElementById('qrTelefono');
         const qrVoip = document.getElementById('qrVoip');
         const qrSemana = document.getElementById('qrSemana');
         if (qrAgente) qrAgente.value = agente.id || '';
-        if (qrTelefono) qrTelefono.value = agente.telefono || '';
         if (qrVoip) qrVoip.value = agente.numero_voip || '';
         if (qrSemana && !qrSemana.value && verificacion.semana_inicio) qrSemana.value = verificacion.semana_inicio;
 
@@ -2358,6 +2419,54 @@ function resetGestionAgentePanel() {
     });
 }
 
+function buildAgentIdentityLabel(agent) {
+    const extras = getAgentExtras(agent);
+    const nombre = String(agent?.nombre || '').trim();
+    const alias = String(extras.alias || '').trim();
+    const telefono = String(agent?.telefono || '').trim();
+    const parts = [];
+
+    if (alias && alias.toLowerCase() !== nombre.toLowerCase()) parts.push(`Alias: ${alias}`);
+    if (telefono) parts.push(`Tel: ${telefono}`);
+    parts.push(`ID ${agent.id}`);
+
+    return parts.join(' | ');
+}
+
+function dedupeAgentesPorNombreAlias(agentes) {
+    const map = new Map();
+    (agentes || []).forEach(agent => {
+        const extras = getAgentExtras(agent);
+        const key = `${String(agent?.nombre || '').trim().toLowerCase()}|${String(extras.alias || '').trim().toLowerCase()}`;
+        const current = map.get(key);
+        if (!current) {
+            map.set(key, agent);
+            return;
+        }
+
+        const currentLines = Array.isArray(current.lineas) ? current.lineas.length : 0;
+        const nextLines = Array.isArray(agent.lineas) ? agent.lineas.length : 0;
+        if (nextLines > currentLines) {
+            map.set(key, agent);
+            return;
+        }
+
+        if (nextLines === currentLines) {
+            const currentScore = Number(Boolean(current.telefono)) + Number(Boolean(getAgentExtras(current).numero_voip));
+            const nextScore = Number(Boolean(agent.telefono)) + Number(Boolean(extras.numero_voip));
+            if (nextScore > currentScore || (nextScore === currentScore && Number(agent.id) < Number(current.id))) {
+                map.set(key, agent);
+            }
+        }
+    });
+    return Array.from(map.values());
+}
+
+function irAAsignacionLineaAgente(agenteId) {
+    pendingAltaAgentId = Number(agenteId) || null;
+    loadSection('altasAgentes');
+}
+
 function renderGestionAgentes(agentes) {
     const container = document.getElementById('gestionAgentesContainer');
     if (!container) return;
@@ -2375,16 +2484,18 @@ function renderGestionAgentes(agentes) {
         const lines = Array.isArray(agent.lineas) ? agent.lineas : [];
         const lineText = lines.length ? lines.map(line => `${line.numero} (${line.tipo || 'N/A'})`).join(', ') : 'Sin líneas';
         const ladas = Array.isArray(agent.ladas_preferidas) && agent.ladas_preferidas.length ? agent.ladas_preferidas.join(', ') : '-';
+        const identityLabel = buildAgentIdentityLabel(agent);
         html += `<tr>
             <td>${agent.id}</td>
-            <td>${agent.nombre || '-'}</td>
-            <td>${extras.alias || '-'}</td>
+            <td><strong>${escapeHtml(agent.nombre || '-')}</strong><br><span class="hint">${escapeHtml(identityLabel)}</span></td>
+            <td>${escapeHtml(extras.alias || '-')}</td>
             <td>${agent.telefono || '-'}</td>
             <td>${lineText}</td>
             <td>${ladas}</td>
             <td>
                 <button onclick="editarAgenteGestion(${agent.id})" class="btn btn-small">Editar</button>
                 <button onclick="previsualizarQrGestion(${agent.id})" class="btn btn-small btn-secondary">QR</button>
+                <button onclick="irAAsignacionLineaAgente(${agent.id})" class="btn btn-small btn-secondary" title="Asignar o cambiar línea">📞 Línea</button>
                 <button onclick="liberarLineasAgente(${agent.id})" class="btn btn-small btn-secondary">Liberar líneas</button>
                 <button onclick="darBajaAgente(${agent.id})" class="btn btn-small btn-danger">Baja</button>
             </td>
@@ -2399,7 +2510,8 @@ async function cargarAgentesGestion(showErrors = true) {
     try {
         const search = document.getElementById('gestionAgenteSearch')?.value.trim() || '';
         const res = await apiClient.getAgentesQR(search);
-        currentAgentManagementRows = res.data || [];
+        const filtered = (res.data || []).filter(a => a.es_activo !== false && String(a.nombre || '').trim() !== '');
+        currentAgentManagementRows = dedupeAgentesPorNombreAlias(filtered);
         renderGestionAgentes(currentAgentManagementRows);
     } catch (error) {
         console.error('Error:', error);
@@ -2528,13 +2640,15 @@ async function darBajaAgente(agenteId) {
 async function cargarLineasYAgentes() {
     try {
         const lada = (document.getElementById('lineasLadaFilter')?.value || '').trim();
+        const estado = (document.getElementById('lineasEstadoFiltro')?.value || 'todas').trim() || 'todas';
         const [lineasRes, agentesRes] = await Promise.all([
-            apiClient.getLineas('', false, lada),
+            apiClient.getLineas('', false, lada, estado),
             apiClient.getAgentesQR('')
         ]);
 
         const lineas = lineasRes.data || [];
-        const agentes = agentesRes.data || [];
+        const agentes = dedupeAgentesPorNombreAlias((agentesRes.data || []).filter(a => a.es_activo !== false));
+        currentAltasAgents = agentes;
         const ladas = (await apiClient.getLadas('')).data || [];
 
         const ladaSelect = document.getElementById('lineasLadaFilter');
@@ -2585,9 +2699,14 @@ async function cargarLineasYAgentes() {
         if (agenteSelect) {
             let html = '<option value="">-- Agente --</option>';
             agentes.forEach(a => {
-                html += `<option value="${a.id}">${a.nombre || 'Agente'} (ID ${a.id})</option>`;
+                html += `<option value="${a.id}">${escapeHtml(a.nombre || 'Agente')} | ${escapeHtml(buildAgentIdentityLabel(a))}</option>`;
             });
             agenteSelect.innerHTML = html;
+            if (pendingAltaAgentId) {
+                agenteSelect.value = String(pendingAltaAgentId);
+                pendingAltaAgentId = null;
+                agenteSelect.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
         }
 
         renderLineasEstado(lineas);
@@ -2607,6 +2726,49 @@ function cambiarModoAsignacionAgente() {
     const showManual = modo === 'manual';
     selectManual.style.display = showManual ? 'inline-block' : 'none';
     inputManual.style.display = showManual ? 'inline-block' : 'none';
+}
+
+function resolveAltasAgent(agenteId) {
+    return currentAltasAgents.find(item => Number(item.id) === Number(agenteId)) || null;
+}
+
+function solicitarConfiguracionPrimerCobro(agente, contexto = 'asignar') {
+    const agenteNombre = String(agente?.nombre || `ID ${agente?.id || ''}`).trim();
+    const intro = contexto === 'alta'
+        ? `El agente ${agenteNombre} tendrá su primera línea.\nConfigura el inicio de cobro o cargo inicial.`
+        : `Primera línea para ${agenteNombre}.\nConfigura el inicio de cobro o cargo inicial.`;
+    const choice = prompt(`${intro}\n\nOpciones:\n1 = Semana de inicio\n2 = Cargo inicial\n3 = Ambos\nEnter = omitir`, '1');
+    if (choice === null) return null;
+
+    const mode = String(choice || '').trim();
+    const billing = { cobroDesdeSemana: null, cargoInicial: 0 };
+    const askWeek = mode === '1' || mode === '3';
+    const askInitial = mode === '2' || mode === '3';
+
+    if (askWeek) {
+        const suggestedWeek = mondayISO();
+        const weekRaw = prompt('Semana de inicio de cobro (AAAA-MM-DD). Deja vacío para usar semana actual:', suggestedWeek);
+        if (weekRaw === null) return null;
+        const week = String(weekRaw || '').trim() || suggestedWeek;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(week) || Number.isNaN(new Date(`${week}T00:00:00`).getTime())) {
+            alert('Formato de semana inválido. Usa AAAA-MM-DD.');
+            return null;
+        }
+        billing.cobroDesdeSemana = week;
+    }
+
+    if (askInitial) {
+        const amountRaw = prompt('Cargo inicial MXN (solo número, ejemplo 300 o 450.50):', '0');
+        if (amountRaw === null) return null;
+        const parsed = Number(String(amountRaw).replace(',', '.'));
+        if (!Number.isFinite(parsed) || parsed < 0) {
+            alert('Cargo inicial inválido.');
+            return null;
+        }
+        billing.cargoInicial = parsed;
+    }
+
+    return billing;
 }
 
 async function crearLadaCatalogo(e) {
@@ -2658,11 +2820,22 @@ async function crearAgenteManual(e) {
         }
     }
 
+    if (modo === 'manual' || modo === 'auto') {
+        const billing = solicitarConfiguracionPrimerCobro(payload, 'alta');
+        if (billing === null) {
+            alert('Alta cancelada para no guardar una asignación inicial sin validar cobro.');
+            return;
+        }
+        payload.cobro_desde_semana = billing.cobroDesdeSemana;
+        payload.cargo_inicial = billing.cargoInicial;
+    }
+
     try {
         const result = await apiClient.crearAgenteManual(payload);
         const data = result.data || {};
         document.getElementById('qrAgenteId').value = data.agente_id || '';
-        document.getElementById('qrTelefono').value = '';
+        const qrVoipInput = document.getElementById('qrVoip');
+        if (qrVoipInput) qrVoipInput.value = '';
         const asignacion = data.asignacion || {};
         const lineaText = asignacion.asignada ? `Línea ${asignacion.linea_numero} asignada.` : 'Sin asignación inicial.';
         alert(`Agente creado (ID ${data.agente_id}). ${lineaText}`);
@@ -2718,7 +2891,19 @@ async function asignarLineaAgente(e) {
     }
 
     try {
-        await apiClient.asignarLinea(lineaId, agenteId);
+        const agente = resolveAltasAgent(agenteId);
+        const lineasActuales = Array.isArray(agente?.lineas) ? agente.lineas.length : 0;
+        let billing = { cobroDesdeSemana: null, cargoInicial: 0 };
+        if (lineasActuales === 0) {
+            const configured = solicitarConfiguracionPrimerCobro(agente || { id: agenteId }, 'asignar');
+            if (configured === null) {
+                alert('Asignación cancelada.');
+                return;
+            }
+            billing = configured;
+        }
+
+        await apiClient.asignarLinea(lineaId, agenteId, billing);
         alert('Línea asignada correctamente.');
         await cargarLineasYAgentes();
     } catch (error) {
@@ -2739,7 +2924,7 @@ async function liberarLinea(lineaId) {
     }
 }
 
-async function eliminarDato(id) {
+async function eliminarDato(id, uuid = '') {
     if (!confirm(`⚠️ ¿Estás seguro de que deseas eliminar el registro ID ${id}?\nEsta acción lo marcará como inactivo.`)) return;
     const confirmacion = prompt('Para confirmar, escribe la palabra CONFIRMAR:');
     if (confirmacion !== 'CONFIRMAR') {
@@ -2748,7 +2933,16 @@ async function eliminarDato(id) {
     }
 
     try {
-        await apiClient.eliminarDato(id);
+        try {
+            await apiClient.eliminarDato(id);
+        } catch (error) {
+            const detail = String(error?.message || '').toLowerCase();
+            if (!uuid || !detail.includes('no encontrado')) {
+                throw error;
+            }
+            const datoUuid = await apiClient.getDatoByUUID(uuid);
+            await apiClient.eliminarDato(datoUuid.id);
+        }
         alert('✅ Dato eliminado. Se generó un backup en la papelera.');
         buscarDatos();
     } catch (error) {
@@ -2978,12 +3172,11 @@ async function verificarAgenteQR() {
         return;
     }
 
-    const telefono = document.getElementById('qrTelefono').value.trim();
     const voip = document.getElementById('qrVoip').value.trim();
     const semana = document.getElementById('qrSemana').value;
 
     try {
-        const result = await apiClient.verificarAgenteQR(agenteId, telefono, voip, semana);
+        const result = await apiClient.verificarAgenteQR(agenteId, '', voip, semana);
         const v = result.verificacion || {};
         const a = result.agente || {};
         const box = document.getElementById('qrVerificationResult');
@@ -3109,7 +3302,9 @@ async function consultarResumenPagoActual(showAlerts = true) {
         container.innerHTML = `
             <div class="card" style="padding:12px;border-radius:8px;">
                 <strong>Semana:</strong> ${data.semana_inicio || '-'}<br>
-                <strong>Cuota semanal:</strong> $${Number(data.cuota_semanal || 0).toFixed(2)} MXN<br>
+                <strong>Tarifa por línea:</strong> $${Number(data.tarifa_linea_semanal || 0).toFixed(2)} MXN<br>
+                <strong>Líneas activas:</strong> ${Number(data.lineas_activas || 0)}<br>
+                <strong>Cargo semanal actual:</strong> $${Number(data.cuota_semanal || 0).toFixed(2)} MXN<br>
                 <strong>Deuda total:</strong> $${Number(data.deuda_total || 0).toFixed(2)} MXN<br>
                 <strong>Total abonado:</strong> $${Number(data.total_abonado || 0).toFixed(2)} MXN<br>
                 <strong>Saldo acumulado:</strong> $${Number(data.saldo_acumulado || 0).toFixed(2)} MXN<br>
@@ -3250,13 +3445,13 @@ async function cargarReporteSemanal() {
         const reporte = await apiClient.getReporteSemanal(semana, agente);
         const resumen = document.getElementById('reporteSemanalResumen');
         const container = document.getElementById('reporteSemanalContainer');
-        const cuota = Number(reporte.cuota_semanal || 300).toFixed(2);
+        const tarifa = Number(reporte.cuota_semanal || 300).toFixed(2);
         const tot = reporte.totales || { agentes: 0, pagados: 0, pendientes: 0 };
 
         resumen.innerHTML = `
             <div class="card" style="padding:12px;border:1px solid #d8d8d8;border-radius:8px;">
                 <strong>Semana:</strong> ${reporte.semana_inicio}<br>
-                <strong>Cuota vigente:</strong> $${cuota} MXN<br>
+                <strong>Tarifa por línea vigente:</strong> $${tarifa} MXN<br>
                 <strong>Agentes:</strong> ${tot.agentes} |
                 <strong>Pagados:</strong> ${tot.pagados} |
                 <strong>Pendientes:</strong> ${tot.pendientes}
@@ -3270,13 +3465,15 @@ async function cargarReporteSemanal() {
         } else {
             const adminMode = canAdmin();
             let html = '<table class="data-table"><thead><tr>';
-            html += '<th>ID</th><th>Nombre</th><th>Telefono</th><th>Pagado</th><th>Monto Semana</th><th>Saldo Semana</th><th>Saldo Acumulado</th><th>Alerta</th>';
+            html += '<th>ID</th><th>Nombre</th><th>Telefono</th><th>Líneas</th><th>Tarifa x Línea</th><th>Pagado</th><th>Monto Semana</th><th>Saldo Semana</th><th>Saldo Acumulado</th><th>Alerta</th>';
             html += '</tr></thead><tbody>';
             filas.forEach((f, index) => {
                 html += `<tr>
                     <td>${f.agente_id}</td>
                     <td>${f.nombre || ''}</td>
                     <td>${f.telefono || ''}</td>
+                    <td>${Number(f.lineas_activas || 0)}</td>
+                    <td>$${Number(f.tarifa_linea_semanal || 0).toFixed(2)}</td>
                     <td>${f.pagado ? 'SI' : 'NO'}</td>
                     <td>$${Number(f.monto_pagado || 0).toFixed(2)}</td>
                     <td>$${Number(f.saldo || 0).toFixed(2)}</td>
@@ -3961,6 +4158,43 @@ async function depurarObjetosTemporales() {
     }
 }
 
+async function depurarAgentesRedundantesUI() {
+    if (!canAdmin()) return;
+    const database = document.getElementById('maintenanceDatabaseSelect')?.value || '';
+    if (!database) {
+        alert('Selecciona una base de datos para depurar agentes.');
+        return;
+    }
+    if (database !== 'database_manager') {
+        alert('Esta depuración solo aplica en database_manager.');
+        return;
+    }
+
+    try {
+        const preview = await apiClient.cleanupRedundantAgents(database, true);
+        const data = preview?.data || {};
+        const candidatos = Number(data.candidate_ids?.length || 0);
+        const testLike = Number(data.test_like_candidates || 0);
+        const dupes = Number(data.duplicate_candidates || 0);
+        if (!candidatos) {
+            alert('No se detectaron agentes redundantes o de prueba para eliminar.');
+            return;
+        }
+
+        const msg = `Se detectaron ${candidatos} candidatos (test=${testLike}, duplicados=${dupes}).\n¿Aplicar depuración ahora?`;
+        if (!confirm(msg)) return;
+
+        const result = await apiClient.cleanupRedundantAgents(database, false);
+        const finalData = result?.data || {};
+        alert(`Depuración completada. Eliminados: ${finalData.deleted || 0}. Activos: ${finalData.after_active || 0}.`);
+        cargarResumenMantenimiento();
+        verTablas(database);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error depurando agentes redundantes: ' + error.message);
+    }
+}
+
 async function refrescarDatosTablaNavegador() {
     if (!currentTableBrowserState.database || !currentTableBrowserState.table) return;
     try {
@@ -4180,50 +4414,57 @@ async function cargarEstadoAgentes() {
     container.innerHTML = '<p class="hint">Cargando...</p>';
     if (result) result.innerHTML = '';
     try {
-        const url = `${API_URL}/qr/agentes/sin-linea${search ? '?search=' + encodeURIComponent(search) : ''}`;
+        const url = `${API_URL}/qr/agentes/estado${search ? '?search=' + encodeURIComponent(search) : ''}`;
         const data = await fetchJson(url, { headers: { 'Authorization': `Bearer ${authToken}` } });
 
-        const countEl = document.getElementById('sinLineaCount');
-        if (countEl) countEl.textContent = data.total ?? 0;
+        const rows = Array.isArray(data?.data) ? data.data : [];
+        const sinLineaCount = rows.filter(r => Number(r.lineas_count || 0) <= 0).length;
+        const countEl = document.getElementById('estadoAgentesCount');
+        if (countEl) countEl.textContent = sinLineaCount;
 
-        if (!data.data || !data.data.length) {
-            container.innerHTML = '<p class="hint" style="color:green;">✓ Todos los agentes activos tienen línea asignada.</p>';
+        if (!rows.length) {
+            container.innerHTML = '<p class="hint" style="color:green;">No hay agentes activos para mostrar.</p>';
             return;
         }
 
         let html = `<table class="data-table">
             <thead><tr>
-                <th>ID</th><th>Nombre</th><th>Alias</th><th>Teléfono</th><th>QR</th><th>Alta</th><th>Acciones</th>
+                <th>ID</th><th>Nombre</th><th>Alias</th><th>Estado Línea</th><th>Líneas Activas</th><th>Números de Línea</th><th>QR</th><th>Alta</th><th>Acciones</th>
             </tr></thead><tbody>`;
-        data.data.forEach(ag => {
+        rows.forEach(ag => {
             const alias = ag.alias || ag.datos_adicionales?.alias || '—';
-            const telefono = ag.telefono || '—';
+            const lineaEstado = String(ag.linea_estado || (ag.extension_numero ? 'ASIGNADA' : 'SIN_LINEA')).toUpperCase();
+            const lineasCount = Number(ag.lineas_count || 0);
+            const lineasNumeros = String(ag.lineas_numeros || '').trim() || '—';
             const tieneQr = ag.tiene_qr ? '✓ Sí' : '✗ No';
             const qrClass = ag.tiene_qr ? 'color:green;' : 'color:#b37400;';
             const alta = ag.fecha_creacion ? new Date(ag.fecha_creacion).toLocaleDateString() : '—';
-            html += `<tr class="row-sin-linea">
+            const rowClass = lineaEstado === 'ASIGNADA' ? '' : 'row-sin-linea';
+            html += `<tr class="${rowClass}">
                 <td>${ag.id}</td>
                 <td>${escapeHtml(ag.nombre || '—')}</td>
                 <td>${escapeHtml(String(alias))}</td>
-                <td>${escapeHtml(String(telefono))}</td>
+                <td>${lineaEstado.replace('_', ' ')}</td>
+                <td>${lineasCount}</td>
+                <td>${escapeHtml(lineasNumeros)}</td>
                 <td style="${qrClass}">${tieneQr}</td>
                 <td>${escapeHtml(alta)}</td>
                 <td>
-                    <button type="button" class="btn btn-small" onclick="generarQRAgenteIndividual(${ag.id})">&#9889; QR</button>
-                    <button type="button" class="btn btn-small btn-secondary" onclick="loadSection('altasAgentes', event)">Asignar Línea</button>
+                    <button type="button" class="btn btn-small" onclick="generarQRAgenteIndividual(${ag.id})" title="Generar y ver código QR de este agente">&#128247; QR</button>
+                    <button type="button" class="btn btn-small btn-secondary" onclick="loadSection('altasAgentes')" title="Ir a Altas para asignar línea">&#128222; Línea</button>
                 </td>
             </tr>`;
         });
         html += '</tbody></table>';
         container.innerHTML = html;
     } catch (err) {
-        container.innerHTML = `<p style="color:red;">Error al cargar agentes sin línea: ${escapeHtml(err.message)}</p>`;
+        container.innerHTML = `<p style="color:red;">Error al cargar estado de agentes: ${escapeHtml(err.message)}</p>`;
     }
 }
 
 async function generarQRMasivo() {
     const btn = document.getElementById('btnGenerarQRMasivo');
-    const result = document.getElementById('sinLineaResult');
+    const result = document.getElementById('estadoAgentesResult');
     if (!confirm('¿Generar QR automático para todos los agentes que aún no lo tienen?')) return;
     if (btn) btn.disabled = true;
     if (result) result.innerHTML = '<p class="hint">Generando QRs, espera...</p>';
@@ -4235,7 +4476,7 @@ async function generarQRMasivo() {
         if (result) {
             result.innerHTML = `<p style="color:green;">✓ QRs generados: <strong>${data.generados ?? 0}</strong> de ${data.total_sin_qr ?? 0} agentes sin QR.${data.errores?.length ? ` (${data.errores.length} errores)` : ''}</p>`;
         }
-        cargarAgentesSinLinea();
+        cargarEstadoAgentes();
     } catch (err) {
         if (result) result.innerHTML = `<p style="color:red;">Error: ${escapeHtml(err.message)}</p>`;
     } finally {
@@ -4244,17 +4485,15 @@ async function generarQRMasivo() {
 }
 
 async function generarQRAgenteIndividual(agenteId) {
-    const result = document.getElementById('sinLineaResult');
+    const result = document.getElementById('estadoAgentesResult');
     if (result) result.innerHTML = '<p class="hint">Generando QR...</p>';
     try {
-        const data = await fetchJson(`${API_URL}/qr/agente/${agenteId}/qr`, {
-            method: 'GET',
-            headers: { 'Authorization': `Bearer ${authToken}` }
+        return await generarQrIndividualEnContexto(agenteId, {
+            resultContainerId: 'estadoAgentesResult',
+            qrContainerId: 'estadoAgentesQrPreview',
+            navigateSection: null,
+            setQrForm: false,
         });
-        if (result) {
-            result.innerHTML = `<p style="color:green;">✓ QR generado para agente ${agenteId}.</p>`;
-        }
-        cargarAgentesSinLinea();
     } catch (err) {
         if (result) result.innerHTML = `<p style="color:red;">Error al generar QR: ${escapeHtml(err.message)}</p>`;
     }
@@ -4708,7 +4947,7 @@ async function cargarAlertas() {
         const data = await fetchJson(`${API_URL}/alertas/?solo_activas=false`, {
             headers: { 'Authorization': `Bearer ${authToken}` }
         });
-        const alertas = Array.isArray(data) ? data : (data.alertas || []);
+        const alertas = Array.isArray(data?.items) ? data.items : [];
 
         if (!alertas.length) {
             container.innerHTML = '<p class="hint">No hay alertas activas.</p>';
@@ -4725,7 +4964,7 @@ async function cargarAlertas() {
                         <span class="alerta-item-title">${a.titulo}</span>
                         <span class="badge-nivel ${a.nivel}">${nivelLabel}</span>
                     </div>
-                    <div class="alerta-item-meta">Enviado por: ${a.enviado_por_username || ''} &middot; ${fecha}</div>
+                    <div class="alerta-item-meta">Enviado por: ${a.remitente_username || ''} &middot; ${fecha}</div>
                     <div class="alerta-item-body">${a.mensaje}</div>
                     <div class="alerta-item-actions">
                         ${!a.leida ? '<button class="btn btn-small btn-secondary" onclick="marcarAlertaLeida(' + a.id + ')">&#10003; Marcar le\u00edda</button>' : '<span style="font-size:0.8rem;color:#888;">&#10003; Le\u00edda</span>'}
@@ -4736,6 +4975,8 @@ async function cargarAlertas() {
 
     } catch (error) {
         container.innerHTML = `<p style="color:red;">Error al cargar alertas: ${error.message}</p>`;
+    } finally {
+        refreshAlertBadgeAndNotify(false);
     }
 }
 
@@ -4762,6 +5003,7 @@ async function enviarAlerta(event) {
         document.getElementById('alertaTitulo').value = '';
         document.getElementById('alertaMensaje').value = '';
         document.getElementById('alertaNivel').value = 'warning';
+        lastAlertNotificationStamp = null;
         setTimeout(() => cargarAlertas(), 500);
     } catch (error) {
         if (result) result.innerHTML = `<p style="color:red;">Error: ${error.message}</p>`;
@@ -4775,6 +5017,7 @@ async function marcarAlertaLeida(id) {
             headers: { 'Authorization': `Bearer ${authToken}` }
         });
         cargarAlertas();
+        refreshAlertBadgeAndNotify(false);
     } catch (error) {
         alert('Error al marcar alerta: ' + error.message);
     }

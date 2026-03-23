@@ -1036,12 +1036,12 @@ footer {
 
 /* === ESTADO DE AGENTES — Estilos === */
 
-/* Fila destacada en tabla de estado de agentes */
-tr.row-estado-agosto {
+/* Fila destacada en tabla de estado de agentes (agentes sin línea) */
+tr.row-sin-linea {
     background-color: #fff9e0;
     border-left: 4px solid #f5a623;
 }
-tr.row-estado-agosto:hover {
+tr.row-sin-linea:hover {
     background-color: #fff3c0;
 }
 

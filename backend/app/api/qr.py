@@ -853,6 +853,28 @@ def _normalize_lada(raw: str) -> str:
     return value
 
 
+def _parse_week_start(raw_value: str | None) -> date | None:
+    value = str(raw_value or "").strip()
+    if not value:
+        return None
+    try:
+        return monday_of_week(date.fromisoformat(value))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Semana de cobro inicial inválida") from exc
+
+
+def _parse_initial_charge(raw_value) -> float:
+    if raw_value in (None, ""):
+        return 0.0
+    try:
+        amount = float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cargo inicial inválido") from exc
+    if amount < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cargo inicial no puede ser negativo")
+    return amount
+
+
 def _extract_lada_from_number(number: str, known_codes: list[str]) -> str | None:
     digits = re.sub(r"\D", "", str(number or ""))
     if not digits:
@@ -936,6 +958,14 @@ async def registrar_pago_semanal(
     ).first()
     if not agente:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agente no encontrado")
+
+    active_assignment = _active_assignment_for_agent(db, agente.id)
+    linea_activa = active_assignment.linea if active_assignment and active_assignment.linea and active_assignment.linea.es_activa else None
+    if not linea_activa:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se puede registrar cobro sin línea activa asignada al agente",
+        )
 
     semana = monday_of_week(pago_in.semana_inicio)
     resumen_prev = resumen_cobranza_agente(db, agente, semana)
@@ -1147,7 +1177,9 @@ async def verificar_agente(
             "semana_inicio": semana_ref.isoformat(),
             "pagado": bool(pago.pagado) if pago else False,
             "monto": float(pago.monto) if pago else 0.0,
-            "cuota_semanal": get_cuota_semanal(db),
+            "tarifa_linea_semanal": float(resumen_pago["tarifa_linea_semanal"]),
+            "lineas_activas": int(resumen_pago["lineas_activas"]),
+            "cuota_semanal": float(resumen_pago["cuota_semanal"]),
             "deuda_total": float(resumen_pago["deuda_total"]),
             "total_abonado": float(resumen_pago["total_abonado"]),
             "saldo_acumulado": float(resumen_pago["saldo_acumulado"]),
@@ -1310,6 +1342,9 @@ async def crear_agente_manual(
     if lada_objetivo:
         lada_objetivo = _normalize_lada(lada_objetivo)
 
+    cobro_desde_semana = _parse_week_start((payload or {}).get("cobro_desde_semana"))
+    cargo_inicial = _parse_initial_charge((payload or {}).get("cargo_inicial"))
+
     agente = DatoImportado(
         nombre=nombre,
         email=email,
@@ -1350,7 +1385,15 @@ async def crear_agente_manual(
         if current and current.agente_id != agente.id:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La linea seleccionada ya esta ocupada")
         if not current:
-            db.add(AgenteLineaAsignacion(agente_id=agente.id, linea_id=linea.id, es_activa=True))
+            db.add(
+                AgenteLineaAsignacion(
+                    agente_id=agente.id,
+                    linea_id=linea.id,
+                    es_activa=True,
+                    cobro_desde_semana=cobro_desde_semana,
+                    cargo_inicial=cargo_inicial,
+                )
+            )
         asignacion_resumen = {
             "modo": modo,
             "asignada": True,
@@ -1361,7 +1404,15 @@ async def crear_agente_manual(
     if modo == "auto":
         linea = _choose_free_line_automatically(db, lada_objetivo)
         if linea:
-            db.add(AgenteLineaAsignacion(agente_id=agente.id, linea_id=linea.id, es_activa=True))
+            db.add(
+                AgenteLineaAsignacion(
+                    agente_id=agente.id,
+                    linea_id=linea.id,
+                    es_activa=True,
+                    cobro_desde_semana=cobro_desde_semana,
+                    cargo_inicial=cargo_inicial,
+                )
+            )
             asignacion_resumen = {
                 "modo": modo,
                 "asignada": True,
@@ -1479,12 +1530,17 @@ async def crear_o_reactivar_lada(
 async def listar_lineas(
     search: str | None = Query(None),
     solo_ocupadas: bool = Query(False),
+    estado: str = Query("todas"),
     lada: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Listar lineas con estado ocupada/libre y agente asignado."""
     _sync_extensions_inventory(db)
+    mode = str(estado or "todas").strip().lower()
+    if mode not in {"todas", "libres", "ocupadas"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="estado debe ser: todas, libres u ocupadas")
+
     query = _get_managed_active_line_query(db)
     if search:
         term = f"%{search.strip()}%"
@@ -1505,6 +1561,10 @@ async def listar_lineas(
             continue
         assign = assign_map.get(linea.id)
         ocupada = assign is not None
+        if mode == "libres" and ocupada:
+            continue
+        if mode == "ocupadas" and not ocupada:
+            continue
         if solo_ocupadas and not ocupada:
             continue
         data.append({
@@ -1596,6 +1656,9 @@ async def asignar_linea_a_agente(
     if not agente:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agente no encontrado")
 
+    cobro_desde_semana = _parse_week_start((payload or {}).get("cobro_desde_semana"))
+    cargo_inicial = _parse_initial_charge((payload or {}).get("cargo_inicial"))
+
     current = db.query(AgenteLineaAsignacion).filter(
         AgenteLineaAsignacion.linea_id == linea_id,
         AgenteLineaAsignacion.es_activa.is_(True),
@@ -1605,7 +1668,13 @@ async def asignar_linea_a_agente(
     if current and current.agente_id == agente_id:
         return {"status": "success", "message": "La linea ya estaba asignada a este agente"}
 
-    row = AgenteLineaAsignacion(agente_id=agente_id, linea_id=linea_id, es_activa=True)
+    row = AgenteLineaAsignacion(
+        agente_id=agente_id,
+        linea_id=linea_id,
+        es_activa=True,
+        cobro_desde_semana=cobro_desde_semana,
+        cargo_inicial=cargo_inicial,
+    )
     db.add(row)
     _refresh_agent_qr_for_state(db, agente)
     db.commit()
@@ -1618,6 +1687,8 @@ async def asignar_linea_a_agente(
             "agente_id": agente.id,
             "agente": agente.nombre,
             "ocupada": True,
+            "cobro_desde_semana": row.cobro_desde_semana.isoformat() if row.cobro_desde_semana else None,
+            "cargo_inicial": float(row.cargo_inicial or 0),
         },
     }
 
@@ -1927,6 +1998,54 @@ async def listar_agentes_extension_estado_pago(
     }
 
 
+@router.get("/agentes/sin-linea")
+async def listar_agentes_sin_linea(
+    search: str | None = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Listar agentes activos sin línea telefónica activa asignada."""
+    # Subquery: IDs de agentes que tienen asignación activa con línea activa
+    subq = (
+        db.query(AgenteLineaAsignacion.agente_id)
+        .join(
+            LineaTelefonica,
+            (LineaTelefonica.id == AgenteLineaAsignacion.linea_id)
+            & (LineaTelefonica.es_activa.is_(True)),
+        )
+        .filter(AgenteLineaAsignacion.es_activa.is_(True))
+        .subquery()
+    )
+
+    query = db.query(DatoImportado).filter(
+        DatoImportado.es_activo.isnot(False),
+        ~DatoImportado.id.in_(subq),
+    )
+
+    if search:
+        term = f"%{search.strip()}%"
+        query = query.filter(
+            DatoImportado.nombre.ilike(term)
+            | DatoImportado.telefono.ilike(term)
+        )
+
+    agentes = query.order_by(DatoImportado.nombre.asc()).limit(500).all()
+
+    data = [
+        {
+            "id": ag.id,
+            "uuid": ag.uuid,
+            "nombre": ag.nombre,
+            "telefono": ag.telefono,
+            "tiene_qr": bool(ag.qr_filename),
+            "qr_filename": ag.qr_filename,
+        }
+        for ag in agentes
+    ]
+
+    return {"status": "success", "total": len(data), "data": data}
+
+
 @router.get("/agentes/estado")
 async def listar_agentes_estado(
     search: str | None = Query(None),
@@ -1954,13 +2073,21 @@ async def listar_agentes_estado(
                 d.datos_adicionales,
                 CASE WHEN d.qr_filename IS NOT NULL AND d.qr_filename <> '' THEN 1 ELSE 0 END AS tiene_qr,
                 d.qr_filename,
-                d.fecha_creacion
+                d.fecha_creacion,
+                COUNT(DISTINCT l.id) AS lineas_count,
+                GROUP_CONCAT(DISTINCT l.numero ORDER BY l.numero SEPARATOR ', ') AS lineas_numeros,
+                CASE
+                    WHEN COUNT(DISTINCT l.id) > 0 THEN 'ASIGNADA'
+                    ELSE 'SIN_LINEA'
+                END AS linea_estado
             FROM datos_importados d
             LEFT JOIN agente_linea_asignaciones ala
                 ON ala.agente_id = d.id AND ala.es_activa = 1
+            LEFT JOIN lineas_telefonicas l
+                ON l.id = ala.linea_id AND COALESCE(l.es_activa, 1) = 1
             WHERE COALESCE(d.es_activo, 1) = 1
-              AND ala.id IS NULL
               {search_clause}
+            GROUP BY d.id, d.uuid, d.nombre, d.telefono, d.datos_adicionales, d.qr_filename, d.fecha_creacion
             ORDER BY d.nombre ASC
             LIMIT 500
             """
@@ -1988,6 +2115,9 @@ async def listar_agentes_estado(
                 "tiene_qr": bool(int(row.get("tiene_qr") or 0)),
                 "qr_filename": row.get("qr_filename"),
                 "fecha_creacion": created_value,
+                "lineas_count": int(row.get("lineas_count") or 0),
+                "lineas_numeros": row.get("lineas_numeros") or "",
+                "linea_estado": row.get("linea_estado") or ("ASIGNADA" if int(row.get("lineas_count") or 0) > 0 else "SIN_LINEA"),
             }
         )
 

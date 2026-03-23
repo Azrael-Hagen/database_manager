@@ -369,11 +369,12 @@ class APIClient {
         return this.request('POST', '/qr/ladas', payload);
     }
 
-    async getLineas(search = '', soloOcupadas = false, lada = '') {
+    async getLineas(search = '', soloOcupadas = false, lada = '', estado = 'todas') {
         const params = new URLSearchParams();
         if (search) params.append('search', search);
         if (soloOcupadas) params.append('solo_ocupadas', 'true');
         if (lada) params.append('lada', lada);
+        if (estado && estado !== 'todas') params.append('estado', estado);
         const qs = params.toString() ? `?${params.toString()}` : '';
         return this.request('GET', `/qr/lineas${qs}`);
     }
@@ -386,8 +387,12 @@ class APIClient {
         return this.request('POST', '/qr/lineas/sync', {});
     }
 
-    async asignarLinea(lineaId, agenteId) {
-        return this.request('POST', `/qr/lineas/${lineaId}/asignar`, { agente_id: agenteId });
+    async asignarLinea(lineaId, agenteId, billing = {}) {
+        return this.request('POST', `/qr/lineas/${lineaId}/asignar`, {
+            agente_id: agenteId,
+            cobro_desde_semana: billing.cobroDesdeSemana || null,
+            cargo_inicial: Number(billing.cargoInicial || 0),
+        });
     }
 
     async liberarLinea(lineaId, agenteId = null) {
@@ -451,6 +456,10 @@ class APIClient {
 
     async purgeTemporaryObjects(database, includeEmpty = false) {
         return this.request('POST', `/databases/${encodeURIComponent(database)}/maintenance/purge-temporary?include_empty=${includeEmpty ? 'true' : 'false'}`, {});
+    }
+
+    async cleanupRedundantAgents(database, dryRun = false) {
+        return this.request('POST', `/databases/${encodeURIComponent(database)}/maintenance/cleanup-redundant-agents?dry_run=${dryRun ? 'true' : 'false'}`, {});
     }
 
     async deleteDatabase(dbName) {

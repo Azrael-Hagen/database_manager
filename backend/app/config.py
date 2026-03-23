@@ -56,6 +56,7 @@ class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
     QR_TOKEN_TTL_HOURS = int(os.getenv("QR_TOKEN_TTL_HOURS", 720))
     RECEIPT_RETENTION_DAYS = int(os.getenv("RECEIPT_RETENTION_DAYS", 90))
+    AUTO_AGENT_DATA_CLEANUP_ON_STARTUP = os.getenv("AUTO_AGENT_DATA_CLEANUP_ON_STARTUP", "true").lower() == "true"
     
     # Logging
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
