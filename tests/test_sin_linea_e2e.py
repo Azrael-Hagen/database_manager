@@ -3,7 +3,7 @@
 import json
 import os
 import uuid
-from datetime import timedelta
+from datetime import date, timedelta
 from urllib.parse import urlparse
 
 from fastapi.testclient import TestClient
@@ -13,8 +13,9 @@ from sqlalchemy.pool import StaticPool
 
 import app.models as _all_models  # noqa: F401
 from app.database.orm import Base, get_db
-from app.models import AgenteLineaAsignacion, DatoImportado, LineaTelefonica
+from app.models import AgenteLineaAsignacion, DatoImportado, LineaTelefonica, PagoSemanal
 from app.security import create_access_token
+from app.utils.pagos import monday_of_week
 from app.utils.startup_tasks import auto_qr_al_inicio, reporte_sin_linea_inicio
 from main import app
 
@@ -49,6 +50,7 @@ client = TestClient(app, raise_server_exceptions=False, base_url="https://testse
 _REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 _INDEX_HTML = os.path.join(_REPO_ROOT, "web", "index.html")
 _MAIN_JS = os.path.join(_REPO_ROOT, "web", "js", "main.js")
+_QR_COBROS_JS = os.path.join(_REPO_ROOT, "web", "js", "qrCobros.js")
 _STYLE_CSS = os.path.join(_REPO_ROOT, "web", "css", "style.css")
 
 
@@ -247,6 +249,67 @@ class TestEndpointQrMasivo:
         assert body["generados"] + len(body["errores"]) == 2
 
 
+class TestQrAgentesBusquedaYVoip:
+    @classmethod
+    def setup_class(cls):
+        cls.capture_headers = {"Authorization": f"Bearer {_token('e2e_capture_agentes', 'capture')}"}
+
+    def setup_method(self):
+        _clear_agent_tables()
+
+    def test_busqueda_qr_agentes_por_nombre_y_alias(self):
+        db = _db()
+        try:
+            a1 = DatoImportado(
+                nombre="Cristian Gomez",
+                es_activo=True,
+                datos_adicionales=json.dumps({"alias": "Cris", "numero_voip": "1001"}),
+            )
+            a2 = DatoImportado(
+                nombre="Mario Ruiz",
+                es_activo=True,
+                datos_adicionales=json.dumps({"alias": "Mruiz", "numero_voip": "2002"}),
+            )
+            db.add_all([a1, a2])
+            db.commit()
+        finally:
+            db.close()
+
+        resp_nombre = client.get("/api/qr/agentes?search=Cristian", headers=self.capture_headers)
+        assert resp_nombre.status_code == 200, resp_nombre.text
+        data_nombre = resp_nombre.json().get("data", [])
+        assert any((row.get("nombre") or "") == "Cristian Gomez" for row in data_nombre)
+
+        resp_alias = client.get("/api/qr/agentes?search=Cris", headers=self.capture_headers)
+        assert resp_alias.status_code == 200, resp_alias.text
+        data_alias = resp_alias.json().get("data", [])
+        target = next((row for row in data_alias if (row.get("nombre") or "") == "Cristian Gomez"), None)
+        assert target is not None
+        assert target.get("alias") == "Cris"
+
+    def test_qr_agentes_devuelve_numero_voip(self):
+        db = _db()
+        try:
+            ag = DatoImportado(
+                nombre="Agente Voip",
+                es_activo=True,
+                datos_adicionales=json.dumps({"alias": "VoipA", "numero_voip": "3333"}),
+            )
+            db.add(ag)
+            db.commit()
+            db.refresh(ag)
+            ag_id = ag.id
+        finally:
+            db.close()
+
+        resp = client.get("/api/qr/agentes?search=VoipA", headers=self.capture_headers)
+        assert resp.status_code == 200, resp.text
+        rows = resp.json().get("data", [])
+        target = next((row for row in rows if row.get("id") == ag_id), None)
+        assert target is not None
+        assert target.get("numero_voip") == "3333"
+
+
 class TestDashboardSinLinea:
     @classmethod
     def setup_class(cls):
@@ -296,6 +359,38 @@ class TestVistaEstadoPagoSinLinea:
         assert target.get("linea_estado") == "SIN_LINEA"
         assert target.get("linea_id") is None
         assert target.get("extension_numero") in (None, "")
+
+    def test_estado_pago_marca_pendiente_si_saldo_acumulado_es_mayor_a_cero(self):
+        agente = _mk_agente("Estado Pago Saldo Pendiente")
+        _asignar_linea(agente.id, activa=True)
+
+        semana_ref = monday_of_week(date.today())
+        db = _db()
+        try:
+            db.add(
+                PagoSemanal(
+                    agente_id=agente.id,
+                    telefono="5551112233",
+                    numero_voip="1001",
+                    semana_inicio=semana_ref,
+                    monto=1.0,
+                    pagado=True,
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.get(
+            f"/api/qr/agentes/estado-pago?semana={semana_ref.isoformat()}",
+            headers=self.admin_headers,
+        )
+        assert resp.status_code == 200
+        rows = resp.json().get("data", [])
+        target = next((r for r in rows if r.get("agente_id") == agente.id), None)
+        assert target is not None
+        assert target.get("estado_pago") == "Pendiente de Pago"
+        assert bool(target.get("pagado")) is False
 
 
 class TestQrStaticoYExportacion:
@@ -475,7 +570,7 @@ class TestFrontendAssets:
         assert "lineaAsignarConexion" in html
         assert "deudaManualPanel" in html
         assert "aplicarDeudaManualAgente()" in html
-        assert "qrExportIds" in html
+        assert "qrExportListaAgentes" in html
         assert "qrExportLayout" in html
         assert "oficio" in html
         assert "serverVersionInfo" in html
@@ -507,6 +602,20 @@ class TestFrontendAssets:
         assert "lineas: canCapture()" in js
         assert "estadoAgentes: canCapture()" in js
         assert "totals.sin_linea" in js
+
+    def test_qr_scan_tiene_continuidad_y_antirebote(self):
+        js = open(_MAIN_JS, encoding="utf-8").read()
+        assert "const QR_SCAN_DUPLICATE_WINDOW_MS" in js
+        assert "let qrDecodeInFlight" in js
+        assert "function isQrScannerRunning()" in js
+        assert "if (qrDecodeInFlight)" in js
+        assert "normalizedCode === qrLastDecodedText" in js
+
+    def test_qr_toggle_camera_espera_inicio_real(self):
+        js = open(_QR_COBROS_JS, encoding="utf-8").read()
+        assert "async function qrToggleCamera()" in js
+        assert "await iniciarEscanerQR()" in js
+        assert "window.isQrScannerRunning" in js
 
     def test_css_tiene_estilos_sin_linea(self):
         css = open(_STYLE_CSS, encoding="utf-8").read()

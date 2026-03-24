@@ -14,6 +14,7 @@ from app.schemas import UsuarioCrear
 from app.security import create_access_token
 from app import security as security_module
 from app.api import export as export_api
+from app.api import datos as datos_api
 from app.config import config as app_config
 from main import app
 
@@ -477,3 +478,102 @@ class TestAlertasRoles:
         items = data.get("items", [])
         role_keys = {item.get("role") for item in items}
         assert {"viewer", "capture", "admin", "super_admin"}.issubset(role_keys)
+
+
+class TestDatosRobustezUpdate:
+    """Regresiones: actualizar dato no debe fallar por subsistemas auxiliares."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        db = TestingSessionLocal()
+        repo_usuario = RepositorioUsuario(db)
+        if not repo_usuario.obtener_por_username("testuser_admin_datos"):
+            repo_usuario.crear(
+                UsuarioCrear(
+                    username="testuser_admin_datos",
+                    email="testadmin_datos@example.com",
+                    password="TestPassword123!",
+                    nombre_completo="Admin Datos",
+                    rol="admin",
+                    es_admin=True,
+                )
+            )
+        db.close()
+
+        login_response = https_client.post(
+            "/api/auth/login",
+            json={"username": "testuser_admin_datos", "password": "TestPassword123!"},
+        )
+        assert login_response.status_code == 200
+        self.token = login_response.json()["access_token"]
+        self.headers = {"Authorization": f"Bearer {self.token}"}
+
+    def _crear_agente_base(self) -> int:
+        resp = https_client.post(
+            "/api/datos/",
+            headers=self.headers,
+            json={
+                "nombre": "Agente Robustez",
+                "email": "robustez.agente@example.com",
+                "telefono": "5551234567",
+            },
+        )
+        assert resp.status_code == 200
+        return int(resp.json()["id"])
+
+    def test_actualizar_dato_no_falla_si_sync_legacy_falla(self, monkeypatch):
+        agente_id = self._crear_agente_base()
+
+        def _boom_sync(*_args, **_kwargs):
+            raise RuntimeError("legacy unavailable")
+
+        monkeypatch.setattr(datos_api, "_sync_legacy_agente_row", _boom_sync)
+
+        resp = https_client.put(
+            f"/api/datos/{agente_id}",
+            headers=self.headers,
+            json={"nombre": "Agente Robustez Editado"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["nombre"] == "Agente Robustez Editado"
+
+    def test_actualizar_dato_no_falla_si_auditoria_falla(self, monkeypatch):
+        agente_id = self._crear_agente_base()
+
+        def _boom_audit(*_args, **_kwargs):
+            raise RuntimeError("audit unavailable")
+
+        monkeypatch.setattr(datos_api.RepositorioAuditoria, "registrar_accion", _boom_audit)
+
+        resp = https_client.put(
+            f"/api/datos/{agente_id}",
+            headers=self.headers,
+            json={"telefono": "5557654321"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["telefono"] == "5557654321"
+
+    def test_actualizar_dato_retorna_datos_adicionales_como_objeto(self):
+        agente_id = self._crear_agente_base()
+
+        resp = https_client.put(
+            f"/api/datos/{agente_id}",
+            headers=self.headers,
+            json={
+                "datos_adicionales": {
+                    "alias": "Alias QA",
+                    "ubicacion": "D10/50",
+                    "fp": "926",
+                    "fc": "879",
+                    "grupo": "37",
+                    "numero_voip": "524438480090",
+                }
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data.get("datos_adicionales"), dict)
+        assert data["datos_adicionales"].get("alias") == "Alias QA"

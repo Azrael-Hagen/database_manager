@@ -61,6 +61,8 @@ class DatoImportado(Base):
     qr_code = Column(LargeBinary)
     qr_filename = Column(String(255))
     contenido_qr = Column(Text)  # Serializado en JSON
+    qr_impreso = Column(Boolean, default=False, nullable=False)
+    qr_impreso_at = Column(DateTime, nullable=True)
     
     # Auditoría
     creado_por = Column(Integer, ForeignKey("usuarios.id"))

@@ -1,6 +1,6 @@
 """Utilidades reutilizables para tokens QR firmados."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 import base64
 import hashlib
 import hmac
@@ -13,7 +13,7 @@ from app.config import config
 
 
 def _utcnow() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _base64url_encode(raw: bytes) -> str:

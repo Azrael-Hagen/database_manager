@@ -235,6 +235,19 @@ def _ensure_core_schema_updates():
                 )
             )
 
+        if not _column_exists(connection, "datos_importados", "qr_impreso"):
+            connection.execute(
+                text("ALTER TABLE `datos_importados` ADD COLUMN `qr_impreso` TINYINT(1) NOT NULL DEFAULT 0")
+            )
+        if not _column_exists(connection, "datos_importados", "qr_impreso_at"):
+            connection.execute(
+                text("ALTER TABLE `datos_importados` ADD COLUMN `qr_impreso_at` DATETIME NULL")
+            )
+        if not _index_exists(connection, "datos_importados", "ix_datos_importados_qr_impreso"):
+            connection.execute(
+                text("CREATE INDEX `ix_datos_importados_qr_impreso` ON `datos_importados` (`qr_impreso`)")
+            )
+
         if not _index_exists(connection, "pagos_semanales", "ix_pagos_semanales_agente_semana_pagado"):
             connection.execute(
                 text(

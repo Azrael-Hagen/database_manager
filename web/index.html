@@ -260,48 +260,65 @@
                         <option value="telefono">Ordenar por Teléfono</option>
                         <option value="email">Ordenar por Email</option>
                     </select>
-                        <h3>Matriz de capacidades por rol</h3>
+                    <select id="datosOrderDir" onchange="cargarTodosLosDatos()">
                         <option value="desc" selected>Descendente</option>
                         <option value="asc">Ascendente</option>
                     </select>
                     <input type="text" id="singleSearchInput" placeholder="ID o UUID exacto">
                 </div>
-
+                <div class="search-bar" style="margin-top:8px;">
                     <button onclick="cargarTodosLosDatos()" class="btn">Ver Todos</button>
+                    <button onclick="consultarUnDato()" class="btn btn-secondary">Consultar Uno</button>
                     <button id="purgeInactiveBtn" onclick="purgarDatosInactivos()" class="btn btn-danger" style="display:none;">Purgar Inactivos</button>
                     <select id="tablasSelect" onchange="cambiarTabla()">
                         <option value="">-- Selecciona tabla --</option>
+                    </select>
                 </div>
                 <p class="hint">"Ver Todos" carga todos los registros activos. "Consultar Uno" busca por ID o UUID exacto.</p>
                 <div id="datosContainer" class="table-responsive"></div>
             </section>
+
             <!-- Sección de Bases de Datos -->
-                        <button type="submit" class="btn">Crear Temporal</button>
             <section id="databasesSection" class="panel" style="display: none;">
                 <h1>Gestión de Bases de Datos</h1>
                 <div class="db-actions">
-
+                    <button onclick="cargarDatabases()" class="btn">Actualizar</button>
                     <button onclick="abrirQueryPanel()" class="btn btn-secondary">Herramientas SQL Avanzadas</button>
                     <button onclick="cargarResumenMantenimiento()" class="btn btn-secondary">Depurar Esquema</button>
                 </div>
-
-                <h3 style="margin-top:16px;">Solicitudes de Elevación de Permisos</h3>
-                <div id="usuariosSolicitudesContainer" class="table-responsive" style="margin-top: 10px;"></div>
+                <div id="databasesContainer" class="table-responsive"></div>
 
                 <div id="dbMaintenancePanel" class="card" style="display:none;margin-top:16px;padding:14px;border:1px solid #d8e6f4;border-radius:12px;background:#f9fcff;color:#173049;">
-                <div id="usuariosTempHistoryContainer" class="table-responsive" style="margin-top: 10px;"></div>
+                    <h3>Mantenimiento de Esquema</h3>
+                    <p class="hint">Selecciona una base para analizar objetos temporales y ejecutar acciones de limpieza controlada.</p>
+                    <div class="search-bar" style="margin-top:8px;">
                         <select id="maintenanceDatabaseSelect">
                             <option value="">-- Base de datos para mantenimiento --</option>
                         </select>
                         <button type="button" class="btn" onclick="cargarResumenMantenimiento()">Analizar</button>
-                <h1>Auditoría y Logs</h1>
+                        <button type="button" class="btn btn-secondary" onclick="crearVistasUtilesUI()">Crear Vistas Útiles</button>
                         <button type="button" class="btn btn-danger" onclick="depurarObjetosTemporales()">Eliminar Temporales</button>
                         <button type="button" class="btn btn-danger" onclick="depurarAgentesRedundantesUI()">Depurar Agentes Redundantes</button>
-                    <button onclick="exportarAuditoriaCSV()" class="btn btn-secondary">Exportar CSV</button>
+                    </div>
+                    <div id="dbMaintenanceResult" class="table-responsive" style="margin-top:10px;"></div>
+                </div>
+
                 <div id="queryPanel" style="display: none; margin-top: 20px;">
-                <div id="auditoriaContainer" class="table-responsive"></div>
+                    <h3>Consulta SQL</h3>
+                    <div class="search-bar" style="margin-top:8px;">
+                        <select id="queryDatabase">
+                            <option value="">-- Selecciona BD --</option>
+                        </select>
+                        <button type="button" class="btn btn-secondary" onclick="cerrarQueryPanel()">Cerrar</button>
+                    </div>
+                    <textarea id="querySQL" placeholder="Escribe una consulta SQL" style="width:100%;min-height:120px;margin-top:8px;"></textarea>
+                    <div style="margin-top:8px;">
+                        <button type="button" class="btn" onclick="ejecutarQuerySQL()">Ejecutar</button>
+                    </div>
+                    <div id="queryResult" class="table-responsive" style="margin-top:10px;"></div>
+                </div>
             </section>
-                    <div class="form-group">
+
             <!-- Sección de Importación -->
             <section id="importarSection" class="panel" style="display: none;">
                 <h1>Importar Datos</h1>
@@ -901,23 +918,65 @@
 
                 <!-- ====== TAB: Exportar QR ====== -->
                 <div id="qrTabExportar" class="qr-tab-content" style="display:none;">
-                    <h3 id="qrExportSectionTitle" style="margin-bottom:10px;">Exportación de QR por Lotes</h3>
-                    <div id="qrExportCard" class="card" style="padding:14px;border:1px solid #d8e6f4;border-radius:12px;background:#f9fcff;">
-                        <p class="hint">Los QRs son estáticos por agente. El servidor resuelve en tiempo real el estado actual de cada código al escanear.</p>
-                        <div class="search-bar" style="margin-top:8px;">
-                            <input type="text" id="qrExportIds" placeholder="IDs separados por coma — vacío = todos los activos">
-                            <input type="text" id="qrExportSearch" placeholder="Filtrar por nombre o teléfono (opcional)">
-                            <select id="qrExportLayout">
-                                <option value="sheet">Hoja carta</option>
-                                <option value="labels">Etiquetas</option>
-                                <option value="oficio">Hoja oficio</option>
-                            </select>
-                            <button type="button" class="btn" onclick="exportarQRLote()">📄 Exportar PDF</button>
-                        </div>
-                        <div id="qrExportResult" style="margin-top:10px;"></div>
+                    <h3 id="qrExportSectionTitle" style="margin-bottom:6px;">Exportación de QR por Lotes</h3>
+                    <p class="hint" style="margin-bottom:10px;">Los QRs son estáticos por agente. El servidor resuelve el estado real al escanear.</p>
+
+                    <!-- Banner de alerta: agentes sin imprimir -->
+                    <div id="qrImpresoAlertaBanner" style="display:none;background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;">
+                        <span style="font-size:18px;">⚠️</span>
+                        <span id="qrImpresoAlertaTexto" style="flex:1;"></span>
+                        <button type="button" class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="qrExportFiltrarSinImprimir()">Ver pendientes</button>
                     </div>
 
-                    <h3 style="margin-top:24px;">QR Manual (texto libre)</h3>
+                    <!-- Controles de selección -->
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+                        <input type="text" id="qrExportBusqueda" placeholder="Buscar por nombre, alias o ID..." style="flex:1;min-width:160px;" oninput="qrExportFiltrarLista()">
+                        <select id="qrExportFiltroEstado" onchange="qrExportFiltrarLista()" style="min-width:140px;">
+                            <option value="todos">Todos</option>
+                            <option value="sin_imprimir">Sin imprimir</option>
+                            <option value="impresos">Ya impresos</option>
+                        </select>
+                        <button type="button" class="btn btn-secondary" onclick="qrExportCargarAgentes()">🔄 Actualizar lista</button>
+                    </div>
+
+                    <!-- Acciones masivas -->
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+                            <input type="checkbox" id="qrExportSelTodos" onchange="qrExportToggleSeleccionTodos(this.checked)">
+                            <span style="font-size:13px;">Seleccionar todos</span>
+                        </label>
+                        <button type="button" class="btn btn-secondary" onclick="qrExportSeleccionarSinImprimir()" style="padding:4px 10px;font-size:12px;">✔ Seleccionar sin imprimir</button>
+                        <span id="qrExportContadorSeleccionados" style="font-size:12px;color:#555;margin-left:4px;"></span>
+                    </div>
+
+                    <!-- Lista de agentes con checkboxes -->
+                    <div id="qrExportListaAgentes" class="table-responsive" style="max-height:340px;overflow-y:auto;border:1px solid #d0dae8;border-radius:8px;background:#fff;margin-bottom:12px;">
+                        <p class="hint" style="padding:12px;">Cargando agentes...</p>
+                    </div>
+
+                    <!-- Opciones de exportación -->
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;border-top:1px solid #e0e8f0;padding-top:10px;">
+                        <select id="qrExportLayout" style="min-width:180px;">
+                            <option value="sheet">Hoja carta — 27 QR/página</option>
+                            <option value="labels">Etiquetas compactas — 44 QR/página</option>
+                            <option value="oficio">Hoja oficio — 30 QR/página</option>
+                        </select>
+                        <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;">
+                            <input type="checkbox" id="qrExportMarcarImpreso" checked>
+                            Marcar como impresos al exportar
+                        </label>
+                        <button type="button" class="btn" onclick="exportarQRLoteSeleccionados()" style="margin-left:auto;">📄 Exportar seleccionados</button>
+                    </div>
+                    <div id="qrExportResult" style="margin-top:10px;"></div>
+
+                    <!-- Acciones de marcado manual -->
+                    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+                        <button type="button" class="btn btn-secondary" onclick="qrExportMarcarSeleccionados(true)" style="padding:5px 12px;font-size:12px;">✅ Marcar seleccionados como impresos</button>
+                        <button type="button" class="btn btn-secondary" onclick="qrExportMarcarSeleccionados(false)" style="padding:5px 12px;font-size:12px;">↩ Desmarcar seleccionados</button>
+                    </div>
+
+                    <hr style="margin:20px 0;">
+                    <h3 style="margin-bottom:8px;">QR Manual (texto libre)</h3>
                     <p class="hint" style="margin-bottom:10px;">Genera un código QR con el contenido que necesites.</p>
                     <form onsubmit="generarQR(event)" style="max-width:500px;">
                         <div class="form-group">

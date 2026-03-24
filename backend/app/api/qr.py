@@ -1,6 +1,6 @@
 """Endpoints de verificacion QR para agentes y pagos semanales."""
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import json
 import logging
 import os
@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.database.orm import get_db
@@ -69,7 +69,7 @@ LEGACY_LADAS_TABLE = "catalogo_ladas"
 
 
 def _utcnow() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _active_assignment_for_agent(db: Session, agente_id: int) -> AgenteLineaAsignacion | None:
@@ -221,7 +221,7 @@ def _sync_extensions_inventory(db: Session) -> dict[str, int]:
         source_numbers = []
     source_set = set(source_numbers)
     existing_lines = {row.numero: row for row in db.query(LineaTelefonica).all()}
-    now = datetime.utcnow()
+    now = _utcnow()
     created = 0
     updated = 0
     deactivated = 0
@@ -399,7 +399,7 @@ def _render_public_status_page(payload: dict) -> HTMLResponse:
     linea = str(agente.get("linea") or "-")
     pago_url = str(payload.get("pago_url") or "").strip()
     color = "#16966a" if pagado else "#d64545"
-    label = "PAGADO" if pagado else "PENDIENTE"
+    label = "Al Corriente" if pagado else "Pendiente de Pago"
     asignacion = "NUMERO ASIGNADO" if asignado else "SIN NUMERO ASIGNADO"
     action_html = f"<a class=\"cta\" href=\"{pago_url}\">Registrar pago de este agente</a>" if pago_url else ""
     html = f"""
@@ -859,7 +859,7 @@ def _resolve_or_create_line_for_manual_assignment(db: Session, payload: dict) ->
         if estado_en_payload:
             linea.estado_conexion = estado_conexion
         if categoria_en_payload or estado_en_payload:
-            linea.fecha_actualizacion = datetime.utcnow()
+            linea.fecha_actualizacion = _utcnow()
         return linea
 
     raw_number = (payload or {}).get("numero_linea_manual")
@@ -874,7 +874,7 @@ def _resolve_or_create_line_for_manual_assignment(db: Session, payload: dict) ->
             if estado_en_payload:
                 existing_any.estado_conexion = estado_conexion
             if categoria_en_payload or estado_en_payload:
-                existing_any.fecha_actualizacion = datetime.utcnow()
+                existing_any.fecha_actualizacion = _utcnow()
             db.flush()
             return existing_any
         row = LineaTelefonica(
@@ -893,7 +893,7 @@ def _resolve_or_create_line_for_manual_assignment(db: Session, payload: dict) ->
     if estado_en_payload:
         existing.estado_conexion = estado_conexion
     if categoria_en_payload or estado_en_payload:
-        existing.fecha_actualizacion = datetime.utcnow()
+        existing.fecha_actualizacion = _utcnow()
     return existing
 
 
@@ -985,7 +985,7 @@ async def registrar_pago_semanal(
             semana_inicio=semana,
             monto=monto_final,
             pagado=monto_final >= cuota,
-            fecha_pago=datetime.utcnow() if monto_final > 0 else None,
+            fecha_pago=_utcnow() if monto_final > 0 else None,
             observaciones=pago_in.observaciones,
         )
         db.add(pago)
@@ -995,7 +995,7 @@ async def registrar_pago_semanal(
         pago.monto = float(pago.monto or 0) + float(monto_final)
         pago.pagado = bool(pago.monto >= cuota)
         pago.observaciones = pago_in.observaciones or pago.observaciones
-        pago.fecha_pago = datetime.utcnow() if monto_final > 0 else pago.fecha_pago
+        pago.fecha_pago = _utcnow() if monto_final > 0 else pago.fecha_pago
 
     if pago.pagado:
         alertas = db.query(AlertaPago).filter(
@@ -1005,7 +1005,7 @@ async def registrar_pago_semanal(
         ).all()
         for alerta in alertas:
             alerta.atendida = True
-            alerta.fecha_atendida = datetime.utcnow()
+            alerta.fecha_atendida = _utcnow()
 
     db.commit()
     db.refresh(pago)
@@ -1064,7 +1064,7 @@ async def editar_pago_semanal_admin(
         pago.pagado = bool((pago.monto or 0) >= cuota)
     if payload.observaciones is not None:
         pago.observaciones = payload.observaciones
-    pago.fecha_pago = datetime.utcnow() if pago.pagado else None
+    pago.fecha_pago = _utcnow() if pago.pagado else None
 
     db.add(pago)
     db.commit()
@@ -1372,6 +1372,7 @@ async def listar_agentes_qr(
                 "alias": _safe_json_object(a.datos_adicionales).get("alias"),
                 "display_name": _legacy_agent_display_name(a.nombre, _safe_json_object(a.datos_adicionales).get("alias"), a.id),
                 "telefono": a.telefono,
+                "numero_voip": _extract_voip(a),
                 "datos_adicionales": _safe_json_object(a.datos_adicionales),
                 "ladas_preferidas": [
                     pref.lada.codigo for pref in sorted(a.ladas_preferidas, key=lambda x: x.prioridad) if pref.lada and pref.lada.es_activa
@@ -1711,7 +1712,7 @@ async def crear_linea(
         row.categoria_linea = categoria_linea
         row.estado_conexion = estado_conexion
         row.fecha_ultimo_uso = fecha_ultimo_uso
-        row.fecha_actualizacion = datetime.utcnow()
+        row.fecha_actualizacion = _utcnow()
     else:
         row = LineaTelefonica(
             numero=numero,
@@ -1792,7 +1793,7 @@ async def actualizar_linea(
     row.categoria_linea = categoria_linea
     row.estado_conexion = estado_conexion
     row.fecha_ultimo_uso = fecha_ultimo_uso
-    row.fecha_actualizacion = datetime.utcnow()
+    row.fecha_actualizacion = _utcnow()
     db.commit()
     db.refresh(row)
 
@@ -1907,7 +1908,7 @@ async def liberar_linea(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No hay asignacion activa para liberar")
 
     current.es_activa = False
-    current.fecha_liberacion = datetime.utcnow()
+    current.fecha_liberacion = _utcnow()
     if current.agente:
         _refresh_agent_qr_for_state(db, current.agente)
     db.commit()
@@ -2053,13 +2054,14 @@ async def listar_agentes_extension_estado_pago(
         except Exception:
             db.rollback()
 
+    semana_ref = monday_of_week(semana or date.today())
     if semana is None:
         params = {}
         where_sql = ""
         if search:
             where_sql = " WHERE nombre LIKE :term OR extension_numero LIKE :term "
             params["term"] = f"%{search.strip()}%"
-        week_label = monday_of_week(date.today()).isoformat()
+        week_label = semana_ref.isoformat()
         try:
             rows = db.execute(
                 text(
@@ -2070,7 +2072,7 @@ async def listar_agentes_extension_estado_pago(
                 params,
             ).mappings().all()
         except Exception:
-            fallback_params = {"week_ref": monday_of_week(date.today())}
+            fallback_params = {"week_ref": semana_ref}
             fallback_where_parts = []
             if search:
                 fallback_where_parts.append("(d.nombre LIKE :term OR l.numero LIKE :term)")
@@ -2096,8 +2098,8 @@ async def listar_agentes_extension_estado_pago(
                         COALESCE(p.monto, 0) AS monto_semana,
                         p.fecha_pago,
                         CASE
-                            WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'DEBE'
-                            ELSE 'PAGADO'
+                            WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'Pendiente de Pago'
+                            ELSE 'Al Corriente'
                         END AS estado_pago
                     FROM datos_importados d
                     LEFT JOIN agente_linea_asignaciones ala
@@ -2114,7 +2116,6 @@ async def listar_agentes_extension_estado_pago(
                 fallback_params,
             ).mappings().all()
     else:
-        semana_ref = monday_of_week(semana)
         params = {"week_ref": semana_ref}
         where_parts = []
         if search:
@@ -2141,8 +2142,8 @@ async def listar_agentes_extension_estado_pago(
                     COALESCE(p.monto, 0) AS monto_semana,
                     p.fecha_pago,
                     CASE
-                        WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'DEBE'
-                        ELSE 'PAGADO'
+                        WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'Pendiente de Pago'
+                        ELSE 'Al Corriente'
                     END AS estado_pago
                 FROM datos_importados d
                 LEFT JOIN agente_linea_asignaciones ala
@@ -2160,21 +2161,74 @@ async def listar_agentes_extension_estado_pago(
         ).mappings().all()
         week_label = semana_ref.isoformat()
 
+    status_cache: dict[int, dict] = {}
+    agente_ids = {
+        int(row.get("agente_id"))
+        for row in rows
+        if row.get("agente_id") is not None
+    }
+    agentes = (
+        db.query(DatoImportado)
+        .filter(DatoImportado.id.in_(agente_ids), DatoImportado.es_activo.is_(True))
+        .all()
+        if agente_ids
+        else []
+    )
+    agentes_by_id = {int(a.id): a for a in agentes}
+    for agente_id in agente_ids:
+        agente = agentes_by_id.get(agente_id)
+        if not agente:
+            continue
+        try:
+            resumen = resumen_cobranza_agente(db, agente, semana_ref)
+            saldo_acumulado = float(resumen.get("saldo_acumulado") or 0.0)
+            pendiente = saldo_acumulado > 0.009
+            status_cache[agente_id] = {
+                "saldo_acumulado": saldo_acumulado,
+                "semanas_pendientes": int(resumen.get("semanas_pendientes") or 0),
+                "pagado": not pendiente,
+                "estado_pago": "Pendiente de Pago" if pendiente else "Al Corriente",
+            }
+        except Exception:
+            logger.exception("No se pudo calcular resumen de cobranza para agente_id=%s", agente_id)
+
     data = []
     for row in rows:
+        agente_id = row.get("agente_id")
+        cached = status_cache.get(int(agente_id)) if agente_id is not None else None
+        raw_week = row.get("semana_inicio")
+        if raw_week is None:
+            semana_inicio = week_label
+        elif hasattr(raw_week, "isoformat"):
+            semana_inicio = raw_week.isoformat()
+        else:
+            semana_inicio = str(raw_week)
+
+        saldo_row = float(row.get("deuda_acumulada") or row.get("deuda") or 0.0)
+        pendiente_row = saldo_row > 0.009 or not bool(row.get("pagado_semana"))
+        raw_fecha_pago = row.get("fecha_pago")
+        if raw_fecha_pago is None:
+            fecha_pago = None
+        elif hasattr(raw_fecha_pago, "isoformat"):
+            fecha_pago = raw_fecha_pago.isoformat()
+        else:
+            fecha_pago = str(raw_fecha_pago)
+
         data.append({
-            "agente_id": row.get("agente_id"),
+            "agente_id": agente_id,
             "uuid": row.get("uuid"),
             "nombre": row.get("nombre"),
             "linea_id": row.get("linea_id"),
             "extension_numero": row.get("extension_numero"),
             "extension_tipo": row.get("extension_tipo"),
             "linea_estado": row.get("linea_estado") or ("ASIGNADA" if row.get("linea_id") else "SIN_LINEA"),
-            "semana_inicio": row.get("semana_inicio").isoformat() if row.get("semana_inicio") else week_label,
-            "pagado": bool(row.get("pagado_semana")),
+            "semana_inicio": semana_inicio,
+            "pagado": bool(cached.get("pagado")) if cached else (not pendiente_row),
             "monto": float(row.get("monto_semana") or 0),
-            "fecha_pago": row.get("fecha_pago").isoformat() if row.get("fecha_pago") else None,
-            "estado_pago": row.get("estado_pago") or "DEBE",
+            "saldo_acumulado": float(cached.get("saldo_acumulado")) if cached else saldo_row,
+            "semanas_pendientes": int(cached.get("semanas_pendientes")) if cached else 0,
+            "fecha_pago": fecha_pago,
+            "estado_pago": cached.get("estado_pago") if cached else (row.get("estado_pago") or "Pendiente de Pago"),
         })
 
     return {
@@ -2193,14 +2247,13 @@ async def listar_agentes_sin_linea(
     """Listar agentes activos sin línea telefónica activa asignada."""
     # Subquery: IDs de agentes que tienen asignación activa con línea activa
     subq = (
-        db.query(AgenteLineaAsignacion.agente_id)
+        select(AgenteLineaAsignacion.agente_id)
         .join(
             LineaTelefonica,
             (LineaTelefonica.id == AgenteLineaAsignacion.linea_id)
             & (LineaTelefonica.es_activa.is_(True)),
         )
-        .filter(AgenteLineaAsignacion.es_activa.is_(True))
-        .subquery()
+        .where(AgenteLineaAsignacion.es_activa.is_(True))
     )
 
     query = db.query(DatoImportado).filter(
@@ -2363,6 +2416,79 @@ async def generar_qr_masivo_sin_qr(
     }
 
 
+@router.get("/agentes/sin-imprimir")
+async def listar_agentes_sin_imprimir(
+    solo_activos: bool = Query(True),
+    estado: str = Query("sin_imprimir", description="sin_imprimir | impresos | todos"),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Agentes con QR generado.
+
+    estado=sin_imprimir (default): solo los que no han sido impresos.
+    estado=impresos: solo los ya impresos.
+    estado=todos: todos los que tienen QR generado.
+    """
+    require_capture_role(current_user)
+    query = db.query(DatoImportado).filter(
+        DatoImportado.qr_code.isnot(None),
+    )
+    if estado == "sin_imprimir":
+        query = query.filter(DatoImportado.qr_impreso.is_(False))
+    elif estado == "impresos":
+        query = query.filter(DatoImportado.qr_impreso.is_(True))
+    # estado="todos" => no extra filter
+    if solo_activos:
+        query = query.filter(DatoImportado.es_activo.is_(True))
+    agentes = query.order_by(DatoImportado.nombre.asc()).all()
+    result = []
+    for a in agentes:
+        extras = _safe_json_object(a.datos_adicionales)
+        result.append({
+            "id": a.id,
+            "nombre": a.nombre,
+            "alias": extras.get("alias") if isinstance(extras, dict) else None,
+            "telefono": a.telefono,
+            "estatus_codigo": a.estatus_codigo,
+            "fecha_creacion": a.fecha_creacion.isoformat() if a.fecha_creacion else None,
+            "qr_impreso": bool(a.qr_impreso),
+            "qr_impreso_at": a.qr_impreso_at.isoformat() if a.qr_impreso_at else None,
+        })
+    return {"total": len(result), "agentes": result}
+
+
+@router.post("/agentes/marcar-impreso")
+async def marcar_agentes_impreso(
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Marcar/desmarcar agentes como impresos.
+
+    Body JSON: {"ids": [1,2,3], "impreso": true}
+    """
+    require_capture_role(current_user)
+    ids = payload.get("ids") or []
+    impreso = bool(payload.get("impreso", True))
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Se requiere 'ids' como lista no vacía")
+    validated_ids = []
+    for raw_id in ids:
+        try:
+            validated_ids.append(int(raw_id))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"ID inválido: {raw_id}")
+    if len(validated_ids) > 500:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Máximo 500 IDs por solicitud")
+    now = _utcnow()
+    updated = db.query(DatoImportado).filter(DatoImportado.id.in_(validated_ids)).all()
+    for agente in updated:
+        agente.qr_impreso = impreso
+        agente.qr_impreso_at = now if impreso else None
+    db.commit()
+    return {"actualizados": len(updated), "impreso": impreso}
+
+
 @router.get("/agentes/export/pdf")
 async def exportar_qr_agentes_pdf(
     request: Request,
@@ -2370,6 +2496,7 @@ async def exportar_qr_agentes_pdf(
     search: str | None = Query(None, description="Filtro parcial por nombre o telefono"),
     layout: str = Query("sheet", pattern="^(sheet|labels|oficio)$"),
     solo_activos: bool = Query(True),
+    marcar_impreso: bool = Query(True, description="Marcar agentes exportados como impresos"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -2425,6 +2552,14 @@ async def exportar_qr_agentes_pdf(
 
     db.commit()
     pdf_bytes = build_agent_qr_pdf(export_rows, layout=layout)
+
+    if marcar_impreso:
+        now = _utcnow()
+        for agente in agentes:
+            agente.qr_impreso = True
+            agente.qr_impreso_at = now
+        db.commit()
+
     filename = f"agentes_qr_{layout}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers=headers)

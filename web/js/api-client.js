@@ -297,12 +297,13 @@ class APIClient {
         return this.request('GET', `/qr/agente/${agenteId}/qr`);
     }
 
-    async exportQrAgentesPdf({ idsCsv = '', search = '', layout = 'sheet', soloActivos = true } = {}) {
+    async exportQrAgentesPdf({ idsCsv = '', search = '', layout = 'sheet', soloActivos = true, marcarImpreso = true } = {}) {
         const params = new URLSearchParams();
         if (idsCsv) params.append('ids_csv', idsCsv);
         if (search) params.append('search', search);
         if (layout) params.append('layout', layout);
         params.append('solo_activos', String(soloActivos));
+        params.append('marcar_impreso', String(marcarImpreso));
 
         const url = `${this.baseURL}/qr/agentes/export/pdf?${params.toString()}`;
         const headers = {};
@@ -320,6 +321,14 @@ class APIClient {
             throw new Error(detail);
         }
         return response.blob();
+    }
+
+    async getAgentesConQRSinImprimir(soloActivos = true) {
+        return this.request('GET', `/qr/agentes/sin-imprimir?solo_activos=${soloActivos}`);
+    }
+
+    async marcarAgentesImpreso(ids, impreso = true) {
+        return this.request('POST', '/qr/agentes/marcar-impreso', { ids, impreso });
     }
 
     async downloadQrAgente(agenteId) {

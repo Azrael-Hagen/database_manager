@@ -126,6 +126,70 @@ def _delete_legacy_agente_row(db: Session, agente_id: int) -> None:
     )
 
 
+def _try_sync_legacy_agente(
+    db: Session,
+    *,
+    operation: str,
+    agente_id: int,
+    nombre: str | None = None,
+    datos_adicionales: dict | None = None,
+) -> None:
+    """Intentar sincronizar con legado sin bloquear el flujo principal.
+
+    `database_manager` es la fuente canonica. Si legado falla, se registra warning
+    para reconciliacion posterior pero no se revierte la operacion principal.
+    """
+    try:
+        if operation == "upsert":
+            _sync_legacy_agente_row(
+                db,
+                agente_id=agente_id,
+                nombre=nombre or "",
+                datos_adicionales=datos_adicionales,
+            )
+        elif operation == "delete":
+            _delete_legacy_agente_row(db, agente_id)
+    except Exception:
+        logger.exception(
+            "Sincronizacion legacy no aplicada (operacion=%s, agente_id=%s)",
+            operation,
+            agente_id,
+        )
+
+
+def _try_registrar_auditoria(repo_auditoria: RepositorioAuditoria, **kwargs) -> None:
+    """Registrar auditoria en modo best-effort para no romper operaciones CRUD."""
+    try:
+        repo_auditoria.registrar_accion(**kwargs)
+    except Exception:
+        logger.exception(
+            "No se pudo registrar auditoria (tipo=%s, tabla=%s, registro_id=%s)",
+            kwargs.get("tipo_accion"),
+            kwargs.get("tabla"),
+            kwargs.get("registro_id"),
+        )
+
+
+def _dato_to_response_model(dato: DatoImportadoModel) -> DatoImportado:
+    """Normalizar salida API para que `datos_adicionales` siempre sea objeto JSON."""
+    return DatoImportado.model_validate(
+        {
+            "id": dato.id,
+            "uuid": dato.uuid,
+            "nombre": dato.nombre,
+            "email": dato.email,
+            "telefono": dato.telefono,
+            "empresa": dato.empresa,
+            "ciudad": dato.ciudad,
+            "pais": dato.pais,
+            "datos_adicionales": _safe_json_object(dato.datos_adicionales),
+            "qr_filename": dato.qr_filename,
+            "fecha_creacion": dato.fecha_creacion,
+            "fecha_modificacion": dato.fecha_modificacion,
+        }
+    )
+
+
 @router.get("/", response_model=RespuestaPaginada)
 async def listar_datos(
     pagina: int = Query(1, ge=1),
@@ -198,7 +262,7 @@ async def obtener_dato(
             detail="Dato no encontrado"
         )
     
-    return dato
+    return _dato_to_response_model(dato)
 
 
 @router.get("/uuid/{uuid}", response_model=DatoImportado)
@@ -217,7 +281,7 @@ async def obtener_dato_por_uuid(
             detail="Dato no encontrado"
         )
     
-    return dato
+    return _dato_to_response_model(dato)
 
 
 @router.post("/", response_model=DatoImportado)
@@ -237,23 +301,17 @@ async def crear_dato(
     
     dato = repo.crear(dato_in)
 
-    try:
-        _sync_legacy_agente_row(
-            db,
-            agente_id=dato.id,
-            nombre=dato.nombre,
-            datos_adicionales=_safe_json_object(dato.datos_adicionales),
-        )
-        db.commit()
-    except Exception as exc:
-        logger.exception("No se pudo sincronizar alta en registro_agentes.agentes")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No fue posible guardar el agente en registro_agentes.agentes",
-        ) from exc
+    _try_sync_legacy_agente(
+        db,
+        operation="upsert",
+        agente_id=dato.id,
+        nombre=dato.nombre,
+        datos_adicionales=_safe_json_object(dato.datos_adicionales),
+    )
+    db.commit()
     
     # Auditoría
-    repo_auditoria.registrar_accion(
+    _try_registrar_auditoria(repo_auditoria,
         usuario_id=current_user['id'],
         tipo_accion="CREAR",
         tabla="datos_importados",
@@ -263,7 +321,7 @@ async def crear_dato(
         resultado="SUCCESS"
     )
     
-    return dato
+    return _dato_to_response_model(dato)
 
 
 @router.put("/{dato_id}", response_model=DatoImportado)
@@ -301,29 +359,23 @@ async def actualizar_dato(
         else:
             setattr(dato, field, value)
 
-    try:
-        if bool(dato.es_activo):
-            _sync_legacy_agente_row(
-                db,
-                agente_id=dato.id,
-                nombre=dato.nombre,
-                datos_adicionales=_safe_json_object(dato.datos_adicionales),
-            )
-        else:
-            _delete_legacy_agente_row(db, dato.id)
-    except Exception as exc:
-        logger.exception("No se pudo sincronizar actualizacion en registro_agentes.agentes")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No fue posible actualizar el agente en registro_agentes.agentes",
-        ) from exc
+    if bool(dato.es_activo):
+        _try_sync_legacy_agente(
+            db,
+            operation="upsert",
+            agente_id=dato.id,
+            nombre=dato.nombre,
+            datos_adicionales=_safe_json_object(dato.datos_adicionales),
+        )
+    else:
+        _try_sync_legacy_agente(db, operation="delete", agente_id=dato.id)
 
     db.add(dato)
     db.commit()
     db.refresh(dato)
     
     # Auditoría
-    repo_auditoria.registrar_accion(
+    _try_registrar_auditoria(repo_auditoria,
         usuario_id=current_user['id'],
         tipo_accion="ACTUALIZAR",
         tabla="datos_importados",
@@ -334,7 +386,7 @@ async def actualizar_dato(
         resultado="SUCCESS"
     )
     
-    return dato
+    return _dato_to_response_model(dato)
 
 
 @router.delete("/{dato_id}")
@@ -361,20 +413,13 @@ async def eliminar_dato(
     dato.estatus_codigo = "BAJA"
     dato.fecha_eliminacion = datetime.utcnow()
 
-    try:
-        _delete_legacy_agente_row(db, dato_id)
-    except Exception as exc:
-        logger.exception("No se pudo sincronizar baja en registro_agentes.agentes")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No fue posible aplicar la baja en registro_agentes.agentes",
-        ) from exc
+    _try_sync_legacy_agente(db, operation="delete", agente_id=dato_id)
 
     db.add(dato)
     db.commit()
     
     # Auditoría
-    repo_auditoria.registrar_accion(
+    _try_registrar_auditoria(repo_auditoria,
         usuario_id=current_user['id'],
         tipo_accion="ELIMINAR",
         tabla="datos_importados",
@@ -404,12 +449,9 @@ async def eliminar_dato_definitivo(
     _guardar_snapshot_papelera(db, dato, "hard", current_user['id'])
     db.flush()
     repo.eliminar_definitivo(dato_id)
-    try:
-        _delete_legacy_agente_row(db, dato_id)
-        db.commit()
-    except Exception:
-        logger.warning("No se pudo eliminar registro legado para agente %s", dato_id)
-    repo_auditoria.registrar_accion(
+    _try_sync_legacy_agente(db, operation="delete", agente_id=dato_id)
+    db.commit()
+    _try_registrar_auditoria(repo_auditoria,
         usuario_id=current_user['id'],
         tipo_accion="ELIMINAR",
         tabla="datos_importados",

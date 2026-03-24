@@ -112,19 +112,19 @@ async function _qrCtxUpdateBadge(agenteId, semana) {
         const deuda  = parseFloat(data?.deuda_acumulada ?? data?.deuda ?? 0);
 
         if (pagado && deuda <= 0) {
-            badge.textContent   = '✓ Al corriente';
+            badge.textContent   = 'Al Corriente';
             badge.style.background = '#16966a';
         } else if (deuda > 0) {
-            badge.textContent   = `⚠ Debe $${deuda.toFixed(0)}`;
+            badge.textContent   = `Debe $${deuda.toFixed(0)}`;
             badge.style.background = '#d64545';
         } else {
-            badge.textContent   = data?.estado || 'Sin deuda';
+            badge.textContent   = data?.estado || 'Al Corriente';
             badge.style.background = '#4a90d9';
         }
         badge.style.color = '#fff';
     } catch (_) {
         if (badge) {
-            badge.textContent   = 'Sin datos';
+            badge.textContent   = 'Sin información';
             badge.style.background = '#8899aa';
         }
     }
@@ -137,12 +137,13 @@ async function _qrCtxUpdateBadge(agenteId, semana) {
 let _qrCameraRunning = false;
 let _qrSearchDebounceTimer = null;
 let _qrLastSearchQuery = '';
+const _qrAgentSearchCache = new Map();
 
-function qrToggleCamera() {
+async function qrToggleCamera() {
     const btn = document.getElementById('qrCameraToggleBtn');
     if (_qrCameraRunning) {
         // Stop
-        if (typeof detenerEscanerQR === 'function') detenerEscanerQR();
+        if (typeof detenerEscanerQR === 'function') await detenerEscanerQR();
         _qrCameraRunning = false;
         if (btn) {
             btn.textContent = '📷 Iniciar Cámara';
@@ -150,11 +151,19 @@ function qrToggleCamera() {
         }
     } else {
         // Start
-        if (typeof iniciarEscanerQR === 'function') iniciarEscanerQR();
-        _qrCameraRunning = true;
+        if (typeof iniciarEscanerQR === 'function') await iniciarEscanerQR();
+        const running = typeof window.isQrScannerRunning === 'function'
+            ? !!window.isQrScannerRunning()
+            : true;
+        _qrCameraRunning = running;
         if (btn) {
-            btn.textContent = '⏹ Detener Cámara';
-            btn.classList.add('scanning');
+            if (running) {
+                btn.textContent = '⏹ Detener Cámara';
+                btn.classList.add('scanning');
+            } else {
+                btn.textContent = '📷 Iniciar Cámara';
+                btn.classList.remove('scanning');
+            }
         }
     }
 }
@@ -171,6 +180,7 @@ function qrSearchAgente(query) {
         dropdown.style.display = 'none';
         dropdown.innerHTML = '';
         _qrLastSearchQuery = '';
+        _qrAgentSearchCache.clear();
         return;
     }
     
@@ -179,7 +189,7 @@ function qrSearchAgente(query) {
         _qrLastSearchQuery = query.trim();
         const idNum = parseInt(query.trim(), 10);
         dropdown.innerHTML = `
-            <div class="qr-agent-result" onclick="qrSelectAgent('${idNum}', '${idNum}')"
+            <div class="qr-agent-result" onclick="qrSelectAgent('${idNum}')"
                 style="padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--border); font-weight:500;">
                 ID: ${idNum}
             </div>
@@ -204,52 +214,64 @@ function qrSearchAgente(query) {
     dropdown.innerHTML = '<div style="padding:8px 12px; color:#666;">Buscando...</div>';
     dropdown.style.display = 'block';
     
-    _qrSearchDebounceTimer = setTimeout(() => {
-        // Llamar API
-        fetch(`/api/qr/agentes?search=${encodeURIComponent(query.trim())}`, {
-            method: 'GET',
-            headers: {'Content-Type': 'application/json'}
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (!data.agentes || data.agentes.length === 0) {
+    _qrSearchDebounceTimer = setTimeout(async () => {
+        try {
+            const payload = await apiClient.getAgentesQR(query.trim());
+            const agents = Array.isArray(payload?.data) ? payload.data : [];
+            if (agents.length === 0) {
                 dropdown.innerHTML = '<div style="padding:8px 12px; color:#999;">Sin resultados</div>';
                 return;
             }
-            
-            // Mostrar primeros 8 resultados
-            const results = data.agentes.slice(0, 8);
-            const html = results.map(agente => `
+
+            // Mostrar primeros 8 resultados y cachear para selección
+            const results = agents.slice(0, 8);
+            _qrAgentSearchCache.clear();
+            for (const agente of results) {
+                _qrAgentSearchCache.set(String(agente.id), agente);
+            }
+
+            const html = results.map(agente => {
+                const label = (agente.display_name || agente.alias || agente.nombre || `Agente ${agente.id}`)
+                    .replace(/'/g, "\\'");
+                return `
                 <div class="qr-agent-result" 
-                     onclick="qrSelectAgent('${agente.id}', '${(agente.nombre || agente.id).replace(/'/g, "\\'")}')">
-                    <strong>${agente.nombre || '—'}</strong>
+                     onclick="qrSelectAgent('${agente.id}')">
+                    <strong>${label}</strong>
                     <div style="font-size:0.85em; color:#666;">
-                        ${agente.telefono ? '📞 ' + agente.telefono : ''} 
-                        ${agente.alias ? '🏷 ' + agente.alias : ''} ID: ${agente.id}
+                        ${agente.telefono ? '📞 ' + agente.telefono : ''}
+                        ${agente.alias ? ' 🏷 ' + agente.alias : ''}
+                        ${agente.numero_voip ? ' ☎ ' + agente.numero_voip : ''}
+                        ID: ${agente.id}
                     </div>
                 </div>
-            `).join('');
-            
+            `;
+            }).join('');
+
             dropdown.innerHTML = html;
-        })
-        .catch(err => {
+        } catch (err) {
             console.error('Error searching agents:', err);
             dropdown.innerHTML = '<div style="padding:8px 12px; color:#c33;">Error en búsqueda</div>';
-        });
+        }
     }, 250); // Debounce 250ms
 }
 
 /**
  * Selecciona un agente del dropdown y carga su información
  */
-function qrSelectAgent(agentId, agentName) {
+function qrSelectAgent(agentId) {
     const searchInput = document.getElementById('qrCtxAgenteSearch');
     const idInput = document.getElementById('qrCtxAgenteId');
+    const voipInput = document.getElementById('qrCtxVoip');
     const dropdown = document.getElementById('qrAgentSearchDropdown');
+    const cached = _qrAgentSearchCache.get(String(agentId));
+    const fallbackName = String(agentId);
+    const selectedName = (cached?.display_name || cached?.alias || cached?.nombre || fallbackName);
+    const selectedVoip = (cached?.numero_voip || cached?.datos_adicionales?.numero_voip || '').toString().trim();
     
     // Establecer valores
     idInput.value = agentId;
-    searchInput.value = agentName;
+    searchInput.value = selectedName;
+    if (voipInput) voipInput.value = selectedVoip;
     
     // Ocultar dropdown
     dropdown.style.display = 'none';
@@ -265,8 +287,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // We do this safely after all scripts have loaded
     const _origDetener = window.detenerEscanerQR;
     if (typeof _origDetener === 'function') {
-        window.detenerEscanerQR = function (...args) {
+        window.detenerEscanerQR = async function (...args) {
             const result = _origDetener.apply(this, args);
+            await Promise.resolve(result);
             _qrCameraRunning = false;
             const btn = document.getElementById('qrCameraToggleBtn');
             if (btn) {

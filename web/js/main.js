@@ -16,6 +16,10 @@ let currentVerificationData = null;
 let qrScannerInstance = null;
 let qrAvailableCameras = [];
 let qrCurrentCameraId = '';
+const QR_SCAN_DUPLICATE_WINDOW_MS = 2500;
+let qrLastDecodedText = '';
+let qrLastDecodedAtMs = 0;
+let qrDecodeInFlight = false;
 let currentWeeklyReportRows = [];
 let lastReceiptData = null;
 let currentDatosDatabase = '';
@@ -1133,7 +1137,11 @@ function loadSection(section, eventRef = null) {
         alert('Tu rol no tiene acceso a esta sección.');
         section = 'dashboard';
     }
+    const previousSection = currentSection;
     currentSection = section;
+    if (previousSection === 'qrScan' && section !== 'qrScan' && typeof detenerEscanerQR === 'function') {
+        detenerEscanerQR().catch(() => {});
+    }
     if (section !== 'altasAgentes' && altasTourActive) {
         closeAltasTour();
     }
@@ -1470,6 +1478,7 @@ function irAExportacionQRLotes() {
         if (target) {
             target.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
+        qrExportCargarAgentes();
     }, 120);
 }
 
@@ -1997,7 +2006,7 @@ function renderEscaneoResumen(data) {
     const deudaBase = Number(v.deuda_base_total ?? 0);
     const ajusteManual = Number(v.ajuste_manual_deuda ?? 0);
     const debe = deuda > 0.009 || !v.pagado;
-    const debeTxt = debe ? 'Debe pagar' : 'Sin adeudo';
+    const debeTxt = debe ? `Debe $${deuda.toFixed(0)}` : 'Al Corriente';
     const dueDate = getDueDateSaturday(v.semana_inicio);
     const dueDateTxt = dueDate
         ? `${dueDate.toLocaleDateString()} (sábado)`
@@ -2005,7 +2014,7 @@ function renderEscaneoResumen(data) {
     const lineas = Array.isArray(a.lineas) ? a.lineas : [];
     const lineasTxt = lineas.length ? lineas.map(x => x.numero).join(', ') : 'Sin líneas';
 
-    badge.textContent = debe ? 'PENDIENTE' : 'AL CORRIENTE';
+    badge.textContent = debe ? 'Pendiente de Pago' : 'Al Corriente';
     badge.className = `payment-pill ${debe ? 'unpaid' : 'paid'}`;
 
     content.innerHTML = `
@@ -2145,15 +2154,144 @@ async function descargarQrAgente(agenteId) {
     }
 }
 
-async function exportarQRLote() {
-    const result = document.getElementById('qrExportResult');
-    const idsCsv = document.getElementById('qrExportIds')?.value?.trim() || '';
-    const search = document.getElementById('qrExportSearch')?.value?.trim() || '';
-    const layout = document.getElementById('qrExportLayout')?.value || 'sheet';
+// ========= QR EXPORT BATCH — FUNCTIONS ===========
 
+// In-memory agent list for the export tab
+let _qrExportAgentes = [];
+
+async function qrExportCargarAgentes() {
+    const listEl = document.getElementById('qrExportListaAgentes');
+    if (!listEl) return;
+    listEl.innerHTML = '<p class="hint" style="padding:12px;">Cargando agentes...</p>';
+    try {
+        // Use estado=todos to get all agents with QR (printed and unprinted)
+        const data = await apiClient.request('GET', '/qr/agentes/sin-imprimir?estado=todos&solo_activos=false');
+        const raw = data.agentes || [];
+        _qrExportAgentes = raw.map(a => ({
+            id: a.id,
+            nombre: a.nombre || '',
+            alias: a.alias || '',
+            telefono: a.telefono || '',
+            estatus: a.estatus_codigo || 'ACTIVO',
+            qr_impreso: !!a.qr_impreso,
+        }));
+
+        qrExportRenderizarLista();
+        await qrExportActualizarBannerSinImprimir();
+    } catch (err) {
+        if (listEl) listEl.innerHTML = `<p style="color:red;padding:12px;">Error cargando agentes: ${escapeHtml(err.message)}</p>`;
+    }
+}
+
+function qrExportRenderizarLista() {
+    const listEl = document.getElementById('qrExportListaAgentes');
+    if (!listEl) return;
+
+    const busqueda = (document.getElementById('qrExportBusqueda')?.value || '').trim().toLowerCase();
+    const filtroEstado = document.getElementById('qrExportFiltroEstado')?.value || 'todos';
+
+    let agentes = _qrExportAgentes;
+    if (busqueda) {
+        agentes = agentes.filter(a =>
+            String(a.id).includes(busqueda) ||
+            (a.nombre || '').toLowerCase().includes(busqueda) ||
+            (a.alias || '').toLowerCase().includes(busqueda)
+        );
+    }
+    if (filtroEstado === 'sin_imprimir') agentes = agentes.filter(a => !a.qr_impreso);
+    if (filtroEstado === 'impresos') agentes = agentes.filter(a => a.qr_impreso);
+
+    if (!agentes.length) {
+        listEl.innerHTML = '<p class="hint" style="padding:12px;">No se encontraron agentes.</p>';
+        _qrExportActualizarContador();
+        return;
+    }
+
+    const rows = agentes.map(a => {
+        const estadoBadge = a.qr_impreso
+            ? '<span style="background:#d4edda;color:#155724;border-radius:4px;padding:1px 7px;font-size:11px;">✅ Impreso</span>'
+            : '<span style="background:#fff3cd;color:#856404;border-radius:4px;padding:1px 7px;font-size:11px;">⚠ Pendiente</span>';
+        const displayName = a.alias ? `${a.alias} (${a.nombre})` : a.nombre;
+        return `<tr>
+            <td style="width:32px;text-align:center;padding:6px 4px;">
+                <input type="checkbox" class="qr-export-cb" data-id="${a.id}" onchange="_qrExportActualizarContador()">
+            </td>
+            <td style="padding:6px 8px;font-weight:600;color:#2c3e50;">${a.id}</td>
+            <td style="padding:6px 8px;">${escapeHtml(displayName)}</td>
+            <td style="padding:6px 8px;color:#555;">${escapeHtml(a.telefono)}</td>
+            <td style="padding:6px 8px;">${estadoBadge}</td>
+        </tr>`;
+    }).join('');
+
+    listEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+            <tr style="background:#f0f4f8;border-bottom:2px solid #d0dae8;">
+                <th style="width:32px;"></th>
+                <th style="text-align:left;padding:6px 8px;">ID</th>
+                <th style="text-align:left;padding:6px 8px;">Nombre / Alias</th>
+                <th style="text-align:left;padding:6px 8px;">Teléfono</th>
+                <th style="text-align:left;padding:6px 8px;">Estado impresión</th>
+            </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+    </table>`;
+    _qrExportActualizarContador();
+}
+
+function qrExportFiltrarLista() {
+    qrExportRenderizarLista();
+}
+
+function qrExportFiltrarSinImprimir() {
+    const sel = document.getElementById('qrExportFiltroEstado');
+    if (sel) sel.value = 'sin_imprimir';
+    qrExportRenderizarLista();
+}
+
+function qrExportToggleSeleccionTodos(checked) {
+    document.querySelectorAll('.qr-export-cb').forEach(cb => { cb.checked = checked; });
+    _qrExportActualizarContador();
+}
+
+function qrExportSeleccionarSinImprimir() {
+    document.querySelectorAll('.qr-export-cb').forEach(cb => {
+        const id = parseInt(cb.dataset.id, 10);
+        const agente = _qrExportAgentes.find(a => a.id === id);
+        cb.checked = agente ? !agente.qr_impreso : false;
+    });
+    _qrExportActualizarContador();
+}
+
+function _qrExportSeleccionados() {
+    return Array.from(document.querySelectorAll('.qr-export-cb:checked')).map(cb => parseInt(cb.dataset.id, 10));
+}
+
+function _qrExportActualizarContador() {
+    const count = _qrExportSeleccionados().length;
+    const el = document.getElementById('qrExportContadorSeleccionados');
+    if (el) el.textContent = count > 0 ? `${count} seleccionado(s)` : '';
+    const selTodos = document.getElementById('qrExportSelTodos');
+    if (selTodos) {
+        const total = document.querySelectorAll('.qr-export-cb').length;
+        selTodos.indeterminate = count > 0 && count < total;
+        selTodos.checked = total > 0 && count === total;
+    }
+}
+
+async function exportarQRLoteSeleccionados() {
+    const ids = _qrExportSeleccionados();
+    const result = document.getElementById('qrExportResult');
+    const layout = document.getElementById('qrExportLayout')?.value || 'sheet';
+    const marcarImpreso = document.getElementById('qrExportMarcarImpreso')?.checked !== false;
+
+    if (!ids.length) {
+        showAppAlert('Selecciona al menos un agente para exportar.', { tone: 'warning', title: 'Sin selección' });
+        return;
+    }
     if (result) result.innerHTML = '<p class="hint">Generando PDF...</p>';
     try {
-        const blob = await apiClient.exportQrAgentesPdf({ idsCsv, search, layout, soloActivos: true });
+        const idsCsv = ids.join(',');
+        const blob = await apiClient.exportQrAgentesPdf({ idsCsv, layout, soloActivos: false, marcarImpreso });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
@@ -2162,11 +2300,77 @@ async function exportarQRLote() {
         link.click();
         link.remove();
         URL.revokeObjectURL(url);
-        if (result) result.innerHTML = '<p style="color:green;">PDF generado correctamente.</p>';
+        if (result) result.innerHTML = `<p style="color:green;">✅ PDF con ${ids.length} QR generado correctamente.${marcarImpreso ? ' Marcados como impresos.' : ''}</p>`;
+        // Refresh list to reflect updated print status
+        if (marcarImpreso) {
+            ids.forEach(id => {
+                const a = _qrExportAgentes.find(x => x.id === id);
+                if (a) a.qr_impreso = true;
+            });
+            qrExportRenderizarLista();
+            await qrExportActualizarBannerSinImprimir();
+        }
     } catch (error) {
         console.error('Error:', error);
         if (result) result.innerHTML = `<p style="color:red;">Error exportando PDF: ${escapeHtml(error.message)}</p>`;
     }
+}
+
+// Legacy function — kept so any old calls still work
+async function exportarQRLote() {
+    return exportarQRLoteSeleccionados();
+}
+
+async function qrExportMarcarSeleccionados(impreso) {
+    const ids = _qrExportSeleccionados();
+    if (!ids.length) {
+        showAppAlert('Selecciona al menos un agente.', { tone: 'warning', title: 'Sin selección' });
+        return;
+    }
+    try {
+        const data = await apiClient.marcarAgentesImpreso(ids, impreso);
+        ids.forEach(id => {
+            const a = _qrExportAgentes.find(x => x.id === id);
+            if (a) a.qr_impreso = impreso;
+        });
+        qrExportRenderizarLista();
+        await qrExportActualizarBannerSinImprimir();
+        const result = document.getElementById('qrExportResult');
+        if (result) result.innerHTML = `<p style="color:green;">${data.actualizados} agente(s) ${impreso ? 'marcados como impresos' : 'desmarcados'}.</p>`;
+    } catch (err) {
+        showAppAlert('Error actualizando estado: ' + err.message, { tone: 'error' });
+    }
+}
+
+async function qrExportActualizarBannerSinImprimir() {
+    const banner = document.getElementById('qrImpresoAlertaBanner');
+    const texto = document.getElementById('qrImpresoAlertaTexto');
+    if (!banner || !texto) return;
+    const count = _qrExportAgentes.filter(a => !a.qr_impreso).length;
+    if (count > 0) {
+        texto.textContent = `Hay ${count} agente(s) con QR generado que aún no han sido impresos.`;
+        banner.style.display = 'flex';
+    } else {
+        banner.style.display = 'none';
+    }
+}
+
+async function verificarQRSinImprimir() {
+    // Called on qr section load — show a nav-level badge if there are unprinted QRs
+    if (!authToken) return;
+    try {
+        const data = await apiClient.getAgentesConQRSinImprimir(true);
+        const count = data.total || 0;
+        const badge = document.getElementById('qrSinImprimirBadge');
+        if (badge) {
+            if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = 'inline-block';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+    } catch (_) {}
 }
 
 async function loadServerVersionInfo() {
@@ -2326,9 +2530,14 @@ async function iniciarEscanerQR() {
         : undefined;
 
     const scanConfig = {
-        fps: 10,
-        qrbox: { width: 240, height: 240 },
+        fps: 15,
+        qrbox: (viewfinderWidth, viewfinderHeight) => {
+            const minDim = Math.min(viewfinderWidth, viewfinderHeight);
+            const boxSize = Math.max(200, Math.floor(minDim * 0.85));
+            return { width: boxSize, height: boxSize };
+        },
         formatsToSupport: formats,
+        aspectRatio: 1.0,
     };
 
     const onScan = async (decodedText) => { await manejarQRLeido(decodedText); };
@@ -2441,7 +2650,16 @@ async function iniciarEscanerQRManual() {
         qrScannerInstance = new Html5Qrcode(scannerContainerId);
         await qrScannerInstance.start(
             { deviceId: { exact: deviceId } },
-            { fps: 10, qrbox: { width: 240, height: 240 }, formatsToSupport: formats },
+            {
+                fps: 15,
+                qrbox: (viewfinderWidth, viewfinderHeight) => {
+                    const minDim = Math.min(viewfinderWidth, viewfinderHeight);
+                    const boxSize = Math.max(200, Math.floor(minDim * 0.85));
+                    return { width: boxSize, height: boxSize };
+                },
+                formatsToSupport: formats,
+                aspectRatio: 1.0,
+            },
             async (decodedText) => { await manejarQRLeido(decodedText); },
             () => {}
         );
@@ -2474,12 +2692,28 @@ async function detenerEscanerQR() {
     qrScannerInstance = null;
 }
 
+function isQrScannerRunning() {
+    return !!qrScannerInstance;
+}
+
 async function manejarQRLeido(decodedText) {
-    await detenerEscanerQR();
+    const normalizedCode = String(decodedText || '').trim();
+    if (!normalizedCode) return;
+
+    const nowMs = Date.now();
+    if (qrDecodeInFlight) return;
+    if (normalizedCode === qrLastDecodedText && (nowMs - qrLastDecodedAtMs) < QR_SCAN_DUPLICATE_WINDOW_MS) {
+        return;
+    }
+
+    qrDecodeInFlight = true;
+    qrLastDecodedText = normalizedCode;
+    qrLastDecodedAtMs = nowMs;
+
     const week = getActiveQrWeek();
 
     try {
-        const result = await apiClient.verificarCodigoEscaneado(decodedText, week);
+        const result = await apiClient.verificarCodigoEscaneado(normalizedCode, week);
         const agente = result.agente || {};
         const verificacion = result.verificacion || {};
         currentVerificationData = { agente, verificacion };
@@ -2511,6 +2745,8 @@ async function manejarQRLeido(decodedText) {
     } catch (error) {
         console.error('Error de escaneo:', error);
         alert('No se pudo validar el código escaneado: ' + error.message);
+    } finally {
+        qrDecodeInFlight = false;
     }
 }
 
@@ -2845,7 +3081,7 @@ function renderGestionAgentes(agentes) {
     }
 
     let html = '<table class="data-table"><thead><tr>';
-    html += '<th>ID</th><th>Alias (Principal)</th><th>Nombre</th><th>Teléfono</th><th>Líneas</th><th>Ladas</th><th>Acciones</th>';
+    html += '<th>ID</th><th>Alias (Principal)</th><th>Teléfono</th><th>Líneas</th><th>Ladas</th><th>Acciones</th>';
     html += '</tr></thead><tbody>';
 
     agentes.forEach(agent => {
@@ -2857,8 +3093,7 @@ function renderGestionAgentes(agentes) {
         const identityLabel = buildAgentIdentityLabel(agent);
         html += `<tr>
             <td>${agent.id}</td>
-            <td><strong>${escapeHtml(displayName)}</strong><br><span class="hint">${escapeHtml(identityLabel)}</span></td>
-            <td>${escapeHtml(agent.nombre || '-')}</td>
+            <td><strong>${escapeHtml(displayName || 'SIN_ALIAS')}</strong><br><span class="hint">${escapeHtml(identityLabel)}</span></td>
             <td>${agent.telefono || '-'}</td>
             <td>${lineText}</td>
             <td>${ladas}</td>
@@ -3610,7 +3845,7 @@ async function verificarAgenteQR() {
         const box = document.getElementById('qrVerificationResult');
         currentVerificationData = { agente: a, verificacion: v };
         const paidClass = v.pagado ? 'payment-status paid' : 'payment-status unpaid';
-        const paidText = v.pagado ? 'PAGADO' : 'PENDIENTE';
+        const paidText = v.pagado ? 'Al Corriente' : 'Pendiente de Pago';
         const lineas = Array.isArray(a.lineas) ? a.lineas : [];
         const lineasTxt = lineas.length
             ? lineas.map(x => `${x.numero} (${x.tipo || 'N/A'})`).join(', ')
@@ -3668,7 +3903,7 @@ async function registrarPagoSemanal(e) {
             semana_inicio: payload.semana_inicio,
             monto: Number(pago.monto ?? payload.monto ?? 0),
             fecha_pago: pago.fecha_pago || new Date().toISOString(),
-            estado: payload.pagado ? 'PAGADO' : 'PENDIENTE',
+            estado: payload.pagado ? 'Al Corriente' : 'Pendiente de Pago',
             abono_registrado: Number(pago.abono_registrado ?? payload.monto ?? 0),
             saldo_acumulado: Number(pago.saldo_acumulado ?? 0),
             recibo_token: recibo.token || null,
@@ -3706,7 +3941,7 @@ function renderReciboPago(data) {
             <p><strong>Abono aplicado:</strong> $${Number(data.abono_registrado || 0).toFixed(2)} MXN</p>
             <p><strong>Saldo acumulado:</strong> $${Number(data.saldo_acumulado || 0).toFixed(2)} MXN</p>
             <p><strong>Fecha de pago:</strong> ${data.fecha_pago ? new Date(data.fecha_pago).toLocaleString() : '-'}</p>
-            <p><strong>Estado:</strong> ${data.estado || 'PAGADO'}</p>
+            <p><strong>Estado:</strong> ${data.estado || 'Al Corriente'}</p>
             <p><strong>Token recibo:</strong> ${data.recibo_token || '-'}</p>
             <p><strong>Vence:</strong> ${data.expira_en ? new Date(data.expira_en).toLocaleString() : '-'}</p>
             <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
@@ -3873,7 +4108,7 @@ async function reimprimirReciboPorToken(token) {
             semana_inicio: data.semana_inicio,
             monto: Number(data.monto || 0),
             fecha_pago: data.fecha_pago,
-            estado: data.pagado ? 'PAGADO' : 'PENDIENTE',
+            estado: data.pagado ? 'Al Corriente' : 'Pendiente de Pago',
             recibo_token: data.token || token,
             expira_en: data.expira_en,
         };
@@ -3913,7 +4148,7 @@ function imprimirReciboPago() {
                 <p><strong>Semana:</strong> ${lastReceiptData.semana_inicio || '-'}</p>
                 <p><strong>Monto:</strong> $${Number(lastReceiptData.monto || 0).toFixed(2)} MXN</p>
                 <p><strong>Fecha de pago:</strong> ${lastReceiptData.fecha_pago ? new Date(lastReceiptData.fecha_pago).toLocaleString() : '-'}</p>
-                <p><strong>Estado:</strong> ${lastReceiptData.estado || 'PAGADO'}</p>
+                <p><strong>Estado:</strong> ${lastReceiptData.estado || 'Al Corriente'}</p>
                 <p><strong>Token:</strong> ${lastReceiptData.recibo_token || '-'}</p>
             </div>
         </body>
@@ -4081,13 +4316,18 @@ async function cargarVistaAgentesPago() {
         html += '</tr></thead><tbody>';
         rows.forEach(row => {
             const lineaEstado = (row.linea_estado || (row.extension_numero ? 'ASIGNADA' : 'SIN_LINEA')).replace('_', ' ');
+            const saldoAcumulado = Number(row.saldo_acumulado ?? 0);
+            const pendiente = saldoAcumulado > 0.009 || String(row.estado_pago || '').toLowerCase().includes('pendiente');
+            const estadoPago = pendiente
+                ? (saldoAcumulado > 0.009 ? `Debe $${saldoAcumulado.toFixed(2)}` : 'Pendiente de Pago')
+                : 'Al Corriente';
             html += `<tr>
                 <td>${row.agente_id}</td>
                 <td>${row.nombre || ''}</td>
                 <td>${lineaEstado}</td>
                 <td>${row.extension_numero || '-'}</td>
                 <td>${row.semana_inicio || '-'}</td>
-                <td><span class="payment-pill ${row.pagado ? 'paid' : 'unpaid'}">${row.estado_pago || (row.pagado ? 'PAGADO' : 'DEBE')}</span></td>
+                <td><span class="payment-pill ${pendiente ? 'unpaid' : 'paid'}">${estadoPago}</span></td>
                 <td>$${Number(row.monto || 0).toFixed(2)}</td>
                 <td>${row.fecha_pago ? new Date(row.fecha_pago).toLocaleString() : '-'}</td>
             </tr>`;
