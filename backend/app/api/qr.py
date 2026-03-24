@@ -1,9 +1,6 @@
 """Endpoints de verificacion QR para agentes y pagos semanales."""
 
 from datetime import date, datetime, timedelta
-import base64
-import hashlib
-import hmac
 import json
 import logging
 import os
@@ -31,6 +28,16 @@ from app.schemas import PagoSemanalCrear, PagoSemanalAdminActualizar
 from app.security import get_current_user, require_admin_role, require_capture_role
 from app.qr import QRGenerator
 from app.config import config
+from app.services.lineas import (
+    build_empty_line_sync_result,
+    extract_lada_from_number,
+    normalize_categoria_linea,
+    normalize_estado_conexion,
+    normalize_lada,
+    parse_fecha_ultimo_uso,
+    serialize_linea_operativa,
+)
+from app.services.qr_security import decode_secure_qr_token
 from app.utils.backups import (
     create_weekly_backup,
     get_backup_settings,
@@ -65,67 +72,6 @@ def _utcnow() -> datetime:
     return datetime.utcnow()
 
 
-def _base64url_encode(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
-
-
-def _base64url_decode(raw: str) -> bytes:
-    padded = raw + "=" * (-len(raw) % 4)
-    return base64.urlsafe_b64decode(padded.encode("utf-8"))
-
-
-def _sign_secure_payload(payload_b64: str) -> str:
-    secret = str(config.SECRET_KEY or "change-me-in-production").encode("utf-8")
-    digest = hmac.new(secret, payload_b64.encode("utf-8"), hashlib.sha256).digest()
-    return _base64url_encode(digest)
-
-
-def _build_secure_qr_token(*, agente_id: int, linea_id: int, linea_numero: str | None) -> str:
-    issued_at = _utcnow()
-    expires_at = issued_at + timedelta(hours=max(1, int(config.QR_TOKEN_TTL_HOURS or 1)))
-    payload = {
-        "agente_id": int(agente_id),
-        "linea_id": int(linea_id),
-        "linea_numero": str(linea_numero or ""),
-        "nonce": secrets.token_hex(8),
-        "iat": issued_at.isoformat(),
-        "exp": expires_at.isoformat(),
-    }
-    payload_b64 = _base64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
-    signature = _sign_secure_payload(payload_b64)
-    return f"{payload_b64}.{signature}"
-
-
-def _decode_secure_qr_token(token: str) -> dict:
-    raw_token = str(token or "").strip()
-    if "." not in raw_token:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token QR invalido")
-    payload_b64, provided_signature = raw_token.split(".", 1)
-    expected_signature = _sign_secure_payload(payload_b64)
-    if not hmac.compare_digest(provided_signature, expected_signature):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Firma QR invalida")
-
-    try:
-        payload = json.loads(_base64url_decode(payload_b64).decode("utf-8"))
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token QR malformado") from exc
-
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token QR malformado")
-
-    for required in ("agente_id", "linea_id", "exp"):
-        if required not in payload:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token QR incompleto")
-
-    try:
-        expires_at = datetime.fromisoformat(str(payload["exp"]))
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Fecha de expiracion invalida") from exc
-    if _utcnow() > expires_at:
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail="QR expirado")
-    return payload
-
-
 def _active_assignment_for_agent(db: Session, agente_id: int) -> AgenteLineaAsignacion | None:
     return db.query(AgenteLineaAsignacion).filter(
         AgenteLineaAsignacion.agente_id == agente_id,
@@ -139,7 +85,7 @@ def _build_static_agent_public_url(agente: DatoImportado) -> str:
 
 
 def _validate_secure_qr_token(db: Session, token: str, *, require_current: bool = True) -> tuple[DatoImportado, LineaTelefonica | None, dict]:
-    payload = _decode_secure_qr_token(token)
+    payload = decode_secure_qr_token(token)
     agente_id = int(payload.get("agente_id") or 0)
     linea_id = int(payload.get("linea_id") or 0)
 
@@ -288,6 +234,8 @@ def _sync_extensions_inventory(db: Session) -> dict[str, int]:
                     numero=numero,
                     tipo=SYNCED_EXTENSION_TYPE,
                     descripcion=desired_description,
+                    categoria_linea="NO_DEFINIDA",
+                    estado_conexion="DESCONOCIDA",
                     es_activa=True,
                 )
             )
@@ -303,6 +251,12 @@ def _sync_extensions_inventory(db: Session) -> dict[str, int]:
             changed = True
         if row.descripcion != desired_description:
             row.descripcion = desired_description
+            changed = True
+        if not row.categoria_linea:
+            row.categoria_linea = "NO_DEFINIDA"
+            changed = True
+        if not row.estado_conexion:
+            row.estado_conexion = "DESCONOCIDA"
             changed = True
         if changed:
             row.fecha_actualizacion = now
@@ -375,7 +329,7 @@ def _sync_ladas_from_legacy_catalog(db: Session) -> dict[str, int]:
     for row in rows:
         raw_code = row.get("codigo")
         try:
-            codigo = _normalize_lada(str(raw_code or ""))
+            codigo = normalize_lada(str(raw_code or ""))
         except HTTPException:
             continue
 
@@ -855,13 +809,6 @@ def _safe_line_number(raw: str) -> str:
     return value
 
 
-def _normalize_lada(raw: str) -> str:
-    value = re.sub(r"\D", "", str(raw or "").strip())
-    if len(value) < 2 or len(value) > 6:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Lada invalida")
-    return value
-
-
 def _parse_week_start(raw_value: str | None) -> date | None:
     value = str(raw_value or "").strip()
     if not value:
@@ -884,20 +831,13 @@ def _parse_initial_charge(raw_value) -> float:
     return amount
 
 
-def _extract_lada_from_number(number: str, known_codes: list[str]) -> str | None:
-    digits = re.sub(r"\D", "", str(number or ""))
-    if not digits:
-        return None
-    # Match longest known lada prefix first.
-    for code in sorted((c for c in known_codes if c), key=len, reverse=True):
-        if digits.startswith(code):
-            return code
-    # Fallback for unknown catalog: first 3 digits for MX style dialing.
-    return digits[:3] if len(digits) >= 3 else digits
-
-
 def _resolve_or_create_line_for_manual_assignment(db: Session, payload: dict) -> LineaTelefonica:
     _sync_extensions_inventory(db)
+    payload_obj = payload or {}
+    categoria_en_payload = "categoria_linea" in payload_obj
+    estado_en_payload = "estado_conexion" in payload_obj
+    categoria_linea = normalize_categoria_linea(payload_obj.get("categoria_linea"), default="NO_DEFINIDA")
+    estado_conexion = normalize_estado_conexion(payload_obj.get("estado_conexion"), default="DESCONOCIDA")
     linea_id = int((payload or {}).get("linea_id") or 0)
     if linea_id > 0:
         linea = _get_active_line_query(db).filter(
@@ -905,6 +845,12 @@ def _resolve_or_create_line_for_manual_assignment(db: Session, payload: dict) ->
         ).first()
         if not linea:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linea no encontrada")
+        if categoria_en_payload:
+            linea.categoria_linea = categoria_linea
+        if estado_en_payload:
+            linea.estado_conexion = estado_conexion
+        if categoria_en_payload or estado_en_payload:
+            linea.fecha_actualizacion = datetime.utcnow()
         return linea
 
     raw_number = (payload or {}).get("numero_linea_manual")
@@ -914,17 +860,31 @@ def _resolve_or_create_line_for_manual_assignment(db: Session, payload: dict) ->
         existing_any = db.query(LineaTelefonica).filter(LineaTelefonica.numero == numero).first()
         if existing_any:
             existing_any.es_activa = True
+            if categoria_en_payload:
+                existing_any.categoria_linea = categoria_linea
+            if estado_en_payload:
+                existing_any.estado_conexion = estado_conexion
+            if categoria_en_payload or estado_en_payload:
+                existing_any.fecha_actualizacion = datetime.utcnow()
             db.flush()
             return existing_any
         row = LineaTelefonica(
             numero=numero,
             tipo="MANUAL",
             descripcion="Alta manual desde flujo de agente",
+            categoria_linea=categoria_linea,
+            estado_conexion=estado_conexion,
             es_activa=True,
         )
         db.add(row)
         db.flush()
         return row
+    if categoria_en_payload:
+        existing.categoria_linea = categoria_linea
+    if estado_en_payload:
+        existing.estado_conexion = estado_conexion
+    if categoria_en_payload or estado_en_payload:
+        existing.fecha_actualizacion = datetime.utcnow()
     return existing
 
 
@@ -947,7 +907,7 @@ def _choose_free_line_automatically(db: Session, lada_objetivo: str | None = Non
 def _set_agent_lada_preference(db: Session, agente_id: int, lada_code: str | None) -> None:
     if not lada_code:
         return
-    lada_code = _normalize_lada(lada_code)
+    lada_code = normalize_lada(lada_code)
     lada = db.query(LadaCatalogo).filter(LadaCatalogo.codigo == lada_code).first()
     if not lada:
         lada = LadaCatalogo(codigo=lada_code, nombre_region=None, es_activa=True)
@@ -1460,7 +1420,7 @@ async def crear_agente_manual(
 
     lada_objetivo = str((payload or {}).get("lada_objetivo") or "").strip() or None
     if lada_objetivo:
-        lada_objetivo = _normalize_lada(lada_objetivo)
+        lada_objetivo = normalize_lada(lada_objetivo)
 
     cobro_desde_semana = _parse_week_start((payload or {}).get("cobro_desde_semana"))
     cargo_inicial = _parse_initial_charge((payload or {}).get("cargo_inicial"))
@@ -1612,7 +1572,7 @@ async def crear_o_reactivar_lada(
 ):
     """Crear o reactivar una lada de catalogo."""
     require_capture_role(current_user)
-    codigo = _normalize_lada((payload or {}).get("codigo"))
+    codigo = normalize_lada((payload or {}).get("codigo"))
     nombre_region = str((payload or {}).get("nombre_region") or "").strip() or None
 
     existing = db.query(LadaCatalogo).filter(LadaCatalogo.codigo == codigo).first()
@@ -1676,32 +1636,17 @@ async def listar_lineas(
     known_codes = [row.codigo for row in ladas]
     data = []
     for linea in lineas:
-        resolved_lada = _extract_lada_from_number(linea.numero, known_codes)
-        if lada and resolved_lada != _normalize_lada(lada):
+        resolved_lada = extract_lada_from_number(linea.numero, known_codes)
+        if lada and resolved_lada != normalize_lada(lada):
             continue
         assign = assign_map.get(linea.id)
-        ocupada = assign is not None
-        if mode == "libres" and ocupada:
+        if mode == "libres" and assign is not None:
             continue
-        if mode == "ocupadas" and not ocupada:
+        if mode == "ocupadas" and assign is None:
             continue
-        if solo_ocupadas and not ocupada:
+        if solo_ocupadas and assign is None:
             continue
-        data.append({
-            "id": linea.id,
-            "numero": linea.numero,
-            "tipo": linea.tipo,
-            "descripcion": linea.descripcion,
-            "origen": "PBX" if str(linea.descripcion or "").startswith(SYNCED_EXTENSION_PREFIX) else "MANUAL",
-            "lada": resolved_lada,
-            "ocupada": ocupada,
-            "agente": {
-                "id": assign.agente.id,
-                "nombre": assign.agente.nombre,
-                "telefono": assign.agente.telefono,
-            } if assign and assign.agente else None,
-            "fecha_asignacion": assign.fecha_asignacion.isoformat() if assign and assign.fecha_asignacion else None,
-        })
+        data.append(serialize_linea_operativa(linea, assignment=assign, known_codes=known_codes, synced_prefix=SYNCED_EXTENSION_PREFIX))
 
     return {"status": "success", "data": data}
 
@@ -1717,16 +1662,12 @@ async def crear_linea(
     numero = _safe_line_number((payload or {}).get("numero", ""))
     tipo = str((payload or {}).get("tipo") or "MANUAL").strip().upper() or "MANUAL"
     descripcion = str((payload or {}).get("descripcion") or "").strip() or None
+    categoria_linea = normalize_categoria_linea((payload or {}).get("categoria_linea"), default="NO_DEFINIDA")
+    estado_conexion = normalize_estado_conexion((payload or {}).get("estado_conexion"), default="DESCONOCIDA")
+    fecha_ultimo_uso = parse_fecha_ultimo_uso((payload or {}).get("fecha_ultimo_uso"))
     sincronizar = bool((payload or {}).get("sincronizar", True))
 
-    sync_result = _sync_extensions_inventory(db) if sincronizar else {
-        "source": 0,
-        "created": 0,
-        "updated": 0,
-        "deactivated": 0,
-        "ladas_created": 0,
-        "ladas_reactivated": 0,
-    }
+    sync_result = _sync_extensions_inventory(db) if sincronizar else build_empty_line_sync_result()
 
     row = db.query(LineaTelefonica).filter(LineaTelefonica.numero == numero).first()
     created = False
@@ -1739,12 +1680,18 @@ async def crear_linea(
             row.tipo = tipo
         if descripcion is not None:
             row.descripcion = descripcion
+        row.categoria_linea = categoria_linea
+        row.estado_conexion = estado_conexion
+        row.fecha_ultimo_uso = fecha_ultimo_uso
         row.fecha_actualizacion = datetime.utcnow()
     else:
         row = LineaTelefonica(
             numero=numero,
             tipo=tipo,
             descripcion=descripcion,
+            categoria_linea=categoria_linea,
+            estado_conexion=estado_conexion,
+            fecha_ultimo_uso=fecha_ultimo_uso,
             es_activa=True,
         )
         db.add(row)
@@ -1755,11 +1702,7 @@ async def crear_linea(
     return {
         "status": "success",
         "data": {
-            "id": row.id,
-            "numero": row.numero,
-            "tipo": row.tipo,
-            "descripcion": row.descripcion,
-            "origen": "PBX" if str(row.descripcion or "").startswith(SYNCED_EXTENSION_PREFIX) else "MANUAL",
+            **serialize_linea_operativa(row, synced_prefix=SYNCED_EXTENSION_PREFIX),
             "created": created,
             "reactivated": reactivated,
             "sincronizadas": sync_result["source"],
@@ -1788,10 +1731,25 @@ async def actualizar_linea(
     new_numero = _safe_line_number(raw_numero) if raw_numero not in (None, "") else row.numero
     tipo = str((payload or {}).get("tipo") or row.tipo or "MANUAL").strip().upper() or "MANUAL"
     descripcion = (payload or {}).get("descripcion")
+    categoria_linea = (payload or {}).get("categoria_linea")
+    estado_conexion = (payload or {}).get("estado_conexion")
+    fecha_ultimo_uso_raw = (payload or {}).get("fecha_ultimo_uso")
     if descripcion is not None:
         descripcion = str(descripcion).strip() or None
     else:
         descripcion = row.descripcion
+    if categoria_linea is not None:
+        categoria_linea = normalize_categoria_linea(categoria_linea, default="NO_DEFINIDA")
+    else:
+        categoria_linea = normalize_categoria_linea(row.categoria_linea, default="NO_DEFINIDA")
+    if estado_conexion is not None:
+        estado_conexion = normalize_estado_conexion(estado_conexion, default="DESCONOCIDA")
+    else:
+        estado_conexion = normalize_estado_conexion(row.estado_conexion, default="DESCONOCIDA")
+    if "fecha_ultimo_uso" in (payload or {}):
+        fecha_ultimo_uso = parse_fecha_ultimo_uso(fecha_ultimo_uso_raw)
+    else:
+        fecha_ultimo_uso = row.fecha_ultimo_uso
 
     duplicate = db.query(LineaTelefonica).filter(
         LineaTelefonica.numero == new_numero,
@@ -1803,19 +1761,16 @@ async def actualizar_linea(
     row.numero = new_numero
     row.tipo = tipo
     row.descripcion = descripcion
+    row.categoria_linea = categoria_linea
+    row.estado_conexion = estado_conexion
+    row.fecha_ultimo_uso = fecha_ultimo_uso
     row.fecha_actualizacion = datetime.utcnow()
     db.commit()
     db.refresh(row)
 
     return {
         "status": "success",
-        "data": {
-            "id": row.id,
-            "numero": row.numero,
-            "tipo": row.tipo,
-            "descripcion": row.descripcion,
-            "origen": "PBX" if str(row.descripcion or "").startswith(SYNCED_EXTENSION_PREFIX) else "MANUAL",
-        },
+        "data": serialize_linea_operativa(row, synced_prefix=SYNCED_EXTENSION_PREFIX),
     }
 
 
@@ -2385,7 +2340,7 @@ async def exportar_qr_agentes_pdf(
     request: Request,
     ids_csv: str | None = Query(None, description="IDs de agentes separados por coma"),
     search: str | None = Query(None, description="Filtro parcial por nombre o telefono"),
-    layout: str = Query("sheet", pattern="^(sheet|labels)$"),
+    layout: str = Query("sheet", pattern="^(sheet|labels|oficio)$"),
     solo_activos: bool = Query(True),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -2425,9 +2380,11 @@ async def exportar_qr_agentes_pdf(
     export_rows: list[dict] = []
     for agente in agentes:
         payload = _refresh_agent_qr_for_state(db, agente, request=request)
+        extras = _safe_json_object(agente.datos_adicionales)
         export_rows.append(
             {
                 "id": agente.id,
+                "alias": (extras.get("alias") if isinstance(extras, dict) else None),
                 "uuid": agente.uuid,
                 "nombre": agente.nombre,
                 "telefono": agente.telefono,

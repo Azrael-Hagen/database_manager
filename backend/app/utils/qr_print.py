@@ -29,6 +29,17 @@ LAYOUTS: dict[str, dict[str, float | int | tuple[float, float]]] = {
         "qr_size": 44.0,
         "title": "Etiquetas adhesivas",
     },
+    "oficio": {
+        "page_size": (612.0, 936.0),  # oficio 8.5 x 13
+        "columns": 3,
+        "rows": 8,
+        "margin_x": 24.0,
+        "margin_y": 24.0,
+        "cell_w": 180.0,
+        "cell_h": 110.0,
+        "qr_size": 62.0,
+        "title": "Hoja oficio",
+    },
 }
 
 
@@ -79,23 +90,12 @@ def build_agent_qr_pdf(items: Iterable[dict], layout: str = "sheet") -> bytes:
             qr_y = y + cell_h - qr_size - 8.0
             pdf.drawImage(ImageReader(qr_path), x + 8.0, qr_y, width=qr_size, height=qr_size, preserveAspectRatio=True, mask="auto")
 
-        # Bloque de datos bajo el QR
+        # Etiqueta minima operativa: solo ID y alias.
         text_x = x + 8.0
         text_y = y + 8.0
+        alias = str(item.get("alias") or "SIN_ALIAS").strip() or "SIN_ALIAS"
         pdf.setFont("Helvetica-Bold", 9)
-        pdf.drawString(text_x, text_y, f"ID {item.get('id')} | {str(item.get('nombre') or 'Agente')[:25]}")
-        
-        pdf.setFont("Helvetica", 7)
-        telefono = str(item.get('telefono') or '—')
-        linea_activa = str(item.get('linea_activa') or 'SIN ASIGNAR')
-        estado = str(item.get('linea_estado') or 'pendiente').upper()
-        
-        text_y -= 8
-        pdf.drawString(text_x, text_y, f"Tel: {telefono[:20]}")
-        text_y -= 8
-        pdf.drawString(text_x, text_y, f"Línea: {linea_activa[:20]}")
-        text_y -= 8
-        pdf.drawString(text_x, text_y, f"Estado: {estado[:20]}")
+        pdf.drawString(text_x, text_y, f"ID {item.get('id')} | {alias[:30]}")
 
     pdf.save()
     buffer.seek(0)

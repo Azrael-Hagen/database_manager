@@ -172,6 +172,18 @@
                         <h3>Alertas de Pago</h3>
                         <p id="totalAlertasPago" class="stat-value">0</p>
                     </div>
+                    <div class="stat-card">
+                        <h3>Agentes Sin Línea</h3>
+                        <p id="totalSinLinea" class="stat-value">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Líneas Activas</h3>
+                        <p id="totalLineasActivas" class="stat-value">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Líneas Asignadas</h3>
+                        <p id="totalLineasAsignadas" class="stat-value">0</p>
+                    </div>
                 </div>
                 <div class="dashboard-grid" style="margin-top: 16px;">
                     <div class="dashboard-card dashboard-card-wide">
@@ -211,6 +223,7 @@
                             <button type="button" class="btn" onclick="loadSection('importar')">Importar Archivo</button>
                             <button type="button" class="btn btn-secondary" onclick="loadSection('datos')">Ver Datos</button>
                             <button type="button" class="btn btn-secondary" onclick="loadSection('altasAgentes')">Alta de Agente</button>
+                            <button type="button" class="btn btn-secondary" onclick="irAExportacionQRLotes()">Exportación QR</button>
                             <button type="button" class="btn btn-secondary" onclick="loadSection('qrScan')">Escaneo QR</button>
                             <button type="button" class="btn btn-secondary" onclick="loadSection('qr')">Pagos y Reportes</button>
                             <button type="button" class="btn btn-secondary" onclick="loadSection('databases')">SQL y Estructura</button>
@@ -388,6 +401,16 @@
                             <option value="">-- Línea manual existente --</option>
                         </select>
                         <input type="text" id="agenteLineaManualInput" style="display:none;" placeholder="Número de línea manual (si no existe)">
+                        <select id="agenteLineaCategoriaSelect" style="display:none;" title="Tipo de número para alta manual">
+                            <option value="NO_DEFINIDA">Número: No definido</option>
+                            <option value="FIJO">Número fijo</option>
+                            <option value="MOVIL">Número móvil</option>
+                        </select>
+                        <select id="agenteLineaConexionSelect" style="display:none;" title="Estado de conexión para alta manual">
+                            <option value="DESCONOCIDA">Conexión: Desconocida</option>
+                            <option value="CONECTADA">Conectada</option>
+                            <option value="DESCONECTADA">Desconectada</option>
+                        </select>
                     </div>
                     <div class="search-bar" style="margin-top:8px;">
                         <label class="live-control" style="align-items:center;">
@@ -410,11 +433,23 @@
                 </form>
                 <form onsubmit="asignarLineaAgente(event)" style="margin-top:10px;">
                     <div class="search-bar">
-                        <select id="lineaAsignarSelect" required>
+                        <select id="lineaAsignarSelect" required onchange="sincronizarCamposLineaAsignar()">
                             <option value="">-- Línea --</option>
                         </select>
                         <select id="agenteAsignarSelect" required>
                             <option value="">-- Agente --</option>
+                        </select>
+                        <select id="lineaAsignarCategoria" title="Actualizar tipo de número antes de asignar">
+                            <option value="">Número: mantener actual</option>
+                            <option value="FIJO">Número fijo</option>
+                            <option value="MOVIL">Número móvil</option>
+                            <option value="NO_DEFINIDA">Número no definido</option>
+                        </select>
+                        <select id="lineaAsignarConexion" title="Actualizar estado de conexión antes de asignar">
+                            <option value="">Conexión: mantener actual</option>
+                            <option value="CONECTADA">Conectada</option>
+                            <option value="DESCONECTADA">Desconectada</option>
+                            <option value="DESCONOCIDA">Conexión desconocida</option>
                         </select>
                         <button type="submit" class="btn">Asignar Línea</button>
                         <button type="button" class="btn btn-secondary" onclick="cargarLineasYAgentes()">Refrescar</button>
@@ -450,7 +485,20 @@
                             <option value="EXT_PBX">EXT_PBX</option>
                             <option value="OTRA">OTRA</option>
                         </select>
+                        <select id="lineaGestionCategoria">
+                            <option value="NO_DEFINIDA">Categoría: No definida</option>
+                            <option value="FIJO">Categoría: Fijo</option>
+                            <option value="MOVIL">Categoría: Móvil</option>
+                        </select>
+                        <select id="lineaGestionConexion">
+                            <option value="DESCONOCIDA">Conexión: Desconocida</option>
+                            <option value="CONECTADA">Conexión: Conectada</option>
+                            <option value="DESCONECTADA">Conexión: Desconectada</option>
+                        </select>
+                    </div>
+                    <div class="search-bar" style="margin-top:8px;">
                         <input type="text" id="lineaGestionDescripcion" placeholder="Descripción opcional">
+                        <input type="datetime-local" id="lineaGestionUltimoUso" title="Última fecha de uso (opcional)">
                     </div>
                     <div class="search-bar" style="margin-top:8px;">
                         <button type="submit" class="btn">Guardar Línea</button>
@@ -703,8 +751,8 @@
                 </div>
                 <div id="recibosHistoricosContainer" class="table-responsive" style="margin-top: 12px;"></div>
 
-                <h3 style="margin-top: 22px;">Exportación de QR por Lotes</h3>
-                <div class="card" style="margin-top: 10px; padding: 14px; border: 1px solid #d8e6f4; border-radius: 12px; background: #f9fcff; color: #173049;">
+                <h3 id="qrExportSectionTitle" style="margin-top: 22px;">Exportación de QR por Lotes</h3>
+                <div id="qrExportCard" class="card" style="margin-top: 10px; padding: 14px; border: 1px solid #d8e6f4; border-radius: 12px; background: #f9fcff; color: #173049;">
                     <p class="hint">Los QRs de agentes son estáticos por agente. El servidor resuelve en tiempo real si el agente tiene línea activa, si sigue vigente y su estado actual al escanear.</p>
                     <div class="search-bar" style="margin-top: 8px;">
                         <input type="text" id="qrExportIds" placeholder="IDs separados por coma. Vacío = todos los activos">
@@ -712,6 +760,7 @@
                         <select id="qrExportLayout">
                             <option value="sheet">Hoja carta</option>
                             <option value="labels">Etiquetas</option>
+                            <option value="oficio">Hoja oficio</option>
                         </select>
                         <button type="button" class="btn" onclick="exportarQRLote()">Exportar PDF</button>
                     </div>
@@ -957,6 +1006,7 @@
     <script src="https://unpkg.com/html5-qrcode@2.3.8" type="text/javascript"></script>
     
     <script src="js/api-client.js"></script>
+    <script src="js/app-utils.js"></script>
     <script src="js/main.js"></script>
 </body>
 </html>

@@ -27,6 +27,7 @@ let currentEditingAgentId = null;
 let currentBackupDir = '';
 let pendingAltaAgentId = null;
 let currentAltasAgents = [];
+let currentAltasLineas = [];
 let currentLineasGestionRows = [];
 let currentLineaEditId = null;
 let currentTableBrowserState = { database: '', table: '', orderBy: 'id', direction: 'desc', limit: 50 };
@@ -147,19 +148,23 @@ async function fetchJson(url, options = {}) {
 }
 
 function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+    return window.AppUtils.escapeHtml(value);
+}
+
+function getErrorMessage(error, fallback = 'Error inesperado') {
+    return window.AppUtils.getErrorMessage(error, fallback);
+}
+
+function ensureAppAlertRoot() {
+    return window.AppUtils.ensureAppAlertRoot();
+}
+
+function showAppAlert(message, options = {}) {
+    return window.AppUtils.showAppAlert(message, options);
 }
 
 function formatDateTimeSafe(value) {
-    if (!value) return '-';
-    const dt = new Date(value);
-    if (Number.isNaN(dt.getTime())) return '-';
-    return dt.toLocaleString();
+    return window.AppUtils.formatDateTimeSafe(value);
 }
 
 function isCameraSecureContext() {
@@ -494,6 +499,14 @@ function renderActivityChart(series) {
 
 // === INICIALIZACIÓN ===
 document.addEventListener('DOMContentLoaded', () => {
+    if (!window.__appAlertPatched) {
+        window.__nativeAlert = window.alert.bind(window);
+        window.alert = function patchedAlert(message) {
+            showAppAlert(String(message || ''));
+        };
+        window.__appAlertPatched = true;
+    }
+
     const enabledSaved = localStorage.getItem('realtimeEnabled');
     const msSaved = localStorage.getItem('realtimeMs');
     if (enabledSaved !== null) {
@@ -1222,6 +1235,9 @@ async function loadDashboardData(showErrors = true) {
         document.getElementById('totalInactivos').textContent = totals.registros_inactivos ?? 0;
         document.getElementById('totalQrPendientes').textContent = totals.qr_pendientes ?? 0;
         document.getElementById('totalAlertasPago').textContent = totals.alertas_pago_pendientes ?? 0;
+        document.getElementById('totalSinLinea').textContent = totals.sin_linea ?? 0;
+        document.getElementById('totalLineasActivas').textContent = totals.lineas_activas ?? 0;
+        document.getElementById('totalLineasAsignadas').textContent = totals.lineas_asignadas_activas ?? 0;
 
         // Badge del menú Sin Línea
         const sinLineaMenuBadge = document.getElementById('estadoAgentesMenuBadge');
@@ -1356,6 +1372,16 @@ async function loadDashboardData(showErrors = true) {
             console.error('Error:', error);
         }
     }
+}
+
+function irAExportacionQRLotes() {
+    loadSection('qr');
+    setTimeout(() => {
+        const target = document.getElementById('qrExportCard') || document.getElementById('qrExportSectionTitle');
+        if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }, 120);
 }
 
 // === DATOS ===
@@ -2120,11 +2146,23 @@ function _renderCameraSelector(cameras, preferredDeviceId = '') {
 
 async function cargarCamarasDisponibles(silent = false) {
     if (typeof Html5Qrcode === 'undefined') {
-        if (!silent) alert('Librería de escaneo no disponible.');
+        if (!silent) {
+            showAppAlert('No se pudo iniciar el módulo de cámara porque la librería de escaneo no está cargada.', {
+                title: 'Escáner no disponible',
+                tone: 'error',
+                detail: 'Recarga la página. Si el problema persiste, verifica que los recursos frontend del escáner estén accesibles.',
+            });
+        }
         return [];
     }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        if (!silent) alert('El navegador no permite acceso a cámaras en este contexto.');
+        if (!silent) {
+            showAppAlert('El navegador no permite acceso a cámaras en este contexto.', {
+                title: 'Cámara bloqueada por el navegador',
+                tone: 'warning',
+                detail: 'Usa HTTPS o localhost y revisa permisos del sitio en el navegador.',
+            });
+        }
         _renderCameraSelector([]);
         return [];
     }
@@ -2144,7 +2182,11 @@ async function cargarCamarasDisponibles(silent = false) {
     }
     _renderCameraSelector(cameras);
     if (!cameras.length && !silent) {
-        alert('No se detectaron cámaras disponibles.');
+        showAppAlert('No se detectaron cámaras disponibles.', {
+            title: 'Sin cámaras detectadas',
+            tone: 'warning',
+            detail: 'Conecta una cámara, cierra otras aplicaciones que la estén usando y vuelve a pulsar Actualizar Cámaras.',
+        });
     }
     return cameras;
 }
@@ -2153,7 +2195,11 @@ async function iniciarEscanerQRCamaraSeleccionada() {
     const select = document.getElementById(getActiveQrCameraSelectId());
     const deviceId = (select?.value || '').trim();
     if (!deviceId) {
-        alert('Selecciona una cámara primero.');
+        showAppAlert('Selecciona una cámara antes de iniciar el escáner.', {
+            title: 'Falta seleccionar cámara',
+            tone: 'warning',
+            detail: 'Usa Actualizar Cámaras si el listado está vacío o desactualizado.',
+        });
         return;
     }
     await detenerEscanerQR();
@@ -2333,7 +2379,19 @@ async function iniciarEscanerQRManual() {
         );
     } catch (err) {
         qrScannerInstance = null;
-        alert('No se pudo iniciar la cámara seleccionada: ' + err.message);
+        const selectedLabel = globalSel?.selectedOptions?.[0]?.textContent || sel?.selectedOptions?.[0]?.textContent || deviceId;
+        const reason = getErrorMessage(err, 'El navegador rechazó el inicio de la cámara seleccionada.');
+        showAppAlert(`No se pudo iniciar la cámara seleccionada: ${selectedLabel}.`, {
+            title: 'No fue posible abrir la cámara',
+            tone: 'error',
+            detail: reason,
+            html: `<p>No se pudo iniciar la cámara seleccionada <strong>${escapeHtml(selectedLabel)}</strong>.</p>
+                <ul style="margin:10px 0 0 18px; color:#4a6785; line-height:1.7;">
+                    <li>Verifica que ninguna otra aplicación esté usando la cámara.</li>
+                    <li>Pulsa <strong>Actualizar Cámaras</strong> y vuelve a intentarlo.</li>
+                    <li>Si el navegador pidió permiso, confirma que el sitio tiene acceso permitido.</li>
+                </ul>`,
+        });
     }
 }
 
@@ -2397,13 +2455,16 @@ function renderLineasEstado(lineas) {
     }
 
     let html = '<table class="data-table"><thead><tr>';
-    html += '<th>ID</th><th>Línea</th><th>Lada</th><th>Tipo</th><th>Estado</th><th>Agente</th><th>Acciones</th>';
+    html += '<th>ID</th><th>Línea</th><th>Lada</th><th>Tipo</th><th>Categoría</th><th>Conexión</th><th>Último uso</th><th>Estado</th><th>Agente</th><th>Acciones</th>';
     html += '</tr></thead><tbody>';
 
     lineas.forEach(linea => {
         const ocupada = !!linea.ocupada;
         const agente = linea.agente?.nombre ? `${linea.agente.nombre} (ID ${linea.agente.id})` : '-';
         const estado = ocupada ? '<span class="payment-pill unpaid">OCUPADA</span>' : '<span class="payment-pill paid">LIBRE</span>';
+        const categoria = String(linea.categoria_linea || 'NO_DEFINIDA');
+        const conexion = String(linea.estado_conexion || 'DESCONOCIDA');
+        const ultimoUso = formatDisplayDateTime(linea.fecha_ultimo_uso);
         const actions = [];
         if (ocupada) {
             actions.push(`<button class="btn btn-small btn-danger" onclick="liberarLinea(${linea.id})">Liberar</button>`);
@@ -2416,6 +2477,9 @@ function renderLineasEstado(lineas) {
             <td>${linea.numero}</td>
             <td>${linea.lada || '-'}</td>
             <td>${linea.tipo || '-'}</td>
+            <td>${escapeHtml(categoria)}</td>
+            <td>${escapeHtml(conexion)}</td>
+            <td>${escapeHtml(ultimoUso)}</td>
             <td>${estado}</td>
             <td>${agente}</td>
             <td>${actions.join(' ')}</td>
@@ -2423,6 +2487,14 @@ function renderLineasEstado(lineas) {
     });
     html += '</tbody></table>';
     container.innerHTML = html;
+}
+
+function toDateTimeLocalValue(value) {
+    return window.AppUtils.toDateTimeLocalValue(value);
+}
+
+function formatDisplayDateTime(value) {
+    return window.AppUtils.formatDisplayDateTime(value);
 }
 
 function abrirGestionLinea(lineaId) {
@@ -2435,12 +2507,18 @@ function limpiarFormularioLineaGestion() {
     const lineaId = document.getElementById('lineaGestionId');
     const numero = document.getElementById('lineaGestionNumero');
     const tipo = document.getElementById('lineaGestionTipo');
+    const categoria = document.getElementById('lineaGestionCategoria');
+    const conexion = document.getElementById('lineaGestionConexion');
     const descripcion = document.getElementById('lineaGestionDescripcion');
+    const ultimoUso = document.getElementById('lineaGestionUltimoUso');
     const result = document.getElementById('lineaGestionResult');
     if (lineaId) lineaId.value = '';
     if (numero) numero.value = '';
     if (tipo) tipo.value = 'MANUAL';
+    if (categoria) categoria.value = 'NO_DEFINIDA';
+    if (conexion) conexion.value = 'DESCONOCIDA';
     if (descripcion) descripcion.value = '';
+    if (ultimoUso) ultimoUso.value = '';
     if (result) result.innerHTML = '';
 }
 
@@ -2453,7 +2531,7 @@ function renderLineasGestion(lineas) {
     }
 
     let html = '<table class="data-table"><thead><tr>';
-    html += '<th>ID</th><th>Número</th><th>Lada</th><th>Tipo</th><th>Origen</th><th>Descripción</th><th>Estado</th><th>Agente</th><th>Acciones</th>';
+    html += '<th>ID</th><th>Número</th><th>Lada</th><th>Tipo</th><th>Categoría</th><th>Conexión</th><th>Último uso</th><th>Origen</th><th>Descripción</th><th>Estado</th><th>Agente</th><th>Acciones</th>';
     html += '</tr></thead><tbody>';
 
     lineas.forEach(linea => {
@@ -2461,6 +2539,9 @@ function renderLineasGestion(lineas) {
         const agente = linea.agente?.nombre ? `${linea.agente.nombre} (ID ${linea.agente.id})` : '-';
         const estado = ocupada ? '<span class="payment-pill unpaid">OCUPADA</span>' : '<span class="payment-pill paid">LIBRE</span>';
         const origen = String(linea.origen || 'MANUAL').toUpperCase();
+        const categoria = String(linea.categoria_linea || 'NO_DEFINIDA');
+        const conexion = String(linea.estado_conexion || 'DESCONOCIDA');
+        const ultimoUso = formatDisplayDateTime(linea.fecha_ultimo_uso);
         const actions = [];
         actions.push(`<button type="button" class="btn btn-small" onclick="editarLineaGestion(${linea.id})">Editar</button>`);
         if (ocupada) {
@@ -2477,6 +2558,9 @@ function renderLineasGestion(lineas) {
             <td>${escapeHtml(linea.numero || '-')}</td>
             <td>${escapeHtml(linea.lada || '-')}</td>
             <td>${escapeHtml(linea.tipo || '-')}</td>
+            <td>${escapeHtml(categoria)}</td>
+            <td>${escapeHtml(conexion)}</td>
+            <td>${escapeHtml(ultimoUso)}</td>
             <td>${escapeHtml(origen)}</td>
             <td>${escapeHtml(linea.descripcion || '-')}</td>
             <td>${estado}</td>
@@ -2499,11 +2583,17 @@ function editarLineaGestion(lineaId) {
     const lineaIdEl = document.getElementById('lineaGestionId');
     const numero = document.getElementById('lineaGestionNumero');
     const tipo = document.getElementById('lineaGestionTipo');
+    const categoria = document.getElementById('lineaGestionCategoria');
+    const conexion = document.getElementById('lineaGestionConexion');
     const descripcion = document.getElementById('lineaGestionDescripcion');
+    const ultimoUso = document.getElementById('lineaGestionUltimoUso');
     if (lineaIdEl) lineaIdEl.value = String(linea.id);
     if (numero) numero.value = String(linea.numero || '');
     if (tipo) tipo.value = String(linea.tipo || 'MANUAL').toUpperCase();
+    if (categoria) categoria.value = String(linea.categoria_linea || 'NO_DEFINIDA').toUpperCase();
+    if (conexion) conexion.value = String(linea.estado_conexion || 'DESCONOCIDA').toUpperCase();
     if (descripcion) descripcion.value = String(linea.descripcion || '');
+    if (ultimoUso) ultimoUso.value = toDateTimeLocalValue(linea.fecha_ultimo_uso);
     numero?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
@@ -2512,7 +2602,10 @@ async function guardarLineaGestion(e) {
     const lineaId = Number(document.getElementById('lineaGestionId')?.value || currentLineaEditId || 0);
     const numero = document.getElementById('lineaGestionNumero')?.value.trim();
     const tipo = document.getElementById('lineaGestionTipo')?.value || 'MANUAL';
+    const categoria = document.getElementById('lineaGestionCategoria')?.value || 'NO_DEFINIDA';
+    const conexion = document.getElementById('lineaGestionConexion')?.value || 'DESCONOCIDA';
     const descripcion = document.getElementById('lineaGestionDescripcion')?.value.trim() || '';
+    const ultimoUso = document.getElementById('lineaGestionUltimoUso')?.value || '';
     const result = document.getElementById('lineaGestionResult');
 
     if (!numero) {
@@ -2523,6 +2616,9 @@ async function guardarLineaGestion(e) {
     const payload = {
         numero,
         tipo,
+        categoria_linea: categoria,
+        estado_conexion: conexion,
+        fecha_ultimo_uso: ultimoUso || null,
         descripcion,
         sincronizar: true,
     };
@@ -2854,6 +2950,7 @@ async function cargarLineasYAgentes() {
         const lineas = lineasRes.data || [];
         const agentes = dedupeAgentesPorNombreAlias((agentesRes.data || []).filter(a => a.es_activo !== false));
         currentAltasAgents = agentes;
+        currentAltasLineas = lineas;
         const ladas = (await apiClient.getLadas('')).data || [];
 
         const ladaSelect = document.getElementById('lineasLadaFilter');
@@ -2919,6 +3016,7 @@ async function cargarLineasYAgentes() {
             renderLineasGestion(lineas);
         }
         cambiarModoAsignacionAgente();
+        sincronizarCamposLineaAsignar();
     } catch (error) {
         console.error('Error:', error);
         alert('Error cargando agentes y líneas: ' + error.message);
@@ -2929,11 +3027,35 @@ function cambiarModoAsignacionAgente() {
     const modo = document.getElementById('agenteModoAsignacion')?.value || 'ninguna';
     const selectManual = document.getElementById('agenteLineaManualSelect');
     const inputManual = document.getElementById('agenteLineaManualInput');
-    if (!selectManual || !inputManual) return;
+    const categoriaManual = document.getElementById('agenteLineaCategoriaSelect');
+    const conexionManual = document.getElementById('agenteLineaConexionSelect');
+    if (!selectManual || !inputManual || !categoriaManual || !conexionManual) return;
 
     const showManual = modo === 'manual';
     selectManual.style.display = showManual ? 'inline-block' : 'none';
     inputManual.style.display = showManual ? 'inline-block' : 'none';
+    categoriaManual.style.display = showManual ? 'inline-block' : 'none';
+    conexionManual.style.display = showManual ? 'inline-block' : 'none';
+    if (!showManual) {
+        categoriaManual.value = 'NO_DEFINIDA';
+        conexionManual.value = 'DESCONOCIDA';
+    }
+}
+
+function sincronizarCamposLineaAsignar() {
+    const lineaId = Number(document.getElementById('lineaAsignarSelect')?.value || 0);
+    const categoriaSelect = document.getElementById('lineaAsignarCategoria');
+    const conexionSelect = document.getElementById('lineaAsignarConexion');
+    if (!categoriaSelect || !conexionSelect) return;
+    if (!lineaId) {
+        categoriaSelect.value = '';
+        conexionSelect.value = '';
+        return;
+    }
+
+    const linea = (currentAltasLineas || []).find(item => Number(item.id) === lineaId);
+    categoriaSelect.value = String(linea?.categoria_linea || '').toUpperCase();
+    conexionSelect.value = String(linea?.estado_conexion || '').toUpperCase();
 }
 
 function resolveAltasAgent(agenteId) {
@@ -3022,6 +3144,8 @@ async function crearAgenteManual(e) {
     if (modo === 'manual') {
         payload.linea_id = Number(document.getElementById('agenteLineaManualSelect')?.value || 0) || null;
         payload.numero_linea_manual = document.getElementById('agenteLineaManualInput')?.value.trim() || null;
+        payload.categoria_linea = document.getElementById('agenteLineaCategoriaSelect')?.value || 'NO_DEFINIDA';
+        payload.estado_conexion = document.getElementById('agenteLineaConexionSelect')?.value || 'DESCONOCIDA';
         if (!payload.linea_id && !payload.numero_linea_manual) {
             alert('Para modo manual selecciona una línea o escribe un número nuevo.');
             return;
@@ -3063,6 +3187,8 @@ async function crearAgenteManual(e) {
         document.getElementById('agenteModoAsignacion').value = 'ninguna';
         document.getElementById('agenteLadaObjetivoSelect').value = '';
         document.getElementById('agenteLineaManualSelect').value = '';
+        document.getElementById('agenteLineaCategoriaSelect').value = 'NO_DEFINIDA';
+        document.getElementById('agenteLineaConexionSelect').value = 'DESCONOCIDA';
         cambiarModoAsignacionAgente();
 
         await cargarLineasYAgentes();
@@ -3099,6 +3225,15 @@ async function asignarLineaAgente(e) {
     }
 
     try {
+        const categoriaLinea = String(document.getElementById('lineaAsignarCategoria')?.value || '').trim().toUpperCase();
+        const estadoConexion = String(document.getElementById('lineaAsignarConexion')?.value || '').trim().toUpperCase();
+        const patchLinea = {};
+        if (categoriaLinea) patchLinea.categoria_linea = categoriaLinea;
+        if (estadoConexion) patchLinea.estado_conexion = estadoConexion;
+        if (Object.keys(patchLinea).length > 0) {
+            await apiClient.actualizarLinea(lineaId, patchLinea);
+        }
+
         const agente = resolveAltasAgent(agenteId);
         const lineasActuales = Array.isArray(agente?.lineas) ? agente.lineas.length : 0;
         let billing = { cobroDesdeSemana: null, cargoInicial: 0 };

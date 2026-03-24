@@ -192,6 +192,33 @@ def _ensure_core_schema_updates():
                 )
             )
 
+        if not _column_exists(connection, "lineas_telefonicas", "categoria_linea"):
+            connection.execute(
+                text(
+                    "ALTER TABLE `lineas_telefonicas` ADD COLUMN `categoria_linea` VARCHAR(20) NOT NULL DEFAULT 'NO_DEFINIDA'"
+                )
+            )
+
+        if not _column_exists(connection, "lineas_telefonicas", "estado_conexion"):
+            connection.execute(
+                text(
+                    "ALTER TABLE `lineas_telefonicas` ADD COLUMN `estado_conexion` VARCHAR(20) NOT NULL DEFAULT 'DESCONOCIDA'"
+                )
+            )
+
+        if not _column_exists(connection, "lineas_telefonicas", "fecha_ultimo_uso"):
+            connection.execute(
+                text(
+                    "ALTER TABLE `lineas_telefonicas` ADD COLUMN `fecha_ultimo_uso` DATETIME NULL"
+                )
+            )
+
+        if not _index_exists(connection, "lineas_telefonicas", "ix_lineas_telefonicas_categoria_linea"):
+            connection.execute(text("CREATE INDEX `ix_lineas_telefonicas_categoria_linea` ON `lineas_telefonicas` (`categoria_linea`)"))
+
+        if not _index_exists(connection, "lineas_telefonicas", "ix_lineas_telefonicas_estado_conexion"):
+            connection.execute(text("CREATE INDEX `ix_lineas_telefonicas_estado_conexion` ON `lineas_telefonicas` (`estado_conexion`)"))
+
         if not _column_exists(connection, "agente_linea_asignaciones", "cobro_desde_semana"):
             connection.execute(
                 text(

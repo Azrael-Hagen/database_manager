@@ -340,6 +340,12 @@ class TestQrStaticoYExportacion:
         assert resp.content.startswith(b"%PDF")
         assert len(resp.content) > 1000
 
+        resp_oficio = client.get("/api/qr/agentes/export/pdf?layout=oficio", headers=self.admin_headers)
+        assert resp_oficio.status_code == 200
+        assert resp_oficio.headers["content-type"].startswith("application/pdf")
+        assert resp_oficio.content.startswith(b"%PDF")
+        assert len(resp_oficio.content) > 1000
+
     def test_verificacion_no_marca_asignacion_solo_por_telefono(self):
         agente = _mk_agente("Solo Telefono")
         db = _db()
@@ -367,16 +373,22 @@ class TestFrontendAssets:
 
     def test_index_tiene_controles(self):
         html = open(_INDEX_HTML, encoding="utf-8").read()
+        assert 'js/app-utils.js' in html
         assert "estadoAgentesSearch" in html
         assert "estadoAgentesContainer" in html
         assert "generarQRMasivo()" in html
         assert "lineasSection" in html
         assert "lineasGestionContainer" in html
         assert "guardarLineaGestion(event)" in html
+        assert "agenteLineaCategoriaSelect" in html
+        assert "agenteLineaConexionSelect" in html
+        assert "lineaAsignarCategoria" in html
+        assert "lineaAsignarConexion" in html
         assert "deudaManualPanel" in html
         assert "aplicarDeudaManualAgente()" in html
         assert "qrExportIds" in html
         assert "qrExportLayout" in html
+        assert "oficio" in html
         assert "serverVersionInfo" in html
 
     def test_js_tiene_funciones(self):
@@ -390,6 +402,14 @@ class TestFrontendAssets:
         assert "async function consultarDeudaManualAgente" in js
         assert "async function exportarQRLote" in js
         assert "async function loadServerVersionInfo" in js
+        assert "function showAppAlert" in js
+        assert "function getErrorMessage" in js
+
+    def test_css_tiene_estilos_modal_alerta(self):
+        css = open(_STYLE_CSS, encoding="utf-8").read()
+        assert ".app-alert-backdrop" in css
+        assert ".app-alert-modal" in css
+        assert ".app-alert-title" in css
 
     def test_js_tiene_wiring_menu_dashboard(self):
         js = open(_MAIN_JS, encoding="utf-8").read()
@@ -426,12 +446,18 @@ class TestLineasGestionDebugE2E:
                 "numero": "7771001",
                 "tipo": "MANUAL",
                 "descripcion": "Linea debug inicial",
+                "categoria_linea": "FIJO",
+                "estado_conexion": "CONECTADA",
+                "fecha_ultimo_uso": "2026-01-15T10:30:00",
                 "sincronizar": False,
             },
         )
         assert crear.status_code == 200, crear.text
         linea = crear.json()["data"]
         linea_id = linea["id"]
+        assert linea["categoria_linea"] == "FIJO"
+        assert linea["estado_conexion"] == "CONECTADA"
+        assert str(linea.get("fecha_ultimo_uso") or "").startswith("2026-01-15T10:30:00")
 
         editar = client.put(
             f"/api/qr/lineas/{linea_id}",
@@ -440,10 +466,16 @@ class TestLineasGestionDebugE2E:
                 "numero": "7771001",
                 "tipo": "VOIP",
                 "descripcion": "Linea debug editada",
+                "categoria_linea": "MOVIL",
+                "estado_conexion": "DESCONECTADA",
+                "fecha_ultimo_uso": "2026-01-20",
             },
         )
         assert editar.status_code == 200, editar.text
         assert editar.json()["data"]["tipo"] == "VOIP"
+        assert editar.json()["data"]["categoria_linea"] == "MOVIL"
+        assert editar.json()["data"]["estado_conexion"] == "DESCONECTADA"
+        assert str(editar.json()["data"].get("fecha_ultimo_uso") or "").startswith("2026-01-20T00:00:00")
 
         asignar = client.post(
             f"/api/qr/lineas/{linea_id}/asignar",
@@ -459,6 +491,9 @@ class TestLineasGestionDebugE2E:
         print("DEBUG lineas ocupadas:", rows)
         assert debug_row is not None
         assert debug_row.get("agente", {}).get("id") == agente.id
+        assert debug_row.get("categoria_linea") == "MOVIL"
+        assert debug_row.get("estado_conexion") == "DESCONECTADA"
+        assert str(debug_row.get("fecha_ultimo_uso") or "").startswith("2026-01-20T00:00:00")
 
         liberar = client.post(f"/api/qr/lineas/{linea_id}/liberar", headers=self.admin_headers, json={})
         assert liberar.status_code == 200, liberar.text
