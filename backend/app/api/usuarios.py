@@ -37,6 +37,54 @@ TEMP_USER_PREFIXES = ("tmp_", "temp_", "test_", "demo_")
 TEMP_USER_MAX_DAYS = 10
 
 
+ROLE_CAPABILITIES = [
+    {
+        "role": "viewer",
+        "label": "Consulta",
+        "description": "Solo lectura operativa y seguimiento de alertas.",
+        "permissions": [
+            "Ver dashboard",
+            "Consultar datos",
+            "Leer alertas y marcarlas como leidas",
+        ],
+    },
+    {
+        "role": "capture",
+        "label": "Altas",
+        "description": "Operacion de captura, importacion y estado de agentes.",
+        "permissions": [
+            "Todo lo de Consulta",
+            "Importar y exportar",
+            "Altas de agentes y gestion de lineas",
+            "Estado de agentes",
+        ],
+    },
+    {
+        "role": "admin",
+        "label": "Administrador",
+        "description": "Control operativo completo y administracion de usuarios.",
+        "permissions": [
+            "Todo lo de Altas",
+            "Cambios y bajas",
+            "Escaneo QR y QR/Cobros",
+            "Gestion de usuarios y auditoria",
+            "Enviar/desactivar alertas del sistema",
+        ],
+    },
+    {
+        "role": "super_admin",
+        "label": "Super Admin",
+        "description": "Nivel maximo: gobierno de permisos y operaciones criticas.",
+        "permissions": [
+            "Todo lo de Administrador",
+            "Asignar/crear otros super_admin",
+            "Operaciones de papelera y purga critica",
+            "Controles avanzados de seguridad",
+        ],
+    },
+]
+
+
 def _archive_temp_user(
     db: Session,
     user: UsuarioModel,
@@ -122,6 +170,21 @@ async def listar_usuarios(
     usuarios = db.query(UsuarioModel).order_by(order_clause, UsuarioModel.id.desc()).offset(skip).limit(limit).all()
     logger.info(f"Usuario {current_user['username']} listó {len(usuarios)} usuarios")
     return usuarios
+
+
+@router.get("/roles/capabilities")
+async def listar_capacidades_roles(
+    current_user: dict = Depends(get_current_user),
+):
+    """Matriz de capacidades por rol para consumo de UI y soporte operativo."""
+    if not current_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado")
+
+    return {
+        "status": "success",
+        "total": len(ROLE_CAPABILITIES),
+        "items": ROLE_CAPABILITIES,
+    }
 
 
 @router.post("/temporales", response_model=Usuario)

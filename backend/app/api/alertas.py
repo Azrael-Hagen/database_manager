@@ -6,7 +6,7 @@ from app.database.orm import get_db
 from app.models import AlertaSistema, Usuario
 from app.security import (
     get_current_user,
-    require_super_admin_role,
+    require_admin_role,
 )
 import json
 import logging
@@ -54,8 +54,8 @@ async def enviar_alerta(
     mensaje: str = Query(..., min_length=1),
     nivel: str = Query("warning"),
 ):
-    """Enviar alerta a todos los usuarios. Solo super_admin."""
-    require_super_admin_role(current_user, "Solo el super administrador puede enviar alertas")
+    """Enviar alerta a todos los usuarios. Requiere admin o super_admin."""
+    require_admin_role(current_user, "Solo administradores pueden enviar alertas")
 
     nivel_normalizado = nivel.lower() if nivel.lower() in _NIVELES else "warning"
 
@@ -74,14 +74,14 @@ async def enviar_alerta(
     return _alerta_to_dict(alerta, current_user["id"])
 
 
-@router.post("/enviar-json")
+@router.post("/enviar-json", status_code=status.HTTP_201_CREATED)
 async def enviar_alerta_json(
     request: Request,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Enviar alerta con body JSON. Solo super_admin."""
-    require_super_admin_role(current_user, "Solo el super administrador puede enviar alertas")
+    """Enviar alerta con body JSON. Requiere admin o super_admin."""
+    require_admin_role(current_user, "Solo administradores pueden enviar alertas")
 
     try:
         body = await request.json()
@@ -165,8 +165,8 @@ async def desactivar_alerta(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Desactivar una alerta (solo super_admin)."""
-    require_super_admin_role(current_user, "Solo el super administrador puede desactivar alertas")
+    """Desactivar una alerta (admin o super_admin)."""
+    require_admin_role(current_user, "Solo administradores pueden desactivar alertas")
 
     alerta = db.query(AlertaSistema).filter(AlertaSistema.id == alerta_id).first()
     if not alerta:

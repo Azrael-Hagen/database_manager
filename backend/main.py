@@ -30,6 +30,8 @@ from app.api.export import router as export_router
 from app.api.dashboard import router as dashboard_router
 from app.api.alertas import router as alertas_router
 from app.api.system import router as system_router
+from app.api.smart_import import router as smart_import_router
+from app.api.smart_export import router as smart_export_router
 from app.versioning import current_version_payload, current_version_string
 from app.security import get_current_user
 from app.utils.pagos import generar_alertas_miercoles_pendientes
@@ -247,6 +249,8 @@ app.include_router(export_router)
 app.include_router(dashboard_router)
 app.include_router(alertas_router)
 app.include_router(system_router)
+app.include_router(smart_import_router)
+app.include_router(smart_export_router)
 
 
 # HEALTH CHECK

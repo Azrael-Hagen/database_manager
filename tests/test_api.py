@@ -417,3 +417,63 @@ class TestSecurityPhase3:
 
         response = https_client.get("/api/auth/me", headers=headers)
         assert response.status_code == 401
+
+
+class TestAlertasRoles:
+    """Tests para permisos de alertas y visibilidad de capacidades de rol."""
+
+    @staticmethod
+    def _token(role: str) -> str:
+        return create_access_token(
+            data={
+                "sub": f"alerts_{role}",
+                "id": 1700 if role == "admin" else 1701 if role == "super_admin" else 1702,
+                "es_admin": role in {"admin", "super_admin"},
+                "rol": role,
+                "email": f"alerts_{role}@example.com",
+            }
+        )
+
+    def test_admin_puede_enviar_alerta_sistema(self):
+        headers = {"Authorization": f"Bearer {self._token('admin')}"}
+
+        response = https_client.post(
+            "/api/alertas/enviar-json",
+            headers=headers,
+            json={
+                "titulo": "Mantenimiento programado",
+                "mensaje": "Se realizará ventana de mantenimiento a las 23:00.",
+                "nivel": "warning",
+            },
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["titulo"] == "Mantenimiento programado"
+        assert data["nivel"] == "warning"
+
+    def test_viewer_no_puede_enviar_alerta_sistema(self):
+        headers = {"Authorization": f"Bearer {self._token('viewer')}"}
+
+        response = https_client.post(
+            "/api/alertas/enviar-json",
+            headers=headers,
+            json={
+                "titulo": "Intento sin permisos",
+                "mensaje": "Este envío debe bloquearse.",
+                "nivel": "info",
+            },
+        )
+
+        assert response.status_code == 403
+
+    def test_endpoint_capacidades_roles_retorna_cuatro_roles(self):
+        headers = {"Authorization": f"Bearer {self._token('admin')}"}
+
+        response = https_client.get("/api/usuarios/roles/capabilities", headers=headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        items = data.get("items", [])
+        role_keys = {item.get("role") for item in items}
+        assert {"viewer", "capture", "admin", "super_admin"}.issubset(role_keys)

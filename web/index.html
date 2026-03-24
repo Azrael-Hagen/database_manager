@@ -41,19 +41,20 @@
     <!-- Sidebar -->
     <div class="sidebar" id="appSidebar">
         <ul class="menu">
-            <li><a href="#" onclick="loadSection('dashboard', event)" class="menu-item active"><img class="menu-icon" src="sources/iconfinder-home-4341294_120570.ico" alt="">Dashboard</a></li>
-            <li><a href="#" onclick="loadSection('datos', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-image-4341296_120549.ico" alt="">Datos</a></li>
-            <li><a href="#" onclick="loadSection('databases', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-server-4417119_116634.ico" alt="">Bases de Datos</a></li>
-            <li><a href="#" onclick="loadSection('importar', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-download-4341287_120571.ico" alt="">Importar</a></li>
-            <li><a href="#" onclick="loadSection('altasAgentes', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-check-4341282_120572.ico" alt="">Altas de Agentes</a></li>
-            <li><a href="#" onclick="loadSection('lineas', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-ring-4341316_120544.ico" alt="">Gestión de Líneas</a></li>
-            <li><a href="#" onclick="loadSection('cambiosBajas', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-settings-4341324_120534.ico" alt="">Cambios y Bajas</a></li>
-            <li><a href="#" onclick="loadSection('qrScan', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-security-4341326_120558.ico" alt="">Escaneo QR</a></li>
-            <li><a href="#" onclick="loadSection('qr', event)" class="menu-item"><img class="menu-icon" src="sources/map_98439.ico" alt="">QR y Cobros</a></li>
-            <li><a href="#" onclick="loadSection('usuarios', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-key-4341299_120569.ico" alt="">Usuarios</a></li>
-            <li><a href="#" onclick="loadSection('auditoria', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-mail-4341305_120538.ico" alt="">Auditoría</a></li>
-            <li id="menuEstadoAgentes"><a href="#" onclick="loadSection('estadoAgentes', event)" class="menu-item" id="menuEstadoAgentesLink"><img class="menu-icon" src="sources/iconfinder-settings-4341324_120534.ico" alt="">Estado de Agentes <span id="estadoAgentesMenuBadge" class="menu-badge-warning" style="display:none;">!</span></a></li>
-            <li id="menuAlertas"><a href="#" onclick="loadSection('alertas', event)" class="menu-item" id="menuAlertasLink"><img class="menu-icon" src="sources/iconfinder-mail-4341305_120538.ico" alt="">Alertas <span id="alertasMenuBadge" class="menu-badge-danger" style="display:none;"></span></a></li>
+            <li><a href="#" onclick="loadSection('dashboard', event)" class="menu-item menu-tone-core active"><img class="menu-icon" src="sources/iconfinder-home-4341294_120570.ico" alt="Inicio">Dashboard</a></li>
+            <li><a href="#" onclick="loadSection('datos', event)" class="menu-item menu-tone-core"><img class="menu-icon" src="sources/iconfinder-image-4341296_120549.ico" alt="Datos">Datos</a></li>
+            <li><a href="#" onclick="loadSection('databases', event)" class="menu-item menu-tone-core"><img class="menu-icon" src="sources/iconfinder-server-4417119_116634.ico" alt="Bases de datos">Bases de Datos</a></li>
+            <li><a href="#" onclick="loadSection('importar', event)" class="menu-item menu-tone-office"><img class="menu-icon" src="sources/microsoft_office_word_logo_icon_145724.ico" alt="Importar archivos">Importar</a></li>
+            <li><a href="#" onclick="loadSection('exportar', event)" class="menu-item menu-tone-office"><img class="menu-icon" src="sources/microsoft_office_excel_logo_icon_145720.ico" alt="Exportar reportes">Exportar</a></li>
+            <li><a href="#" onclick="loadSection('altasAgentes', event)" class="menu-item menu-tone-ops"><img class="menu-icon" src="sources/iconfinder-check-4341282_120572.ico" alt="Altas">Altas de Agentes</a></li>
+            <li><a href="#" onclick="loadSection('lineas', event)" class="menu-item menu-tone-ops"><img class="menu-icon" src="sources/iconfinder-ring-4341316_120544.ico" alt="Lineas">Gestión de Líneas</a></li>
+            <li><a href="#" onclick="loadSection('cambiosBajas', event)" class="menu-item menu-tone-ops"><img class="menu-icon" src="sources/iconfinder-settings-4341324_120534.ico" alt="Cambios y bajas">Cambios y Bajas</a></li>
+            <li><a href="#" onclick="loadSection('qrScan', event)" class="menu-item menu-tone-security"><img class="menu-icon" src="sources/iconfinder-security-4341326_120558.ico" alt="Escaneo QR">Escaneo QR</a></li>
+            <li><a href="#" onclick="loadSection('qr', event)" class="menu-item menu-tone-security"><img class="menu-icon" src="sources/map_98439.ico" alt="QR y cobros">QR y Cobros</a></li>
+            <li><a href="#" onclick="loadSection('usuarios', event)" class="menu-item menu-tone-admin"><img class="menu-icon" src="sources/iconfinder-key-4341299_120569.ico" alt="Usuarios">Usuarios</a></li>
+            <li><a href="#" onclick="loadSection('auditoria', event)" class="menu-item menu-tone-admin"><img class="menu-icon" src="sources/owl_98440.ico" alt="Auditoria">Auditoría</a></li>
+            <li id="menuEstadoAgentes"><a href="#" onclick="loadSection('estadoAgentes', event)" class="menu-item menu-tone-ops" id="menuEstadoAgentesLink"><img class="menu-icon" src="sources/cloudrefresh_icon-icons.com_54403.ico" alt="Estado de agentes">Estado de Agentes <span id="estadoAgentesMenuBadge" class="menu-badge-warning" style="display:none;">!</span></a></li>
+            <li id="menuAlertas"><a href="#" onclick="loadSection('alertas', event)" class="menu-item menu-tone-office" id="menuAlertasLink"><img class="menu-icon" src="sources/microsoft_office_outlook_logo_icon_145721.ico" alt="Alertas">Alertas <span id="alertasMenuBadge" class="menu-badge-danger" style="display:none;"></span></a></li>
         </ul>
     </div>
     <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar(false)" aria-hidden="true"></div>
@@ -111,7 +112,7 @@
 
             <!-- Sección de Dashboard -->
             <section id="dashboardSection" class="panel" style="display: none;">
-                <h1>Dashboard</h1>
+                <h1 class="section-title-with-icon"><img class="section-title-icon" src="sources/iconfinder-home-4341294_120570.ico" alt="Dashboard">Dashboard</h1>
                 <div class="dashboard-banner" role="img" aria-label="Banner tecnológico de fondo">
                     <div class="dashboard-banner-overlay">
                         <h2>Centro Operativo</h2>
@@ -259,49 +260,52 @@
                         <option value="telefono">Ordenar por Teléfono</option>
                         <option value="email">Ordenar por Email</option>
                     </select>
-                    <select id="datosOrderDir" onchange="cargarTodosLosDatos()">
+                        <h3>Matriz de capacidades por rol</h3>
                         <option value="desc" selected>Descendente</option>
                         <option value="asc">Ascendente</option>
                     </select>
                     <input type="text" id="singleSearchInput" placeholder="ID o UUID exacto">
-                    <button onclick="consultarUnDato()" class="btn btn-secondary">Consultar Uno</button>
+                </div>
+
                     <button onclick="cargarTodosLosDatos()" class="btn">Ver Todos</button>
                     <button id="purgeInactiveBtn" onclick="purgarDatosInactivos()" class="btn btn-danger" style="display:none;">Purgar Inactivos</button>
                     <select id="tablasSelect" onchange="cambiarTabla()">
                         <option value="">-- Selecciona tabla --</option>
-                    </select>
                 </div>
                 <p class="hint">"Ver Todos" carga todos los registros activos. "Consultar Uno" busca por ID o UUID exacto.</p>
                 <div id="datosContainer" class="table-responsive"></div>
             </section>
-
             <!-- Sección de Bases de Datos -->
+                        <button type="submit" class="btn">Crear Temporal</button>
             <section id="databasesSection" class="panel" style="display: none;">
                 <h1>Gestión de Bases de Datos</h1>
                 <div class="db-actions">
-                    <button onclick="cargarDatabases()" class="btn">Cargar Bases de Datos</button>
+
                     <button onclick="abrirQueryPanel()" class="btn btn-secondary">Herramientas SQL Avanzadas</button>
                     <button onclick="cargarResumenMantenimiento()" class="btn btn-secondary">Depurar Esquema</button>
                 </div>
+
+                <h3 style="margin-top:16px;">Solicitudes de Elevación de Permisos</h3>
+                <div id="usuariosSolicitudesContainer" class="table-responsive" style="margin-top: 10px;"></div>
+
                 <div id="dbMaintenancePanel" class="card" style="display:none;margin-top:16px;padding:14px;border:1px solid #d8e6f4;border-radius:12px;background:#f9fcff;color:#173049;">
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                <div id="usuariosTempHistoryContainer" class="table-responsive" style="margin-top: 10px;"></div>
                         <select id="maintenanceDatabaseSelect">
                             <option value="">-- Base de datos para mantenimiento --</option>
                         </select>
                         <button type="button" class="btn" onclick="cargarResumenMantenimiento()">Analizar</button>
-                        <button type="button" class="btn btn-secondary" onclick="crearVistasUtilesUI()">Crear Vistas Útiles</button>
+                <h1>Auditoría y Logs</h1>
                         <button type="button" class="btn btn-danger" onclick="depurarObjetosTemporales()">Eliminar Temporales</button>
                         <button type="button" class="btn btn-danger" onclick="depurarAgentesRedundantesUI()">Depurar Agentes Redundantes</button>
-                    </div>
-                    <p class="hint" style="margin-top:10px;">La depuración automática solo elimina objetos temporales/de prueba claramente identificados. No toca tablas operativas base y solo puede ejecutarse desde la máquina servidor.</p>
-                    <div id="dbMaintenanceResult" style="margin-top:12px;"></div>
-                </div>
-                <div id="databasesContainer" class="table-responsive"></div>
-                
-                <!-- SQL Query Panel -->
+                    <button onclick="exportarAuditoriaCSV()" class="btn btn-secondary">Exportar CSV</button>
                 <div id="queryPanel" style="display: none; margin-top: 20px;">
-                    <h3>Herramientas SQL Avanzadas</h3>
+                <div id="auditoriaContainer" class="table-responsive"></div>
+            </section>
                     <div class="form-group">
+            <!-- Sección Estado de Agentes -->
+            <section id="estadoAgentesSection" class="panel" style="display: none;">
+                <h1>Estado de Agentes</h1>
+                <p class="hint">Vista consolidada por agente (una fila por agente): muestra todas sus líneas activas y el conteo total. El cobro semanal se calcula por línea activa; si no tiene líneas, no debe generar adeudo. El QR se mantiene único por agente.</p>
                         <label>Base de Datos:</label>
                         <select id="queryDatabase">
                             <option value="">-- Selecciona BD --</option>
@@ -320,43 +324,183 @@
             <!-- Sección de Importación -->
             <section id="importarSection" class="panel" style="display: none;">
                 <h1>Importar Datos</h1>
-                <form onsubmit="importarArchivo(event)">
-                    <div class="form-group">
-                        <label>Archivo:</label>
-                        <input type="file" id="archivoInput" required accept=".csv,.xlsx,.txt,.dat">
+
+                <!-- Tab bar -->
+                <div style="display:flex;gap:4px;margin-bottom:18px;border-bottom:2px solid #ddd;">
+                    <button type="button" id="siTabClassicBtn" class="btn btn-secondary"
+                            onclick="smartImportSetTab('classic')"
+                            style="border-radius:4px 4px 0 0;border-bottom:none;">
+                        Clásica
+                    </button>
+                    <button type="button" id="siTabSmartBtn" class="btn"
+                            onclick="smartImportSetTab('smart')"
+                            style="border-radius:4px 4px 0 0;border-bottom:none;">
+                        Inteligente
+                    </button>
+                </div>
+
+                <!-- Classic tab -->
+                <div id="importClassicTab">
+                    <form onsubmit="importarArchivo(event)">
+                        <div class="form-group">
+                            <label>Archivo:</label>
+                            <input type="file" id="archivoInput" required accept=".csv,.xlsx,.txt,.dat">
+                        </div>
+                        <div class="form-group">
+                            <label>Tipo:</label>
+                            <select id="tipoArchivo" onchange="cambiarTipo()">
+                                <option value="csv">CSV</option>
+                                <option value="excel">Excel</option>
+                                <option value="txt">TXT</option>
+                                <option value="dat">DAT</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Delimitador:</label>
+                            <select id="delimitador">
+                                <option value=",">Coma (,)</option>
+                                <option value=";">Punto y coma (;)</option>
+                                <option value="\t">Tabulación</option>
+                                <option value="|">Pipe (|)</option>
+                                <option value=" ">Espacio</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Tabla Destino:</label>
+                            <input type="text" id="tablaDestino" value="datos_importados" placeholder="tabla_existente_o_nueva">
+                        </div>
+                        <p class="hint">Si la tabla ya existe, el sistema adapta columnas faltantes automáticamente para CSV/TXT/DAT.</p>
+                        <button type="submit" class="btn">Importar</button>
+                    </form>
+                    <div id="importProgress" style="display: none; margin-top: 20px;">
+                        <p>Importando...</p>
+                        <div class="progress-bar">
+                            <div id="progressFill" class="progress-fill"></div>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label>Tipo:</label>
-                        <select id="tipoArchivo" onchange="cambiarTipo()">
+                </div><!-- /importClassicTab -->
+
+                <!-- Smart import tab -->
+                <div id="importSmartTab" style="display:none;">
+                    <!-- Step indicator -->
+                    <div style="display:flex;gap:0;margin-bottom:18px;" id="siStepIndicator">
+                        <span id="siStep1Ind" style="flex:1;text-align:center;padding:6px;background:#4a90d9;color:#fff;border-radius:4px 0 0 4px;font-weight:600;">1 · Analizar</span>
+                        <span id="siStep2Ind" style="flex:1;text-align:center;padding:6px;background:#ccc;color:#666;">2 · Mapear</span>
+                        <span id="siStep3Ind" style="flex:1;text-align:center;padding:6px;background:#ccc;color:#666;border-radius:0 4px 4px 0;">3 · Ejecutar</span>
+                    </div>
+
+                    <!-- Step 1: upload + analyze -->
+                    <div id="siStep1">
+                        <div class="form-group">
+                            <label>Archivo (CSV, Excel, TXT, DAT):</label>
+                            <input type="file" id="siFileInput" accept=".csv,.xlsx,.xls,.txt,.dat">
+                        </div>
+                        <div class="form-group">
+                            <label>Delimitador (para CSV/TXT/DAT):</label>
+                            <select id="siDelimitador">
+                                <option value=",">Coma (,)</option>
+                                <option value=";">Punto y coma (;)</option>
+                                <option value="\t">Tabulación</option>
+                                <option value="|">Pipe (|)</option>
+                            </select>
+                        </div>
+                        <button type="button" class="btn" onclick="smartAnalyzeFile()">Analizar Archivo</button>
+                        <p id="siAnalysisStatus" style="margin-top:10px;color:#4a90d9;"></p>
+                        <div id="siStep1Results" style="margin-top:12px;"></div>
+                        <div id="siGoStep2Btn" style="display:none;margin-top:12px;">
+                            <button type="button" class="btn" onclick="siGoToStep2()">Continuar → Mapear Campos</button>
+                        </div>
+                    </div><!-- /siStep1 -->
+
+                    <!-- Step 2: mapping + preview -->
+                    <div id="siStep2" style="display:none;">
+                        <h3>Mapeo de Columnas</h3>
+                        <p class="hint">Asigna cada columna del archivo a un campo del sistema. Las columnas marcadas como "desconocido" se guardarán como datos adicionales.</p>
+                        <div style="overflow-x:auto;">
+                            <table class="data-table" style="margin-bottom:14px;">
+                                <thead><tr>
+                                    <th>Columna del archivo</th>
+                                    <th>Campo del sistema</th>
+                                    <th>Confianza</th>
+                                    <th>Muestra</th>
+                                </tr></thead>
+                                <tbody id="siMappingBody"></tbody>
+                            </table>
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="siSetStep(1)">← Atrás</button>
+                        <button type="button" class="btn" onclick="siPreview()" style="margin-left:8px;">Vista Previa →</button>
+                        <p id="siPreviewStatus" style="margin-top:10px;color:#4a90d9;"></p>
+                        <div id="siPreviewSummary" style="margin-top:12px;"></div>
+                        <div id="siGoStep3Btn" style="display:none;margin-top:12px;">
+                            <button type="button" class="btn" onclick="siGoToStep3()">Continuar → Ejecutar</button>
+                        </div>
+                    </div><!-- /siStep2 -->
+
+                    <!-- Step 3: execute -->
+                    <div id="siStep3" style="display:none;">
+                        <h3>Ejecutar Importación</h3>
+                        <div class="form-group" style="max-width:340px;">
+                            <label>Modo de importación:</label>
+                            <select id="siModo">
+                                <option value="insertar_o_actualizar">Insertar o actualizar (upsert)</option>
+                                <option value="insertar">Solo insertar nuevos (omitir existentes)</option>
+                                <option value="actualizar">Solo actualizar existentes (omitir nuevos)</option>
+                            </select>
+                        </div>
+                        <button type="button" class="btn btn-secondary" onclick="siSetStep(2)">← Atrás</button>
+                        <button type="button" class="btn" onclick="siExecuteImport()" style="margin-left:8px;background:#2ecc71;">Importar Ahora</button>
+                        <p id="siExecuteStatus" style="margin-top:10px;"></p>
+                    </div><!-- /siStep3 -->
+
+                </div><!-- /importSmartTab -->
+            </section>
+
+            <!-- Sección de Exportación -->
+            <section id="exportarSection" class="panel" style="display: none;">
+                <h1>Exportar Datos</h1>
+
+                <!-- Table selector -->
+                <div class="form-group" style="max-width:340px;">
+                    <label>Tabla a exportar:</label>
+                    <select id="seTablaSelect" onchange="exportSeleccionarTabla()" disabled>
+                        <option value="">Cargando…</option>
+                    </select>
+                </div>
+                <p id="seFieldsStatus" style="color:#e74c3c;margin:4px 0;"></p>
+
+                <!-- Field checkboxes -->
+                <div style="border:1px solid #ddd;border-radius:6px;padding:14px;margin-bottom:14px;min-height:54px;" id="seFieldsContainer">
+                    <p class="hint">Selecciona una tabla para ver los campos disponibles.</p>
+                </div>
+
+                <!-- Filter builder -->
+                <h3 style="margin-bottom:6px;">Filtros <small class="hint">(opcional)</small></h3>
+                <div id="seFiltersContainer"></div>
+                <button type="button" class="btn btn-secondary" onclick="exportAgregarFiltro()" style="margin-bottom:14px;">+ Agregar Filtro</button>
+
+                <!-- Export options -->
+                <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-bottom:14px;">
+                    <div class="form-group" style="margin:0;min-width:160px;">
+                        <label>Formato:</label>
+                        <select id="seFormato">
                             <option value="csv">CSV</option>
-                            <option value="excel">Excel</option>
-                            <option value="txt">TXT</option>
-                            <option value="dat">DAT</option>
+                            <option value="excel">Excel (.xlsx)</option>
+                            <option value="txt">TXT (tabulado)</option>
+                            <option value="dat">DAT (pipe)</option>
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label>Delimitador:</label>
-                        <select id="delimitador">
-                            <option value=",">Coma (,)</option>
-                            <option value=";">Punto y coma (;)</option>
-                            <option value="\t">Tabulación</option>
-                            <option value="|">Pipe (|)</option>
-                            <option value=" ">Espacio</option>
-                        </select>
+                    <div class="form-group" style="margin:0;min-width:200px;">
+                        <label>Nombre de archivo <small class="hint">(sin extensión)</small>:</label>
+                        <input type="text" id="seNombreArchivo" placeholder="exportacion">
                     </div>
-                    <div class="form-group">
-                        <label>Tabla Destino:</label>
-                        <input type="text" id="tablaDestino" value="datos_importados" placeholder="tabla_existente_o_nueva">
-                    </div>
-                    <p class="hint">Si la tabla ya existe, el sistema adapta columnas faltantes automáticamente para CSV/TXT/DAT.</p>
-                    <button type="submit" class="btn">Importar</button>
-                </form>
-                <div id="importProgress" style="display: none; margin-top: 20px;">
-                    <p>Importando...</p>
-                    <div class="progress-bar">
-                        <div id="progressFill" class="progress-fill"></div>
+                    <div class="form-group" style="margin:0;min-width:120px;">
+                        <label>Límite de filas:</label>
+                        <input type="number" id="seLimite" min="1" placeholder="Sin límite">
                     </div>
                 </div>
+
+                <button type="button" class="btn" onclick="exportEjecutar()">Exportar</button>
+                <p id="seExportStatus" style="margin-top:10px;"></p>
             </section>
 
             <section id="altasAgentesSection" class="panel" style="display: none;">
@@ -565,220 +709,287 @@
             <!-- Sección Exclusiva de Escaneo QR -->
             <section id="qrScanSection" class="panel" style="display: none;">
                 <h1 class="panel-title-icon"><img class="heading-icon" src="sources/iconfinder-security-4341326_120558.ico" alt="">Escaneo QR Operativo</h1>
-                <p class="hint">Escanea y obtén resumen inmediato del agente: estado, deuda, fecha límite de pago y acciones rápidas.</p>
+                <p class="hint">Escanea el QR de un agente para ver su estado de cobro y registrar pagos al instante.</p>
 
-                <div class="search-bar" style="margin-top: 10px;">
-                    <div class="form-group" style="margin-bottom:0;">
-                        <label>Semana operativa (lunes):</label>
-                        <input type="date" id="qrScanSemana">
+                <div class="qr-scanner-layout">
+                    <!-- Left column: scanner controls -->
+                    <div>
+                        <!-- Week + camera toggle -->
+                        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:10px;">
+                            <div class="form-group" style="margin:0;">
+                                <label>Semana operativa (lunes):</label>
+                                <input type="date" id="qrScanSemana">
+                            </div>
+                            <button type="button" id="qrCameraToggleBtn" class="btn" onclick="qrToggleCamera()">📷 Iniciar Cámara</button>
+                        </div>
+
+                        <!-- Camera config (collapsible) -->
+                        <details class="qr-scan-camera-panel">
+                            <summary>⚙️ Configuración de cámara</summary>
+                            <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+                                <select id="qrScanCameraSelect" style="flex:1;min-width:180px;">
+                                    <option value="">-- Selecciona cámara --</option>
+                                </select>
+                                <button type="button" class="btn btn-secondary" onclick="cargarCamarasDisponibles()">Actualizar</button>
+                                <button type="button" class="btn btn-secondary" onclick="iniciarEscanerQRCamaraSeleccionada()">Usar seleccionada</button>
+                            </div>
+                        </details>
+
+                        <!-- Manual code entry -->
+                        <div style="display:flex;gap:8px;margin-top:8px;margin-bottom:4px;">
+                            <input type="text" id="qrScanCodigoManual" placeholder="Pega URL QR, UUID, ID de agente o número de línea…" style="flex:1;">
+                            <button type="button" class="btn" onclick="leerCodigoManual()">Leer</button>
+                        </div>
+                        <p class="hint" style="margin-bottom:10px;">Compatible con URL QR, UUID, ID de agente y número de línea.</p>
+
+                        <!-- Scanner viewport -->
+                        <div id="qrScanScanner" style="width:100%;max-width:480px;"></div>
                     </div>
-                    <button type="button" class="btn btn-secondary" onclick="iniciarEscanerQR()">Escanear con Cámara</button>
-                    <button type="button" class="btn btn-secondary" onclick="detenerEscanerQR()">Detener Cámara</button>
-                </div>
 
-                <div class="search-bar qr-camera-tools" style="margin-top: 8px;">
-                    <select id="qrScanCameraSelect">
-                        <option value="">-- Selecciona cámara --</option>
-                    </select>
-                    <button type="button" class="btn btn-secondary" onclick="cargarCamarasDisponibles()">Actualizar Cámaras</button>
-                    <button type="button" class="btn btn-secondary" onclick="iniciarEscanerQRCamaraSeleccionada()">Usar Cámara Seleccionada</button>
-                </div>
-
-                <div class="search-bar" style="margin-top: 8px;">
-                    <input type="text" id="qrScanCodigoManual" placeholder="Pega aquí contenido QR/código y presiona Leer">
-                    <button type="button" class="btn" onclick="leerCodigoManual()">Leer Código</button>
-                </div>
-
-                <p class="hint">Lectura compatible con URL QR del sistema, UUID, ID de agente y número de línea.</p>
-                <div id="qrScanScanner" style="width:100%;max-width:420px;margin-top:12px;"></div>
-
-                <div class="qr-scan-summary-card" style="margin-top:18px;">
-                    <div class="qr-scan-header">
-                        <h3 style="margin:0;">Resumen de Cobro por Escaneo</h3>
-                        <span id="qrScanEstadoBadge" class="payment-pill unpaid">Sin escaneo</span>
-                    </div>
-                    <div id="qrScanSummaryContent" class="qr-scan-summary-body">
-                        Escanea un código para ver si debe pagar, cuánto debe y la fecha límite sugerida (sábado).
-                    </div>
-                    <div class="qr-scan-actions" style="margin-top:12px;">
-                        <button type="button" class="btn" onclick="registrarPagoDesdeEscaneo('abono')"><img class="action-icon" src="sources/iconfinder-money-4341308_120564.ico" alt="">Registrar Abono Semanal</button>
-                        <button type="button" class="btn btn-secondary" onclick="registrarPagoDesdeEscaneo('liquidar')"><img class="action-icon" src="sources/goblet_98435.ico" alt="">Liquidar Adeudo Total</button>
-                        <button type="button" class="btn btn-secondary" onclick="abrirGestionPagoCompletaDesdeEscaneo()"><img class="action-icon" src="sources/iconfinder-ring-4341316_120544.ico" alt="">Abrir Gestión Completa</button>
-                        <button type="button" class="btn btn-secondary" onclick="loadSection('cambiosBajas')"><img class="action-icon" src="sources/iconfinder-settings-4341324_120534.ico" alt="">Ir a Cambios y Bajas</button>
+                    <!-- Right column: scan result card -->
+                    <div class="qr-scan-summary-card">
+                        <div class="qr-scan-header">
+                            <h3 style="margin:0;">Resumen de Cobro</h3>
+                            <span id="qrScanEstadoBadge" class="payment-pill unpaid">Sin escaneo</span>
+                        </div>
+                        <div id="qrScanSummaryContent" class="qr-scan-summary-body">
+                            Escanea un código para ver el estado, deuda y fecha límite de pago (sábado).
+                        </div>
+                        <div class="qr-scan-actions" style="margin-top:12px;">
+                            <button type="button" class="btn" onclick="registrarPagoDesdeEscaneo('abono')">
+                                <img class="action-icon" src="sources/iconfinder-money-4341308_120564.ico" alt="">Registrar Abono
+                            </button>
+                            <button type="button" class="btn btn-secondary" onclick="registrarPagoDesdeEscaneo('liquidar')">
+                                <img class="action-icon" src="sources/goblet_98435.ico" alt="">Liquidar Adeudo
+                            </button>
+                            <button type="button" class="btn btn-secondary" onclick="abrirGestionPagoCompletaDesdeEscaneo()">
+                                <img class="action-icon" src="sources/iconfinder-ring-4341316_120544.ico" alt="">Gestión Completa
+                            </button>
+                            <button type="button" class="btn btn-secondary" onclick="loadSection('cambiosBajas')">
+                                <img class="action-icon" src="sources/iconfinder-settings-4341324_120534.ico" alt="">Cambios y Bajas
+                            </button>
+                        </div>
                     </div>
                 </div>
             </section>
 
             <!-- Sección de QR -->
             <section id="qrSection" class="panel" style="display: none;">
-                <h1 class="panel-title-icon"><img class="heading-icon" src="sources/map_98439.ico" alt="">QR de Verificación de Agente</h1>
-                <form onsubmit="generarQRVerificacion(event)">
-                    <div class="form-group">
-                        <label>ID del Agente:</label>
-                        <input type="number" id="qrAgenteId" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Número VoIP esperado:</label>
-                        <input type="text" id="qrVoip" placeholder="Ej: 1001 o extensión">
-                    </div>
-                    <div class="form-group">
-                        <label>Semana (lunes):</label>
-                        <input type="date" id="qrSemana">
-                    </div>
-                    <button type="button" class="btn btn-secondary" onclick="verificarAgenteQR()">Verificar Estado</button>
-                    <button type="submit" class="btn">Generar QR Verificación</button>
-                </form>
+                <h1 class="panel-title-icon"><img class="heading-icon" src="sources/map_98439.ico" alt="">QR y Cobros</h1>
 
-                <div class="card" style="margin-top: 22px; padding: 14px; border: 1px solid #d8e6f4; border-radius: 12px; background: #f9fcff; color: #173049;">
-                    <strong>Escaneo QR centralizado:</strong><br>
-                    Para evitar duplicidad y errores operativos, el escaneo ahora vive únicamente en <strong>Escaneo QR</strong>.
-                    <div style="margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap;">
-                        <button type="button" class="btn" onclick="loadSection('qrScan')">Abrir Escaneo QR</button>
-                    </div>
+                <!-- Quick nav -->
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+                    <button type="button" class="btn" onclick="loadSection('qrScan')" style="background:#1e6fa8;">📷 Escaneo QR</button>
+                    <button type="button" class="btn btn-secondary" onclick="loadSection('altasAgentes')">👤 Altas de Agentes</button>
+                    <button type="button" class="btn btn-secondary" onclick="loadSection('cambiosBajas')">🔧 Cambios y Bajas</button>
                 </div>
 
-                <div class="card" style="margin-top: 22px; padding: 14px; border: 1px solid #d8e6f4; border-radius: 12px; background: #f9fcff; color: #173049;">
-                    <strong>Operación separada por flujo:</strong><br>
-                    Las altas nuevas y la asignación de números ahora viven en <strong>Altas de Agentes</strong>.<br>
-                    Los ajustes, correcciones y bajas están en <strong>Cambios y Bajas</strong>.<br>
-                    Esta pantalla queda enfocada a verificación, pagos, reportes y QR manuales.
-                    <div style="margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap;">
-                        <button type="button" class="btn btn-secondary" onclick="loadSection('altasAgentes')">Ir a Altas</button>
-                        <button type="button" class="btn btn-secondary" onclick="loadSection('cambiosBajas')">Ir a Cambios y Bajas</button>
+                <!-- Shared context bar -->
+                <div class="qr-context-bar">
+                    <div class="form-group">
+                        <label>Buscar Agente</label>
+                        <div class="qr-agent-search">
+                            <input type="text" id="qrCtxAgenteSearch" placeholder="Nombre o ID..." style="width:160px;" oninput="qrSearchAgente(this.value)">
+                            <input type="hidden" id="qrCtxAgenteId">
+                            <div id="qrAgentSearchDropdown" class="qr-agent-dropdown" style="display:none;"></div>
+                        </div>
                     </div>
+                    <div class="form-group">
+                        <label>Semana (lunes)</label>
+                        <input type="date" id="qrCtxSemana">
+                    </div>
+                    <div class="form-group">
+                        <label>VoIP esperado</label>
+                        <input type="text" id="qrCtxVoip" placeholder="Ej: 1001" style="width:110px;">
+                    </div>
+                    <button type="button" class="btn" onclick="qrSyncContext()">🔍 Cargar Agente</button>
+                    <span id="qrCtxBadge" class="payment-pill" style="background:#8899aa;color:#fff;align-self:center;">—</span>
                 </div>
 
-                <h3 style="margin-top: 22px;">Registrar Pago Semanal</h3>
-                <form onsubmit="registrarPagoSemanal(event)">
-                    <div class="form-group">
-                        <label>ID del Agente:</label>
-                        <input type="number" id="pagoAgenteId" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Teléfono:</label>
-                        <input type="text" id="pagoTelefono" placeholder="Opcional">
-                    </div>
-                    <div class="form-group">
-                        <label>Número VoIP:</label>
-                        <input type="text" id="pagoVoip">
-                    </div>
-                    <div class="form-group">
-                        <label>Semana (lunes):</label>
-                        <input type="date" id="pagoSemana" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Monto:</label>
-                        <input type="number" id="pagoMonto" min="0" step="0.01" value="0">
-                    </div>
-                    <div class="form-group">
-                        <label><input type="checkbox" id="pagoPagado" checked> Pagado</label>
-                    </div>
-                    <div class="form-group">
-                        <label><input type="checkbox" id="pagoLiquidarTotal"> Liquidar adeudo acumulado</label>
-                    </div>
-                    <div class="form-group">
-                        <label>Observaciones:</label>
-                        <input type="text" id="pagoObservaciones" maxlength="500" placeholder="Opcional">
-                    </div>
-                    <button type="button" class="btn btn-secondary" onclick="consultarResumenPagoActual()">Consultar Resumen</button>
-                    <button type="submit" class="btn">Guardar Pago</button>
-                </form>
-                <div id="resumenPagoAgenteContainer" style="margin-top: 10px;"></div>
-
-                <h3 style="margin-top: 22px;">Control Manual de Deuda</h3>
-                <div id="deudaManualPanel" class="card" style="margin-top: 10px; padding: 14px; border: 1px solid #d8e6f4; border-radius: 12px; background: #f9fcff; color: #173049;">
-                    <p class="hint">Permite ajustar manualmente cuánto debe un agente. Usa <strong>Saldo objetivo</strong> para fijar el saldo acumulado deseado, o <strong>Ajuste</strong> para sumar/restar sobre la deuda base calculada.</p>
-                    <div class="search-bar" style="margin-top:8px;">
-                        <input type="number" id="deudaManualAgenteId" placeholder="ID Agente" min="1">
-                        <input type="date" id="deudaManualSemana" placeholder="Semana (opcional)">
-                        <select id="deudaManualModo">
-                            <option value="saldo_objetivo">Saldo objetivo</option>
-                            <option value="ajuste">Ajuste (+/-)</option>
-                        </select>
-                        <input type="number" id="deudaManualMonto" placeholder="Monto MXN" step="0.01">
-                    </div>
-                    <div class="search-bar" style="margin-top:8px;">
-                        <button type="button" class="btn" onclick="aplicarDeudaManualAgente()">Aplicar Ajuste</button>
-                        <button type="button" class="btn btn-secondary" onclick="consultarDeudaManualAgente()">Consultar Actual</button>
-                        <button type="button" class="btn btn-secondary" onclick="limpiarDeudaManualAgente()">Limpiar Ajuste (0)</button>
-                    </div>
-                    <div id="deudaManualResult" style="margin-top:10px;"></div>
+                <!-- Tab bar -->
+                <div class="qr-tab-bar">
+                    <button class="qr-tab-btn active" id="qrTabPagoBtn"          onclick="qrSetTab('pago')">💰 Pago</button>
+                    <button class="qr-tab-btn"        id="qrTabReporteBtn"       onclick="qrSetTab('reporte')">📊 Reporte</button>
+                    <button class="qr-tab-btn"        id="qrTabComprobantesBtn"  onclick="qrSetTab('comprobantes')">🧾 Comprobantes</button>
+                    <button class="qr-tab-btn"        id="qrTabExportarBtn"      onclick="qrSetTab('exportar')">📤 Exportar QR</button>
+                    <button class="qr-tab-btn"        id="qrTabConfigBtn"        onclick="qrSetTab('config')">⚙️ Config</button>
                 </div>
 
-                <h3 style="margin-top: 22px;">Configuración de Tarifa por Línea</h3>
-                <form onsubmit="guardarCuotaSemanal(event)">
-                    <div class="form-group">
-                        <label>Tarifa semanal por línea (MXN):</label>
-                        <input type="number" id="cuotaSemanalInput" min="1" step="1" value="300" required>
+                <!-- ====== TAB: Pago ====== -->
+                <div id="qrTabPago" class="qr-tab-content">
+                    <div class="qr-pago-grid">
+                        <!-- Verificación -->
+                        <div class="qr-pago-col">
+                            <h3>Estado del Agente</h3>
+                            <form onsubmit="generarQRVerificacion(event)">
+                                <div class="form-group">
+                                    <label>ID del Agente:</label>
+                                    <input type="number" id="qrAgenteId" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Número VoIP esperado:</label>
+                                    <input type="text" id="qrVoip" placeholder="Ej: 1001 o extensión">
+                                </div>
+                                <div class="form-group">
+                                    <label>Semana (lunes):</label>
+                                    <input type="date" id="qrSemana">
+                                </div>
+                                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+                                    <button type="button" class="btn btn-secondary" onclick="verificarAgenteQR()">🔍 Verificar Estado</button>
+                                    <button type="submit" class="btn">Generar QR</button>
+                                </div>
+                            </form>
+                            <div id="qrVerificationResult" style="margin-top:16px;"></div>
+                            <div id="qrContainer" style="margin-top:16px;text-align:center;"></div>
+                        </div>
+
+                        <!-- Registrar pago -->
+                        <div class="qr-pago-col">
+                            <h3>Registrar Pago Semanal</h3>
+                            <form onsubmit="registrarPagoSemanal(event)">
+                                <div class="form-group">
+                                    <label>ID del Agente:</label>
+                                    <input type="number" id="pagoAgenteId" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Teléfono:</label>
+                                    <input type="text" id="pagoTelefono" placeholder="Opcional">
+                                </div>
+                                <div class="form-group">
+                                    <label>Número VoIP:</label>
+                                    <input type="text" id="pagoVoip">
+                                </div>
+                                <div class="form-group">
+                                    <label>Semana (lunes):</label>
+                                    <input type="date" id="pagoSemana" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Monto ($MXN):</label>
+                                    <input type="number" id="pagoMonto" min="0" step="0.01" value="0">
+                                </div>
+                                <div class="form-group" style="display:flex;gap:18px;flex-wrap:wrap;">
+                                    <label><input type="checkbox" id="pagoPagado" checked> Pagado</label>
+                                    <label><input type="checkbox" id="pagoLiquidarTotal"> Liquidar adeudo acumulado</label>
+                                </div>
+                                <div class="form-group">
+                                    <label>Observaciones:</label>
+                                    <input type="text" id="pagoObservaciones" maxlength="500" placeholder="Opcional">
+                                </div>
+                                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+                                    <button type="button" class="btn btn-secondary" onclick="consultarResumenPagoActual()">📋 Consultar Resumen</button>
+                                    <button type="submit" class="btn" style="background:var(--success);">💳 Guardar Pago</button>
+                                </div>
+                            </form>
+                            <div id="resumenPagoAgenteContainer" style="margin-top:12px;"></div>
+                        </div>
                     </div>
-                    <button type="submit" class="btn">Guardar Tarifa</button>
-                    <button type="button" class="btn btn-secondary" onclick="cargarCuotaSemanal()">Recargar Tarifa</button>
-                </form>
+                </div><!-- /qrTabPago -->
 
-                <h3 style="margin-top: 22px;">Reporte Semanal de Cobro</h3>
-                <div class="search-bar">
-                    <input type="date" id="reporteSemanaInput">
-                    <input type="text" id="reporteAgenteInput" placeholder="Filtrar por agente">
-                    <button type="button" class="btn" onclick="cargarReporteSemanal()">Ver Reporte</button>
-                    <button type="button" class="btn btn-secondary" onclick="procesarAlertasPagoManual()">Procesar Alertas</button>
-                    <button type="button" class="btn btn-secondary" onclick="generarBackupManual()">Respaldar Base</button>
-                </div>
-                <div class="search-bar" style="margin-top: 10px;">
-                    <input type="text" id="backupDirInput" placeholder="Ruta de respaldos en el servidor, ej: D:\\Respaldos\\Phantom">
-                    <button type="button" class="btn btn-secondary" onclick="guardarRutaRespaldos()">Guardar Ruta</button>
-                    <button type="button" class="btn btn-secondary" onclick="cargarConfiguracionRespaldos()">Recargar Ruta</button>
-                </div>
-                <p class="hint" id="backupDirHint">Los respaldos y restauraciones se leerán desde la ruta configurada en el servidor.</p>
-                <div id="reporteSemanalResumen" style="margin-top: 10px;"></div>
-                <div id="reporteSemanalContainer" class="table-responsive" style="margin-top: 12px;"></div>
-                <div id="alertasPagoContainer" class="table-responsive" style="margin-top: 12px;"></div>
-                <div id="backupsContainer" class="table-responsive" style="margin-top: 12px;"></div>
-
-                <h3 style="margin-top: 22px;">Vista Operativa Agentes + Extensiones + Pago</h3>
-                <div class="search-bar">
-                    <input type="text" id="estadoAgenteSearch" placeholder="Buscar agente o extensión">
-                    <button type="button" class="btn" onclick="cargarVistaAgentesPago()">Cargar Vista</button>
-                </div>
-                <div id="agentesEstadoPagoContainer" class="table-responsive" style="margin-top: 12px;"></div>
-
-                <h3 style="margin-top: 22px;">Comprobante de Pago</h3>
-                <div class="search-bar" style="margin-bottom:10px;">
-                    <input type="number" id="recibosAgenteFiltro" placeholder="Filtrar recibos por ID de agente">
-                    <button type="button" class="btn btn-secondary" onclick="cargarRecibosPersistidos()">Recibos Guardados</button>
-                </div>
-                <div id="reciboPagoContainer" class="table-responsive" style="margin-top: 12px;">
-                    <p>No hay comprobante generado todavía.</p>
-                </div>
-                <div id="recibosHistoricosContainer" class="table-responsive" style="margin-top: 12px;"></div>
-
-                <h3 id="qrExportSectionTitle" style="margin-top: 22px;">Exportación de QR por Lotes</h3>
-                <div id="qrExportCard" class="card" style="margin-top: 10px; padding: 14px; border: 1px solid #d8e6f4; border-radius: 12px; background: #f9fcff; color: #173049;">
-                    <p class="hint">Los QRs de agentes son estáticos por agente. El servidor resuelve en tiempo real si el agente tiene línea activa, si sigue vigente y su estado actual al escanear.</p>
-                    <div class="search-bar" style="margin-top: 8px;">
-                        <input type="text" id="qrExportIds" placeholder="IDs separados por coma. Vacío = todos los activos">
-                        <input type="text" id="qrExportSearch" placeholder="Filtrar por nombre o teléfono (opcional)">
-                        <select id="qrExportLayout">
-                            <option value="sheet">Hoja carta</option>
-                            <option value="labels">Etiquetas</option>
-                            <option value="oficio">Hoja oficio</option>
-                        </select>
-                        <button type="button" class="btn" onclick="exportarQRLote()">Exportar PDF</button>
+                <!-- ====== TAB: Reporte ====== -->
+                <div id="qrTabReporte" class="qr-tab-content" style="display:none;">
+                    <div class="search-bar" style="margin-bottom:10px;">
+                        <input type="date" id="reporteSemanaInput">
+                        <input type="text" id="reporteAgenteInput" placeholder="Filtrar por agente">
+                        <button type="button" class="btn" onclick="cargarReporteSemanal()">📊 Ver Reporte</button>
+                        <button type="button" class="btn btn-secondary" onclick="procesarAlertasPagoManual()">🔔 Procesar Alertas</button>
+                        <button type="button" class="btn btn-secondary" onclick="generarBackupManual()">💾 Respaldar Base</button>
                     </div>
-                    <div id="qrExportResult" style="margin-top: 10px;"></div>
-                </div>
+                    <div id="reporteSemanalResumen" style="margin-top:10px;"></div>
+                    <div id="reporteSemanalContainer" class="table-responsive" style="margin-top:12px;"></div>
+                    <div id="alertasPagoContainer" class="table-responsive" style="margin-top:12px;"></div>
 
-                <h3 style="margin-top: 22px;">QR Manual</h3>
-                <form onsubmit="generarQR(event)">
-                    <div class="form-group">
-                        <label>Contenido del QR:</label>
-                        <textarea id="contenidoQR" placeholder="Ingresa el contenido para el QR"></textarea>
+                    <h3 style="margin-top:22px;">Vista Operativa — Agentes + Extensiones + Pago</h3>
+                    <div class="search-bar">
+                        <input type="text" id="estadoAgenteSearch" placeholder="Buscar agente o extensión">
+                        <button type="button" class="btn" onclick="cargarVistaAgentesPago()">Cargar Vista</button>
                     </div>
-                    <button type="submit" class="btn">Generar QR</button>
-                </form>
-                <div id="qrVerificationResult" style="margin-top: 16px;"></div>
-                <div id="qrContainer" style="margin-top: 30px; text-align: center;"></div>
+                    <div id="agentesEstadoPagoContainer" class="table-responsive" style="margin-top:12px;"></div>
+                </div><!-- /qrTabReporte -->
+
+                <!-- ====== TAB: Comprobantes ====== -->
+                <div id="qrTabComprobantes" class="qr-tab-content" style="display:none;">
+                    <div class="search-bar" style="margin-bottom:10px;">
+                        <input type="number" id="recibosAgenteFiltro" placeholder="Filtrar por ID de agente">
+                        <button type="button" class="btn btn-secondary" onclick="cargarRecibosPersistidos()">🧾 Ver Recibos Guardados</button>
+                    </div>
+                    <div id="reciboPagoContainer" class="table-responsive" style="margin-top:12px;">
+                        <p>No hay comprobante generado todavía.</p>
+                    </div>
+                    <div id="recibosHistoricosContainer" class="table-responsive" style="margin-top:12px;"></div>
+                </div><!-- /qrTabComprobantes -->
+
+                <!-- ====== TAB: Exportar QR ====== -->
+                <div id="qrTabExportar" class="qr-tab-content" style="display:none;">
+                    <h3 id="qrExportSectionTitle" style="margin-bottom:10px;">Exportación de QR por Lotes</h3>
+                    <div id="qrExportCard" class="card" style="padding:14px;border:1px solid #d8e6f4;border-radius:12px;background:#f9fcff;">
+                        <p class="hint">Los QRs son estáticos por agente. El servidor resuelve en tiempo real el estado actual de cada código al escanear.</p>
+                        <div class="search-bar" style="margin-top:8px;">
+                            <input type="text" id="qrExportIds" placeholder="IDs separados por coma — vacío = todos los activos">
+                            <input type="text" id="qrExportSearch" placeholder="Filtrar por nombre o teléfono (opcional)">
+                            <select id="qrExportLayout">
+                                <option value="sheet">Hoja carta</option>
+                                <option value="labels">Etiquetas</option>
+                                <option value="oficio">Hoja oficio</option>
+                            </select>
+                            <button type="button" class="btn" onclick="exportarQRLote()">📄 Exportar PDF</button>
+                        </div>
+                        <div id="qrExportResult" style="margin-top:10px;"></div>
+                    </div>
+
+                    <h3 style="margin-top:24px;">QR Manual (texto libre)</h3>
+                    <p class="hint" style="margin-bottom:10px;">Genera un código QR con el contenido que necesites.</p>
+                    <form onsubmit="generarQR(event)" style="max-width:500px;">
+                        <div class="form-group">
+                            <label>Contenido del QR:</label>
+                            <textarea id="contenidoQR" placeholder="Ingresa el contenido para el QR"></textarea>
+                        </div>
+                        <button type="submit" class="btn">Generar QR</button>
+                    </form>
+                </div><!-- /qrTabExportar -->
+
+                <!-- ====== TAB: Config ====== -->
+                <div id="qrTabConfig" class="qr-tab-content" style="display:none;">
+                    <h3 style="margin-bottom:10px;">Configuración de Tarifa por Línea</h3>
+                    <form onsubmit="guardarCuotaSemanal(event)" style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;">
+                        <div class="form-group" style="margin:0;">
+                            <label>Tarifa semanal por línea ($MXN):</label>
+                            <input type="number" id="cuotaSemanalInput" min="1" step="1" value="300" required style="width:130px;">
+                        </div>
+                        <button type="submit" class="btn">Guardar Tarifa</button>
+                        <button type="button" class="btn btn-secondary" onclick="cargarCuotaSemanal()">Recargar</button>
+                    </form>
+
+                    <h3 style="margin-top:22px;">Control Manual de Deuda</h3>
+                    <div id="deudaManualPanel" class="card" style="padding:14px;border:1px solid #d8e6f4;border-radius:12px;background:#f9fcff;margin-top:10px;">
+                        <p class="hint">Usa <strong>Saldo objetivo</strong> para fijar el saldo acumulado deseado, o <strong>Ajuste</strong> para sumar/restar sobre la deuda base calculada.</p>
+                        <div class="search-bar" style="margin-top:8px;">
+                            <input type="number" id="deudaManualAgenteId" placeholder="ID Agente" min="1">
+                            <input type="date" id="deudaManualSemana">
+                            <select id="deudaManualModo">
+                                <option value="saldo_objetivo">Saldo objetivo</option>
+                                <option value="ajuste">Ajuste (+/-)</option>
+                            </select>
+                            <input type="number" id="deudaManualMonto" placeholder="Monto $MXN" step="0.01">
+                        </div>
+                        <div class="search-bar" style="margin-top:8px;">
+                            <button type="button" class="btn" onclick="aplicarDeudaManualAgente()">Aplicar Ajuste</button>
+                            <button type="button" class="btn btn-secondary" onclick="consultarDeudaManualAgente()">Consultar Actual</button>
+                            <button type="button" class="btn btn-secondary" onclick="limpiarDeudaManualAgente()">Limpiar (0)</button>
+                        </div>
+                        <div id="deudaManualResult" style="margin-top:10px;"></div>
+                    </div>
+
+                    <h3 style="margin-top:22px;">Respaldos de Base de Datos</h3>
+                    <div class="search-bar" style="margin-bottom:8px;">
+                        <input type="text" id="backupDirInput" placeholder="Ruta en el servidor, ej: D:\\Respaldos">
+                        <button type="button" class="btn btn-secondary" onclick="guardarRutaRespaldos()">Guardar Ruta</button>
+                        <button type="button" class="btn btn-secondary" onclick="cargarConfiguracionRespaldos()">Recargar Ruta</button>
+                    </div>
+                    <p class="hint" id="backupDirHint">Los respaldos y restauraciones se leerán desde la ruta configurada en el servidor.</p>
+                    <div id="backupsContainer" class="table-responsive" style="margin-top:12px;"></div>
+                </div><!-- /qrTabConfig -->
+
             </section>
-
             <!-- Sección de Usuarios -->
             <section id="usuariosSection" class="panel" style="display: none;">
                 <h1>Gestión de Usuarios</h1>
@@ -798,40 +1009,51 @@
                         <option value="asc">Ascendente</option>
                     </select>
                 </div>
+                <div class="roles-matrix-card" style="margin-top:10px;">
+                    <div class="roles-matrix-header">
+                        <h3>Matriz de capacidades por rol</h3>
+                        <button type="button" class="btn btn-secondary btn-small" onclick="cargarCapacidadesRoles(true)">Actualizar</button>
+                    </div>
+                    <p class="hint">Este panel refleja los permisos reales definidos en backend para evitar diferencias entre UI y API.</p>
+                    <div id="rolesCapabilitiesContainer" class="roles-matrix-grid"></div>
+                </div>
                 <div class="card" style="margin-top:10px;padding:14px;border:1px solid #d8e6f4;border-radius:12px;background:#f9fcff;color:#173049;">
                     <h3>Registro Temporal (máx. 10 días)</h3>
                     <form onsubmit="crearUsuarioTemporal(event)">
                         <div class="search-bar" style="margin-top:8px;">
-                            <input type="text" id="tempUsername" placeholder="Usuario temporal" required>
                             <input type="email" id="tempEmail" placeholder="Email temporal" required>
                             <input type="text" id="tempNombre" placeholder="Nombre completo (opcional)">
                             <input type="password" id="tempPassword" placeholder="Contraseña temporal" required>
                             <input type="number" id="tempDias" placeholder="Días" value="10" min="1" max="10" required>
-                            <button type="submit" class="btn">Crear Temporal</button>
                         </div>
+                        <button type="submit" class="btn">Crear Temporal</button>
                     </form>
                     <p class="hint" style="margin-top:6px;">Los usuarios temporales se eliminan automáticamente al vencer. Puedes renovarlos o atender su solicitud de permisos.</p>
                 </div>
-                <div id="usuariosSolicitudesContainer" class="table-responsive" style="margin-top: 10px;"></div>
                 <div id="usuariosMaintenanceContainer" class="table-responsive" style="margin-top: 10px;"></div>
                 <p class="hint" style="margin-top:8px;">La depuración de usuarios temporales solo está permitida desde la máquina servidor.</p>
                 <div id="usuariosContainer" class="table-responsive"></div>
+
+                <h3 style="margin-top:16px;">Solicitudes de Elevación de Permisos</h3>
+                <div id="usuariosSolicitudesContainer" class="table-responsive" style="margin-top: 10px;"></div>
+
                 <h3 style="margin-top:16px;">Historial de Temporales Eliminados</h3>
                 <div id="usuariosTempHistoryContainer" class="table-responsive" style="margin-top: 10px;"></div>
             </section>
 
             <!-- Sección de Auditoría -->
             <section id="auditoriaSection" class="panel" style="display: none;">
-                <h1>Auditoría</h1>
+                <h1>Auditoría y Logs</h1>
                 <div class="user-actions">
                     <button onclick="cargarAuditoria()" class="btn btn-secondary">Actualizar</button>
+                    <button onclick="exportarAuditoriaCSV()" class="btn btn-secondary">Exportar CSV</button>
                 </div>
                 <div id="auditoriaContainer" class="table-responsive"></div>
             </section>
 
             <!-- Sección Estado de Agentes -->
             <section id="estadoAgentesSection" class="panel" style="display: none;">
-                <h1>&#128288; Estado de Agentes</h1>
+                <h1>Estado de Agentes</h1>
                 <p class="hint">Vista consolidada por agente (una fila por agente): muestra todas sus líneas activas y el conteo total. El cobro semanal se calcula por línea activa; si no tiene líneas, no debe generar adeudo. El QR se mantiene único por agente.</p>
 
                 <div class="estado-agentes-banner" id="estadoAgentesBanner">
@@ -854,9 +1076,9 @@
             <!-- Sección Alertas Sistema -->
             <section id="alertasSection" class="panel" style="display: none;">
                 <h1>&#128276; Alertas del Sistema</h1>
-                <p class="hint">Mensajes enviados por el administrador principal a todos los operadores. Solo el super administrador desde el servidor puede enviar alertas.</p>
+                <p class="hint">Mensajes operativos para todos los usuarios autenticados. El envío y desactivación están habilitados para administradores.</p>
 
-                <!-- Panel envío (solo super admin desde servidor) -->
+                <!-- Panel envío (admin/super_admin) -->
                 <div id="alertasEnvioPanel" class="alerta-compose-panel" style="display:none;">
                     <h3>Enviar Nueva Alerta</h3>
                     <form onsubmit="enviarAlerta(event)">
@@ -882,12 +1104,26 @@
                 </div>
 
                 <div id="alertasNoEnvioHint" class="hint" style="display:none; margin-top:8px; padding:8px; background:#fff8e8; border:1px solid #f5d88a; border-radius:8px;">
-                    &#128274; El envío de alertas está disponible solo para el super administrador desde el servidor principal.
+                    &#128274; Tu rol puede consultar y marcar alertas, pero no enviar nuevas. Para envío se requiere rol Administrador o Super Admin.
                 </div>
 
-                <div style="margin-top:14px;">
-                    <button type="button" class="btn btn-secondary" onclick="cargarAlertas()">&#128260; Actualizar</button>
+                <div class="alertas-toolbar" style="margin-top:14px;">
+                    <label><input type="checkbox" id="alertasSoloActivas" checked onchange="cargarAlertas(true)"> Solo activas</label>
+                    <select id="alertasNivelFiltro" onchange="renderAlertasDesdeCache()">
+                        <option value="">Todos los niveles</option>
+                        <option value="info">Informativo</option>
+                        <option value="warning">Advertencia</option>
+                        <option value="danger">Urgente</option>
+                    </select>
+                    <input type="text" id="alertasTextoFiltro" placeholder="Filtrar por título o mensaje" oninput="renderAlertasDesdeCache()" autocomplete="off">
+                    <select id="alertasLimit" onchange="cargarAlertas(true)">
+                        <option value="20">20</option>
+                        <option value="50" selected>50</option>
+                        <option value="100">100</option>
+                    </select>
+                    <button type="button" class="btn btn-secondary" onclick="cargarAlertas(true)">&#128260; Actualizar</button>
                 </div>
+                <div id="alertasStats" class="hint" style="margin-top:8px;"></div>
 
                 <div id="alertasContainer" style="margin-top:14px;"></div>
             </section>
@@ -924,6 +1160,7 @@
                                 <option value="viewer">Solo consulta</option>
                                 <option value="capture">Altas únicamente</option>
                                 <option value="admin">Control total</option>
+                                <option value="super_admin" data-super-only="true">Super Admin</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -1007,6 +1244,10 @@
     
     <script src="js/api-client.js"></script>
     <script src="js/app-utils.js"></script>
+    <script src="js/smartImport.js"></script>
+    <script src="js/smartExport.js"></script>
     <script src="js/main.js"></script>
+    <script src="js/qrCobros.js"></script>
 </body>
 </html>
+

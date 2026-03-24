@@ -39,6 +39,9 @@ let altasTourPanel = null;
 let altasTourCurrentElement = null;
 let alertPollingPromise = null;
 let lastAlertNotificationStamp = null;
+let alertasCache = [];
+let alertasCacheStampMs = 0;
+let rolesCapabilitiesCache = [];
 const DEFAULT_AGENT_DATABASE = 'database_manager';
 const BRANDING_DEFAULTS = {
     appName: 'Database Manager',
@@ -111,7 +114,7 @@ function mondayISO(today = new Date()) {
 
 function setDefaultWeeklyDates() {
     const week = mondayISO();
-    ['qrSemana', 'qrScanSemana', 'pagoSemana', 'reporteSemanaInput'].forEach(id => {
+    ['qrSemana', 'qrScanSemana', 'pagoSemana', 'reporteSemanaInput', 'qrCtxSemana'].forEach(id => {
         const input = document.getElementById(id);
         if (input && !input.value) {
             input.value = week;
@@ -252,7 +255,7 @@ function canAccessSection(section) {
     const role = getCurrentRole();
     if (role === 'super_admin' || role === 'admin') return true;
     if (role === 'capture') {
-        return ['dashboard', 'datos', 'importar', 'altasAgentes', 'lineas', 'estadoAgentes', 'alertas'].includes(section);
+        return ['dashboard', 'datos', 'importar', 'exportar', 'altasAgentes', 'lineas', 'estadoAgentes', 'alertas'].includes(section);
     }
     return ['dashboard', 'datos', 'alertas'].includes(section);
 }
@@ -273,6 +276,7 @@ function applyRoleBasedUI() {
         datos: true,
         databases: canAdmin(),
         importar: canCapture(),
+        exportar: canCapture(),
         altasAgentes: canCapture(),
         lineas: canCapture(),
         cambiosBajas: canAdmin(),
@@ -300,6 +304,68 @@ function applyRoleBasedUI() {
     // Papelera panel — only super_admin
     const papeleraSection = document.getElementById('papeleraSection');
     if (papeleraSection) papeleraSection.style.display = canSuperAdmin() ? '' : 'none';
+    syncUsuarioRoleOptions();
+}
+
+function syncUsuarioRoleOptions() {
+    const roleSelect = document.getElementById('usuarioRol');
+    if (!roleSelect) return;
+
+    const superAdminOption = roleSelect.querySelector('option[value="super_admin"]');
+    if (!superAdminOption) return;
+
+    const allowSuperAdmin = canSuperAdmin();
+    superAdminOption.hidden = !allowSuperAdmin;
+    superAdminOption.disabled = !allowSuperAdmin;
+
+    if (!allowSuperAdmin && roleSelect.value === 'super_admin') {
+        roleSelect.value = 'admin';
+    }
+}
+
+async function cargarCapacidadesRoles(forceRefresh = false) {
+    const container = document.getElementById('rolesCapabilitiesContainer');
+    if (!container) return;
+
+    if (!forceRefresh && rolesCapabilitiesCache.length > 0) {
+        renderCapacidadesRoles(rolesCapabilitiesCache);
+        return;
+    }
+
+    container.innerHTML = '<p class="hint">Cargando matriz de roles...</p>';
+    try {
+        const data = await fetchJson(`${API_URL}/usuarios/roles/capabilities`, {
+            headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        rolesCapabilitiesCache = Array.isArray(data?.items) ? data.items : [];
+        renderCapacidadesRoles(rolesCapabilitiesCache);
+    } catch (error) {
+        container.innerHTML = `<p style="color:#b22222;">Error al cargar capacidades de roles: ${escapeHtml(error.message || 'Error desconocido')}</p>`;
+    }
+}
+
+function renderCapacidadesRoles(items) {
+    const container = document.getElementById('rolesCapabilitiesContainer');
+    if (!container) return;
+    if (!Array.isArray(items) || items.length === 0) {
+        container.innerHTML = '<p class="hint">No hay capacidades registradas.</p>';
+        return;
+    }
+
+    container.innerHTML = items.map(item => {
+        const role = escapeHtml(item.role || 'N/A');
+        const label = escapeHtml(item.label || item.role || 'Rol');
+        const description = escapeHtml(item.description || '');
+        const permissions = Array.isArray(item.permissions) ? item.permissions : [];
+        const permsHtml = permissions.map(p => `<li>${escapeHtml(String(p))}</li>`).join('');
+        return `
+            <article class="role-card role-${role}">
+                <div class="role-card-title">${label}</div>
+                <p class="role-card-desc">${description}</p>
+                <ul class="role-card-list">${permsHtml}</ul>
+            </article>
+        `;
+    }).join('');
 }
 
 function getAltasTourStorageKey() {
@@ -662,7 +728,7 @@ async function validarSesionActiva() {
 
 // === AUTENTICACIÓN ===
 function showLogin() {
-    const ids = ['loginSection', 'registerSection', 'dashboardSection', 'datosSection', 'databasesSection', 'importarSection', 'altasAgentesSection', 'lineasSection', 'cambiosBajasSection', 'qrSection', 'usuariosSection', 'auditoriaSection', 'estadoAgentesSection', 'alertasSection'];
+    const ids = ['loginSection', 'registerSection', 'dashboardSection', 'datosSection', 'databasesSection', 'importarSection', 'exportarSection', 'altasAgentesSection', 'lineasSection', 'cambiosBajasSection', 'qrSection', 'usuariosSection', 'auditoriaSection', 'estadoAgentesSection', 'alertasSection'];
     ids.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = id === 'loginSection' ? 'block' : 'none';
@@ -1076,6 +1142,8 @@ function loadSection(section, eventRef = null) {
     document.getElementById('datosSection').style.display = 'none';
     document.getElementById('databasesSection').style.display = 'none';
     document.getElementById('importarSection').style.display = 'none';
+    const _exportarEl = document.getElementById('exportarSection');
+    if (_exportarEl) _exportarEl.style.display = 'none';
     document.getElementById('altasAgentesSection').style.display = 'none';
     const _lineasEl = document.getElementById('lineasSection');
     if (_lineasEl) _lineasEl.style.display = 'none';
@@ -1108,6 +1176,10 @@ function loadSection(section, eventRef = null) {
         case 'importar':
             document.getElementById('importarSection').style.display = 'block';
             break;
+        case 'exportar':
+            document.getElementById('exportarSection').style.display = 'block';
+            exportCargarTablas();
+            break;
         case 'altasAgentes':
             document.getElementById('altasAgentesSection').style.display = 'block';
             cargarLineasYAgentes();
@@ -1130,17 +1202,16 @@ function loadSection(section, eventRef = null) {
             break;
         case 'qr':
             document.getElementById('qrSection').style.display = 'block';
+            setDefaultWeeklyDates();
+            if (typeof qrSetTab === 'function') qrSetTab('pago');
             cargarCuotaSemanal();
             cargarConfiguracionRespaldos();
-            cargarReporteSemanal();
-            cargarVistaAgentesPago();
-            cargarRecibosPersistidos();
             cargarRespaldos();
-            cargarLineasYAgentes();
             break;
         case 'usuarios':
             document.getElementById('usuariosSection').style.display = 'block';
             cargarUsuarios();
+            cargarCapacidadesRoles();
             break;
         case 'auditoria':
             document.getElementById('auditoriaSection').style.display = 'block';
@@ -5286,6 +5357,7 @@ function mostrarCrearUsuario() {
     document.getElementById('passwordGroup').style.display = 'block';
     document.getElementById('usuarioPassword').required = true;
     document.getElementById('modalTitle').textContent = 'Crear Usuario';
+    syncUsuarioRoleOptions();
     document.getElementById('usuarioModal').style.display = 'block';
 }
 
@@ -5303,6 +5375,7 @@ async function editarUsuario(userId) {
         document.getElementById('usuarioPassword').required = false;
         document.getElementById('usuarioPassword').value = '';
         document.getElementById('modalTitle').textContent = 'Editar Usuario';
+        syncUsuarioRoleOptions();
         document.getElementById('usuarioModal').style.display = 'block';
     } catch (error) {
         console.error('Error:', error);
@@ -5324,7 +5397,7 @@ async function guardarUsuario(e) {
         email: document.getElementById('usuarioEmail').value,
         nombre_completo: document.getElementById('usuarioNombreCompleto').value,
         rol: role,
-        es_admin: role === 'admin',
+        es_admin: role === 'admin' || role === 'super_admin',
         es_activo: document.getElementById('usuarioEsActivo').checked
     };
     
@@ -5394,51 +5467,96 @@ function toggleSidebar(forceOpen = null) {
 }
 
 // === ALERTAS DEL SISTEMA ===
-async function cargarAlertas() {
+function getAlertasFiltrosUI() {
+    const soloActivas = document.getElementById('alertasSoloActivas')?.checked !== false;
+    const nivel = String(document.getElementById('alertasNivelFiltro')?.value || '').trim();
+    const texto = String(document.getElementById('alertasTextoFiltro')?.value || '').trim().toLowerCase();
+    const limitRaw = parseInt(document.getElementById('alertasLimit')?.value || '50', 10);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : 50;
+    return { soloActivas, nivel, texto, limit };
+}
+
+async function cargarAlertas(forceRefresh = false) {
     const container = document.getElementById('alertasContainer');
     const envioPanel = document.getElementById('alertasEnvioPanel');
     const noEnvioHint = document.getElementById('alertasNoEnvioHint');
     if (!container) return;
-    container.innerHTML = '<p class="hint">Cargando alertas...</p>';
+    if (!alertasCache.length || forceRefresh) {
+        container.innerHTML = '<p class="hint">Cargando alertas...</p>';
+    }
 
-    const isSuperAdmin = canSuperAdmin();
-    if (envioPanel) envioPanel.style.display = isSuperAdmin ? 'block' : 'none';
-    if (noEnvioHint) noEnvioHint.style.display = isSuperAdmin ? 'none' : 'block';
+    const canSendAlerts = canAdmin();
+    if (envioPanel) envioPanel.style.display = canSendAlerts ? 'block' : 'none';
+    if (noEnvioHint) noEnvioHint.style.display = canSendAlerts ? 'none' : 'block';
 
     try {
-        const data = await fetchJson(`${API_URL}/alertas/?solo_activas=false`, {
-            headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        const alertas = Array.isArray(data?.items) ? data.items : [];
-
-        if (!alertas.length) {
-            container.innerHTML = '<p class="hint">No hay alertas activas.</p>';
-            return;
+        const filters = getAlertasFiltrosUI();
+        const ttlMs = 15000;
+        const cacheValid = (Date.now() - alertasCacheStampMs) < ttlMs;
+        if (forceRefresh || !cacheValid || !alertasCache.length) {
+            const data = await fetchJson(`${API_URL}/alertas/?solo_activas=${filters.soloActivas ? 'true' : 'false'}&limit=${filters.limit}`, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            alertasCache = Array.isArray(data?.items) ? data.items : [];
+            alertasCacheStampMs = Date.now();
         }
 
-        container.innerHTML = alertas.map(a => {
-            const nivelLabel = { info: 'Info', warning: 'Advertencia', danger: 'Urgente' }[a.nivel] || a.nivel;
-            const leida = a.leida ? 'leida' : '';
-            const fecha = a.fecha_envio ? new Date(a.fecha_envio).toLocaleString() : '';
-            return `
-                <div class="alerta-item nivel-${a.nivel} ${leida}" id="alerta-${a.id}">
-                    <div class="alerta-item-header">
-                        <span class="alerta-item-title">${a.titulo}</span>
-                        <span class="badge-nivel ${a.nivel}">${nivelLabel}</span>
-                    </div>
-                    <div class="alerta-item-meta">Enviado por: ${a.remitente_username || ''} &middot; ${fecha}</div>
-                    <div class="alerta-item-body">${a.mensaje}</div>
-                    <div class="alerta-item-actions">
-                        ${!a.leida ? '<button class="btn btn-small btn-secondary" onclick="marcarAlertaLeida(' + a.id + ')">&#10003; Marcar le\u00edda</button>' : '<span style="font-size:0.8rem;color:#888;">&#10003; Le\u00edda</span>'}
-                        ${isSuperAdmin ? '<button class="btn btn-small" style="background:#e74c3c;color:#fff;" onclick="desactivarAlerta(' + a.id + ')">&#128465; Desactivar</button>' : ''}
-                    </div>
-                </div>`;
-        }).join('');
+        renderAlertasDesdeCache();
 
     } catch (error) {
         container.innerHTML = `<p style="color:red;">Error al cargar alertas: ${error.message}</p>`;
     } finally {
         refreshAlertBadgeAndNotify(false);
+    }
+}
+
+function renderAlertasDesdeCache() {
+    const container = document.getElementById('alertasContainer');
+    const stats = document.getElementById('alertasStats');
+    if (!container) return;
+
+    const filters = getAlertasFiltrosUI();
+    const canManageAlerts = canAdmin();
+
+    let rows = Array.isArray(alertasCache) ? [...alertasCache] : [];
+    if (filters.nivel) {
+        rows = rows.filter(a => String(a?.nivel || '') === filters.nivel);
+    }
+    if (filters.texto) {
+        rows = rows.filter(a => {
+            const hay = `${a?.titulo || ''} ${a?.mensaje || ''} ${a?.remitente_username || ''}`.toLowerCase();
+            return hay.includes(filters.texto);
+        });
+    }
+
+    if (!rows.length) {
+        container.innerHTML = '<p class="hint">No hay alertas para los filtros actuales.</p>';
+        if (stats) stats.textContent = `Mostrando 0 de ${alertasCache.length} alertas.`;
+        return;
+    }
+
+    container.innerHTML = rows.map(a => {
+        const nivelLabel = { info: 'Info', warning: 'Advertencia', danger: 'Urgente' }[a.nivel] || a.nivel;
+        const leida = a.leida ? 'leida' : '';
+        const fecha = a.fecha_envio ? new Date(a.fecha_envio).toLocaleString() : '';
+        return `
+            <div class="alerta-item nivel-${a.nivel} ${leida}" id="alerta-${a.id}">
+                <div class="alerta-item-header">
+                    <span class="alerta-item-title">${escapeHtml(a.titulo || '')}</span>
+                    <span class="badge-nivel ${a.nivel}">${nivelLabel}</span>
+                </div>
+                <div class="alerta-item-meta">Enviado por: ${escapeHtml(a.remitente_username || '')} &middot; ${escapeHtml(fecha)}</div>
+                <div class="alerta-item-body">${escapeHtml(a.mensaje || '')}</div>
+                <div class="alerta-item-actions">
+                    ${!a.leida ? '<button class="btn btn-small btn-secondary" onclick="marcarAlertaLeida(' + a.id + ')">&#10003; Marcar le\u00edda</button>' : '<span style="font-size:0.8rem;color:#888;">&#10003; Le\u00edda</span>'}
+                    ${canManageAlerts ? '<button class="btn btn-small" style="background:#e74c3c;color:#fff;" onclick="desactivarAlerta(' + a.id + ')">&#128465; Desactivar</button>' : ''}
+                </div>
+            </div>`;
+    }).join('');
+
+    const totalUnread = rows.filter(a => !a.leida).length;
+    if (stats) {
+        stats.textContent = `Mostrando ${rows.length} de ${alertasCache.length} alertas | No leídas visibles: ${totalUnread}`;
     }
 }
 
@@ -5456,7 +5574,7 @@ async function enviarAlerta(event) {
     if (result) result.innerHTML = '<p class="hint">Enviando...</p>';
 
     try {
-        await fetchJson(`${API_URL}/alertas/enviar-json`, {
+        const created = await fetchJson(`${API_URL}/alertas/enviar-json`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${authToken}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ titulo, mensaje, nivel })
@@ -5466,34 +5584,66 @@ async function enviarAlerta(event) {
         document.getElementById('alertaMensaje').value = '';
         document.getElementById('alertaNivel').value = 'warning';
         lastAlertNotificationStamp = null;
-        setTimeout(() => cargarAlertas(), 500);
+        alertasCache = [created, ...alertasCache];
+        alertasCacheStampMs = Date.now();
+        renderAlertasDesdeCache();
+        refreshAlertBadgeAndNotify(false);
     } catch (error) {
         if (result) result.innerHTML = `<p style="color:red;">Error: ${error.message}</p>`;
     }
 }
 
 async function marcarAlertaLeida(id) {
+    const idx = alertasCache.findIndex(a => Number(a.id) === Number(id));
+    let previous = null;
+    if (idx >= 0) {
+        previous = { ...alertasCache[idx] };
+        alertasCache[idx].leida = true;
+        renderAlertasDesdeCache();
+    }
     try {
         await fetchJson(`${API_URL}/alertas/${id}/leer`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${authToken}` }
         });
-        cargarAlertas();
         refreshAlertBadgeAndNotify(false);
     } catch (error) {
+        if (idx >= 0 && previous) {
+            alertasCache[idx] = previous;
+            renderAlertasDesdeCache();
+        }
         alert('Error al marcar alerta: ' + error.message);
     }
 }
 
 async function desactivarAlerta(id) {
     if (!(await showAppConfirm('¿Desactivar esta alerta? Dejará de ser visible para los demás.', { title: 'Desactivar alerta', tone: 'warning', acceptText: 'Desactivar' }))) return;
+    const idx = alertasCache.findIndex(a => Number(a.id) === Number(id));
+    let previous = null;
+    if (idx >= 0) {
+        previous = { ...alertasCache[idx] };
+        alertasCache[idx].es_activa = false;
+        const soloActivas = document.getElementById('alertasSoloActivas')?.checked !== false;
+        if (soloActivas) {
+            alertasCache.splice(idx, 1);
+        }
+        renderAlertasDesdeCache();
+    }
     try {
         await fetchJson(`${API_URL}/alertas/${id}`, {
             method: 'DELETE',
             headers: { 'Authorization': `Bearer ${authToken}` }
         });
-        cargarAlertas();
+        refreshAlertBadgeAndNotify(false);
     } catch (error) {
+        if (previous) {
+            if (idx >= 0 && idx <= alertasCache.length) {
+                alertasCache.splice(idx, 0, previous);
+            } else {
+                alertasCache.push(previous);
+            }
+            renderAlertasDesdeCache();
+        }
         alert('Error al desactivar alerta: ' + error.message);
     }
 }
