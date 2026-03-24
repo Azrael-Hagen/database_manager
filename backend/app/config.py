@@ -26,7 +26,7 @@ class Config:
     API_HOST = os.getenv("API_HOST", "0.0.0.0")
     API_PORT = int(os.getenv("API_PORT", 8000))
     SSL_PORT = int(os.getenv("SSL_PORT", 8443))
-    API_DEBUG = os.getenv("API_DEBUG", "True").lower() == "true"
+    API_DEBUG = os.getenv("API_DEBUG", "False").lower() == "true"
     FORCE_HTTPS = os.getenv("FORCE_HTTPS", "True").lower() == "true"
     PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
     LOCAL_HOSTNAME = (os.getenv("LOCAL_HOSTNAME", "") or "").strip()
@@ -51,9 +51,30 @@ class Config:
         return [item.strip() for item in raw.split(",") if item.strip()]
 
     CORS_ORIGINS = _parse_cors_origins.__func__(_cors_origins_raw)
+    _cors_methods_raw = (os.getenv("CORS_ALLOW_METHODS", "") or "").strip()
+    _cors_headers_raw = (os.getenv("CORS_ALLOW_HEADERS", "") or "").strip()
+
+    @staticmethod
+    def _parse_csv_list(raw: str, default: list[str]) -> list[str]:
+        values = [item.strip() for item in (raw or "").split(",") if item.strip()]
+        return values or list(default)
+
+    CORS_ALLOW_METHODS = _parse_csv_list.__func__(
+        _cors_methods_raw,
+        ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    )
+    CORS_ALLOW_HEADERS = _parse_csv_list.__func__(
+        _cors_headers_raw,
+        ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
+    )
     
     # Seguridad
     SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
+    JWT_SECRET_KEY = (os.getenv("JWT_SECRET_KEY", "") or "").strip() or SECRET_KEY
+    _jwt_prev_keys_raw = (os.getenv("JWT_SECRET_KEY_PREVIOUS", "") or "").strip()
+    JWT_SECRET_KEY_PREVIOUS = [
+        key.strip() for key in _jwt_prev_keys_raw.split(",") if key.strip()
+    ]
     QR_TOKEN_TTL_HOURS = int(os.getenv("QR_TOKEN_TTL_HOURS", 720))
     RECEIPT_RETENTION_DAYS = int(os.getenv("RECEIPT_RETENTION_DAYS", 90))
     AUTO_AGENT_DATA_CLEANUP_ON_STARTUP = os.getenv("AUTO_AGENT_DATA_CLEANUP_ON_STARTUP", "true").lower() == "true"

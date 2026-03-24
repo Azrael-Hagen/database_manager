@@ -4,10 +4,15 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 import ipaddress
 import socket
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import InvalidTokenError
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
+from app.config import config
+from app.database.orm import get_db
+from app.models import Usuario
 import logging
 
 logger = logging.getLogger(__name__)
@@ -16,9 +21,14 @@ logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Configuración JWT
-SECRET_KEY = "your-secret-key-change-in-production"  # Cambiar en producción
+JWT_SIGNING_KEY = str(config.JWT_SECRET_KEY or "").strip()
+JWT_PREVIOUS_KEYS = [str(key).strip() for key in config.JWT_SECRET_KEY_PREVIOUS if str(key).strip()]
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+if not JWT_SIGNING_KEY:
+    logger.warning("JWT_SIGNING_KEY vacío; utilizando fallback inseguro temporal")
+    JWT_SIGNING_KEY = "change-me-in-production"
 
 security = HTTPBearer()
 
@@ -100,41 +110,72 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
         expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, JWT_SIGNING_KEY, algorithm=ALGORITHM)
     
     return encoded_jwt
 
 
 def verify_token(token: str) -> dict:
     """Verificar y decodificar token JWT."""
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token inválido"
-            )
-        role = normalize_role(payload.get("rol"), bool(payload.get("es_admin", False)))
-        return {
-            "username": username,
-            "id": payload.get("id"),
-            "es_admin": role in {ROLE_ADMIN, ROLE_SUPER_ADMIN},
-            "rol": role,
-            "es_super_admin": role == ROLE_SUPER_ADMIN,
-            "email": payload.get("email")
-        }
-    except JWTError:
+    verification_keys = [JWT_SIGNING_KEY, *JWT_PREVIOUS_KEYS]
+
+    for key in verification_keys:
+        try:
+            payload = jwt.decode(token, key, algorithms=[ALGORITHM])
+            username: str = payload.get("sub")
+            if username is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token inválido"
+                )
+            role = normalize_role(payload.get("rol"), bool(payload.get("es_admin", False)))
+            return {
+                "username": username,
+                "id": payload.get("id"),
+                "es_admin": role in {ROLE_ADMIN, ROLE_SUPER_ADMIN},
+                "rol": role,
+                "es_super_admin": role == ROLE_SUPER_ADMIN,
+                "email": payload.get("email")
+            }
+        except InvalidTokenError:
+            continue
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token inválido o expirado"
+    )
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+):
+    """Dependency para obtener usuario actual del token y validar estado real en BD."""
+    token = credentials.credentials
+    token_user = verify_token(token)
+
+    db_user = db.query(Usuario).filter(Usuario.username == token_user["username"]).first()
+    if not db_user:
+        logger.warning("Token valido para usuario no existente en BD: %s", token_user["username"])
+        return token_user
+
+    if not bool(db_user.es_activo):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token inválido o expirado"
+            detail="Usuario inactivo"
         )
 
-
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Dependency para obtener usuario actual del token."""
-    token = credentials.credentials
-    return verify_token(token)
+    canonical_role = normalize_role(db_user.rol, bool(db_user.es_admin))
+    token_user.update(
+        {
+            "id": db_user.id,
+            "email": db_user.email,
+            "rol": canonical_role,
+            "es_admin": canonical_role in {ROLE_ADMIN, ROLE_SUPER_ADMIN},
+            "es_super_admin": canonical_role == ROLE_SUPER_ADMIN,
+        }
+    )
+    return token_user
 
 
 def get_client_ip(request: Request) -> str:

@@ -1,5 +1,6 @@
 """E2E de la funcionalidad Sin Linea."""
 
+import json
 import os
 import uuid
 from datetime import timedelta
@@ -362,6 +363,86 @@ class TestQrStaticoYExportacion:
         body = verify.json()
         assert body["agente"]["tiene_asignacion"] is False
         assert body["verificacion"]["numero_asignado"] is False
+
+
+class TestAltaManualAliasNullE2E:
+    @classmethod
+    def setup_class(cls):
+        cls.capture_headers = {"Authorization": f"Bearer {_token('e2e_capture_alias_null', 'capture')}"}
+
+    def setup_method(self):
+        _clear_agent_tables()
+
+    def test_alta_manual_acepta_alias_sin_nombre_y_persiste(self):
+        resp = client.post(
+            "/api/qr/agentes/manual",
+            headers=self.capture_headers,
+            json={
+                "nombre": "",
+                "alias": "AliasPrincipal",
+                "modo_asignacion": "ninguna",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()["data"]
+        assert body["agente_id"] > 0
+
+        db = _db()
+        try:
+            row = db.query(DatoImportado).filter(DatoImportado.id == body["agente_id"]).first()
+            assert row is not None
+            assert row.es_activo is True
+            assert (row.nombre is None) or (str(row.nombre).strip() == "")
+            extras = json.loads(row.datos_adicionales or "{}")
+            assert extras.get("alias") == "AliasPrincipal"
+        finally:
+            db.close()
+
+    def test_alta_manual_interpreta_texto_null_como_nulo(self):
+        resp = client.post(
+            "/api/qr/agentes/manual",
+            headers=self.capture_headers,
+            json={
+                "nombre": "NULL",
+                "alias": "AliasNull",
+                "ubicacion": "NULL",
+                "fp": "NULL",
+                "modo_asignacion": "ninguna",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        agente_id = resp.json()["data"]["agente_id"]
+
+        db = _db()
+        try:
+            row = db.query(DatoImportado).filter(DatoImportado.id == agente_id).first()
+            assert row is not None
+            assert (row.nombre is None) or (str(row.nombre).strip() == "")
+            extras = json.loads(row.datos_adicionales or "{}")
+            assert extras.get("alias") == "AliasNull"
+            assert "ubicacion" not in extras
+            assert "fp" not in extras
+        finally:
+            db.close()
+
+    def test_listado_agentes_incluye_nombres_vacios_y_display_name_por_alias(self):
+        agente = DatoImportado(nombre=None, es_activo=True, datos_adicionales=json.dumps({"alias": "AliasListado"}))
+        db = _db()
+        try:
+            db.add(agente)
+            db.commit()
+            db.refresh(agente)
+            agente_id = agente.id
+        finally:
+            db.close()
+
+        resp = client.get("/api/qr/agentes", headers=self.capture_headers)
+        assert resp.status_code == 200, resp.text
+        rows = resp.json().get("data", [])
+        target = next((r for r in rows if r.get("id") == agente_id), None)
+        assert target is not None
+        assert target.get("alias") == "AliasListado"
+        assert target.get("display_name") == "AliasListado"
 
 
 class TestFrontendAssets:

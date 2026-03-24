@@ -484,6 +484,15 @@ def _legacy_text(raw: str | None, max_len: int) -> str:
     return value
 
 
+def _nullable_payload_text(raw: object) -> str | None:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    if value.lower() == "null":
+        return None
+    return value
+
+
 def _sync_legacy_agente_row(db: Session, *, agente_id: int, nombre: str, datos_adicionales: dict | None = None) -> None:
     extras = datos_adicionales if isinstance(datos_adicionales, dict) else {}
     db_name = _safe_sql_identifier(LEGACY_AGENTES_DB, "registro_agentes")
@@ -1340,10 +1349,19 @@ async def listar_agentes_qr(
         query = query.filter(
             (DatoImportado.nombre.ilike(term)) |
             (DatoImportado.telefono.ilike(term)) |
-            (DatoImportado.empresa.ilike(term))
+            (DatoImportado.empresa.ilike(term)) |
+            (DatoImportado.datos_adicionales.ilike(term))
         )
 
-    agentes = query.order_by(DatoImportado.nombre.asc()).limit(500).all()
+    agentes = query.limit(500).all()
+    agentes = sorted(
+        agentes,
+        key=lambda item: (
+            str((_safe_json_object(item.datos_adicionales).get("alias") or "")).strip().lower() or "~",
+            str(item.nombre or "").strip().lower() or "~",
+            int(item.id or 0),
+        ),
+    )
     return {
         "status": "success",
         "data": [
@@ -1351,6 +1369,8 @@ async def listar_agentes_qr(
                 "id": a.id,
                 "uuid": a.uuid,
                 "nombre": a.nombre,
+                "alias": _safe_json_object(a.datos_adicionales).get("alias"),
+                "display_name": _legacy_agent_display_name(a.nombre, _safe_json_object(a.datos_adicionales).get("alias"), a.id),
                 "telefono": a.telefono,
                 "datos_adicionales": _safe_json_object(a.datos_adicionales),
                 "ladas_preferidas": [
@@ -1395,22 +1415,23 @@ async def crear_agente_manual(
 ):
     """Crear agente manualmente y asignar linea de forma opcional."""
     require_capture_role(current_user)
-    nombre = str((payload or {}).get("nombre") or "").strip()
-    if not nombre:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nombre es requerido")
+    nombre = _nullable_payload_text((payload or {}).get("nombre"))
+    alias = _nullable_payload_text((payload or {}).get("alias"))
+    if not nombre and not alias:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Debe capturar al menos nombre o alias")
 
-    email = str((payload or {}).get("email") or "").strip() or None
-    empresa = str((payload or {}).get("empresa") or "").strip() or None
-    ciudad = str((payload or {}).get("ciudad") or "").strip() or None
-    pais = str((payload or {}).get("pais") or "").strip() or None
+    email = _nullable_payload_text((payload or {}).get("email"))
+    empresa = _nullable_payload_text((payload or {}).get("empresa"))
+    ciudad = _nullable_payload_text((payload or {}).get("ciudad"))
+    pais = _nullable_payload_text((payload or {}).get("pais"))
 
     datos_adicionales = {
-        "alias": str((payload or {}).get("alias") or "").strip() or None,
-        "ubicacion": str((payload or {}).get("ubicacion") or "").strip() or None,
-        "fp": str((payload or {}).get("fp") or "").strip() or None,
-        "fc": str((payload or {}).get("fc") or "").strip() or None,
-        "grupo": str((payload or {}).get("grupo") or "").strip() or None,
-        "numero_voip": str((payload or {}).get("numero_voip") or "").strip() or None,
+        "alias": alias,
+        "ubicacion": _nullable_payload_text((payload or {}).get("ubicacion")),
+        "fp": _nullable_payload_text((payload or {}).get("fp")),
+        "fc": _nullable_payload_text((payload or {}).get("fc")),
+        "grupo": _nullable_payload_text((payload or {}).get("grupo")),
+        "numero_voip": _nullable_payload_text((payload or {}).get("numero_voip")),
     }
     datos_adicionales = {k: v for k, v in datos_adicionales.items() if v not in (None, "")}
 
@@ -1444,15 +1465,20 @@ async def crear_agente_manual(
         _sync_legacy_agente_row(
             db,
             agente_id=agente.id,
-            nombre=agente.nombre,
+            nombre=agente.nombre or "",
             datos_adicionales=datos_adicionales,
         )
     except Exception as exc:
-        logger.exception("No se pudo sincronizar alta manual en registro_agentes.agentes")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="No fue posible guardar el agente en registro_agentes.agentes",
-        ) from exc
+        dialect_name = str(getattr(getattr(db, "bind", None), "dialect", None).name if getattr(getattr(db, "bind", None), "dialect", None) else "")
+        if dialect_name == "sqlite":
+            # En pruebas locales con SQLite no existe ON DUPLICATE KEY de MariaDB.
+            logger.warning("Sync legacy omitido en SQLite para alta manual de agente")
+        else:
+            logger.exception("No se pudo sincronizar alta manual en registro_agentes.agentes")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="No fue posible guardar el agente en registro_agentes.agentes",
+            ) from exc
 
     asignacion_resumen = {"modo": modo, "asignada": False}
 
@@ -1519,6 +1545,8 @@ async def crear_agente_manual(
             "agente_id": agente.id,
             "uuid": agente.uuid,
             "nombre": agente.nombre,
+            "alias": (_safe_json_object(agente.datos_adicionales).get("alias") if agente.datos_adicionales else None),
+            "display_name": _legacy_agent_display_name(agente.nombre, (_safe_json_object(agente.datos_adicionales).get("alias") if agente.datos_adicionales else None), agente.id),
             "modo_asignacion": modo,
             "asignacion": asignacion_resumen,
             "lineas": _agent_active_lines(db, agente.id),
@@ -2674,9 +2702,11 @@ async def verificar_publico_por_uuid(
 async def verificar_publico_por_id(
     agente_id: int,
     semana: date | None = Query(None),
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Verificacion publica para escaneo QR por ID de agente."""
+    """Verificacion por ID restringida para reducir riesgo de enumeracion externa."""
+    require_admin_role(current_user, "Solo administradores pueden verificar por ID")
     agente = db.query(DatoImportado).filter(
         DatoImportado.id == agente_id,
         DatoImportado.es_activo.is_(True)

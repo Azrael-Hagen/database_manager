@@ -7,7 +7,9 @@ import logging
 import re
 from app.config import config
 from app.models import Base
-from app.security import ROLE_ADMIN, ROLE_VIEWER
+
+ROLE_ADMIN = "admin"
+ROLE_VIEWER = "viewer"
 
 logger = logging.getLogger(__name__)
 

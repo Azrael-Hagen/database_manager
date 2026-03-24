@@ -2,14 +2,19 @@
 
 import pytest
 import uuid
+import jwt
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.database.orm import Base, get_db
+from app.database.repositorios import RepositorioUsuario
 from app.models import Usuario
 from app.schemas import UsuarioCrear
 from app.security import create_access_token
+from app import security as security_module
+from app.api import export as export_api
+from app.config import config as app_config
 from main import app
 
 # DB de test en memoria
@@ -86,6 +91,26 @@ class TestAutenticacion:
         response2 = client.post("/api/auth/registrar", json=usuario)
         assert response2.status_code == 400
 
+    def test_registro_publico_no_permite_elevacion_privilegios(self):
+        """El registro abierto no debe permitir crear admin/super_admin."""
+        suffix = uuid.uuid4().hex[:8]
+        response = client.post(
+            "/api/auth/registrar",
+            json={
+                "username": f"public_{suffix}",
+                "email": f"public_{suffix}@example.com",
+                "password": "TestPassword123!",
+                "nombre_completo": "Public User",
+                "rol": "super_admin",
+                "es_admin": True,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["rol"] == "viewer"
+        assert data["es_admin"] is False
+
 
 class TestDatos:
     """Tests de endpoints de datos."""
@@ -93,16 +118,20 @@ class TestDatos:
     @pytest.fixture(autouse=True)
     def setup(self):
         """Setup antes de cada test."""
-        usuario_data = {
-            "username": "testuser_datos",
-            "email": "testdatos@example.com",
-            "password": "TestPassword123!",
-            "nombre_completo": "Test Datos",
-            "rol": "capture"
-        }
-
-        # Registrar (puede fallar si ya existe, lo ignoramos)
-        https_client.post("/api/auth/registrar", json=usuario_data)
+        db = TestingSessionLocal()
+        repo_usuario = RepositorioUsuario(db)
+        if not repo_usuario.obtener_por_username("testuser_datos"):
+            repo_usuario.crear(
+                UsuarioCrear(
+                    username="testuser_datos",
+                    email="testdatos@example.com",
+                    password="TestPassword123!",
+                    nombre_completo="Test Datos",
+                    rol="capture",
+                    es_admin=False,
+                )
+            )
+        db.close()
 
         # Login
         login_response = https_client.post(
@@ -205,3 +234,186 @@ class TestSuperAdminPermisos:
         )
 
         assert response.status_code == 403
+
+
+class TestJwtRotation:
+    """Tests para rotacion de llaves JWT."""
+
+    def test_verify_token_acepta_llave_previa_en_rotacion(self, monkeypatch):
+        previous_key = "previous-secret-key-for-rotation"
+        current_key = "current-secret-key-for-rotation"
+
+        token = jwt.encode(
+            {
+                "sub": "rot_user",
+                "id": 999,
+                "es_admin": False,
+                "rol": "viewer",
+            },
+            previous_key,
+            algorithm=security_module.ALGORITHM,
+        )
+
+        monkeypatch.setattr(security_module, "JWT_SIGNING_KEY", current_key)
+        monkeypatch.setattr(security_module, "JWT_PREVIOUS_KEYS", [previous_key])
+
+        payload = security_module.verify_token(token)
+        assert payload["username"] == "rot_user"
+
+
+class TestSecurityPhase2:
+    """Tests de endurecimiento para Fase 2."""
+
+    @staticmethod
+    def _token(role: str) -> str:
+        return create_access_token(
+            data={
+                "sub": f"role_{role}",
+                "id": 1200 if role == "admin" else 1201,
+                "es_admin": role in {"admin", "super_admin"},
+                "rol": role,
+                "email": f"{role}@example.com",
+            }
+        )
+
+    def test_execute_query_select_requiere_admin(self):
+        viewer_headers = {"Authorization": f"Bearer {self._token('viewer')}"}
+
+        response = https_client.post(
+            "/api/databases/database_manager/query",
+            headers=viewer_headers,
+            params={"query": "SELECT 1"},
+        )
+
+        assert response.status_code == 403
+
+    def test_execute_query_select_admin_sin_bloqueo_por_rol(self):
+        admin_headers = {"Authorization": f"Bearer {self._token('admin')}"}
+
+        response = https_client.post(
+            "/api/databases/database_manager/query",
+            headers=admin_headers,
+            params={"query": "SELECT 1"},
+        )
+
+        assert response.status_code != 403
+
+    def test_backup_paths_requiere_admin(self):
+        viewer_headers = {"Authorization": f"Bearer {self._token('viewer')}"}
+
+        response = https_client.get("/api/export/backup/paths", headers=viewer_headers)
+
+        assert response.status_code == 403
+
+    def test_backup_paths_admin_permitido(self, monkeypatch):
+        admin_headers = {"Authorization": f"Bearer {self._token('admin')}"}
+
+        class _FakeBackupManager:
+            def __init__(self, _db):
+                pass
+
+            def get_backup_paths(self):
+                return [{"path": "C:/backups", "is_active": True}]
+
+        monkeypatch.setattr(export_api, "BackupManager", _FakeBackupManager)
+
+        response = https_client.get("/api/export/backup/paths", headers=admin_headers)
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+
+    def test_qr_verify_by_id_publico_bloqueado_sin_auth(self):
+        response = client.get("/api/qr/public/verify-by-id/1")
+        assert response.status_code in {401, 403}
+
+    def test_qr_verify_by_id_admin_no_bloqueado_por_auth(self):
+        admin_headers = {"Authorization": f"Bearer {self._token('admin')}"}
+        response = https_client.get("/api/qr/public/verify-by-id/1", headers=admin_headers)
+        assert response.status_code != 403
+
+
+class TestSecurityPhase3:
+    """Tests para hardening de fase 3."""
+
+    def test_cors_preflight_no_usa_wildcard_methods(self):
+        origin = (app_config.CORS_ORIGINS or ["http://localhost:3000"])[0]
+        response = client.options(
+            "/api/health",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+
+        assert response.status_code in {200, 204}
+        allow_methods = response.headers.get("access-control-allow-methods", "")
+        assert "*" not in allow_methods
+
+    def test_api_debug_default_es_seguro(self):
+        assert app_config.API_DEBUG is False
+
+    def test_token_con_rol_escalado_se_normaliza_con_bd(self):
+        db = TestingSessionLocal()
+        repo = RepositorioUsuario(db)
+        suffix = uuid.uuid4().hex[:8]
+        usuario = repo.crear(
+            UsuarioCrear(
+                username=f"viewer_{suffix}",
+                email=f"viewer_{suffix}@example.com",
+                password="TestPassword123!",
+                nombre_completo="Viewer Phase3",
+                rol="viewer",
+                es_admin=False,
+            )
+        )
+        db.close()
+
+        token_escalado = create_access_token(
+            data={
+                "sub": usuario.username,
+                "id": usuario.id,
+                "es_admin": True,
+                "rol": "admin",
+                "email": usuario.email,
+            }
+        )
+        headers = {"Authorization": f"Bearer {token_escalado}"}
+
+        response = https_client.post(
+            "/api/databases/database_manager/query",
+            headers=headers,
+            params={"query": "SELECT 1"},
+        )
+
+        assert response.status_code == 403
+
+    def test_usuario_inactivo_no_autoriza_token_vigente(self):
+        db = TestingSessionLocal()
+        repo = RepositorioUsuario(db)
+        suffix = uuid.uuid4().hex[:8]
+        usuario = repo.crear(
+            UsuarioCrear(
+                username=f"inactive_{suffix}",
+                email=f"inactive_{suffix}@example.com",
+                password="TestPassword123!",
+                nombre_completo="Inactive Phase3",
+                rol="viewer",
+                es_admin=False,
+                es_activo=False,
+            )
+        )
+        db.close()
+
+        token = create_access_token(
+            data={
+                "sub": usuario.username,
+                "id": usuario.id,
+                "es_admin": False,
+                "rol": "viewer",
+                "email": usuario.email,
+            }
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+
+        response = https_client.get("/api/auth/me", headers=headers)
+        assert response.status_code == 401

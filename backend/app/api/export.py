@@ -12,7 +12,7 @@ from typing import Optional
 from io import BytesIO
 
 from app.database.orm import get_db
-from app.security import get_current_user
+from app.security import get_current_user, require_admin_role
 from app.models import EsquemaBaseDatos
 from app.utils.exports import (
     export_table_to_csv,
@@ -305,6 +305,7 @@ async def list_backup_paths(
     db: Session = Depends(get_db),
 ):
     """List all configured backup paths."""
+    require_admin_role(current_user, "Solo administradores pueden consultar rutas de respaldo")
     try:
         manager = BackupManager(db)
         paths = manager.get_backup_paths()
@@ -326,6 +327,7 @@ async def add_backup_path(
     db: Session = Depends(get_db),
 ):
     """Add a new backup path."""
+    require_admin_role(current_user, "Solo administradores pueden agregar rutas de respaldo")
     try:
         path = str((payload or {}).get("path", "")).strip()
         is_active = bool((payload or {}).get("is_active", False))
@@ -357,6 +359,7 @@ async def set_active_backup_path(
     db: Session = Depends(get_db),
 ):
     """Set the active backup path."""
+    require_admin_role(current_user, "Solo administradores pueden activar rutas de respaldo")
     try:
         manager = BackupManager(db)
         paths = manager.get_backup_paths()
@@ -388,6 +391,7 @@ async def configure_auto_backup(
     db: Session = Depends(get_db),
 ):
     """Configure automatic backups."""
+    require_admin_role(current_user, "Solo administradores pueden configurar respaldos automaticos")
     try:
         enabled = bool((payload or {}).get("enabled", False))
         hour = int((payload or {}).get("hour", 2))
@@ -419,6 +423,7 @@ async def get_auto_backup_config(
     db: Session = Depends(get_db),
 ):
     """Get auto-backup configuration."""
+    require_admin_role(current_user, "Solo administradores pueden consultar configuracion de respaldo")
     try:
         manager = BackupManager(db)
         config = manager.get_auto_backup_config()
@@ -440,6 +445,7 @@ async def cleanup_old_backups(
     db: Session = Depends(get_db),
 ):
     """Clean up backups older than N days."""
+    require_admin_role(current_user, "Solo administradores pueden limpiar respaldos")
     try:
         days = int((payload or {}).get("days", 30))
         path = str((payload or {}).get("path", "")).strip() or None

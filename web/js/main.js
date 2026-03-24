@@ -171,6 +171,23 @@ function showAppPrompt(message, options = {}) {
     return window.AppUtils.showAppPrompt(message, options);
 }
 
+function normalizeNullableInput(value) {
+    const text = String(value ?? '').trim();
+    if (!text) return null;
+    if (text.toLowerCase() === 'null') return null;
+    return text;
+}
+
+function getAgentDisplayName(agent, fallback = 'Agente') {
+    const extras = getAgentExtras(agent);
+    const alias = String(extras.alias || '').trim();
+    const nombre = String(agent?.nombre || '').trim();
+    if (alias) return alias;
+    if (nombre) return nombre;
+    if (agent?.id) return `Agente ${agent.id}`;
+    return fallback;
+}
+
 function formatDateTimeSafe(value) {
     return window.AppUtils.formatDateTimeSafe(value);
 }
@@ -507,14 +524,6 @@ function renderActivityChart(series) {
 
 // === INICIALIZACIÓN ===
 document.addEventListener('DOMContentLoaded', () => {
-    if (!window.__appAlertPatched) {
-        window.__nativeAlert = window.alert.bind(window);
-        window.alert = function patchedAlert(message) {
-            showAppAlert(String(message || ''));
-        };
-        window.__appAlertPatched = true;
-    }
-
     const enabledSaved = localStorage.getItem('realtimeEnabled');
     const msSaved = localStorage.getItem('realtimeMs');
     if (enabledSaved !== null) {
@@ -1355,8 +1364,9 @@ async function loadDashboardData(showErrors = true) {
                     const status = agent.es_activo ? 'Activo' : 'Inactivo';
                     const qr = agent.has_qr ? 'Con QR' : 'Sin QR';
                     const created = agent.fecha_creacion ? new Date(agent.fecha_creacion).toLocaleString() : 'Sin fecha';
+                    const displayName = getAgentDisplayName(agent);
                     return `<div class="dashboard-item">
-                        <strong>${escapeHtml(agent.nombre || 'Agente')}</strong>
+                        <strong>${escapeHtml(displayName)}</strong>
                         <span>ID ${agent.id ?? '-'} · ${escapeHtml(status)} · ${escapeHtml(qr)}</span>
                         <span>${escapeHtml(created)}</span>
                     </div>`;
@@ -1651,7 +1661,8 @@ function mostrarDatos(datos) {
             
             // Si es agente y tiene QR, mostrar botón para verlo
             if (isAgentTable) {
-                actionHtml += `<button onclick="mostrarQrParaAgente(${fila.id}, '${(fila.nombre || 'Agente').replace(/'/g, "\\'")}'); return false;" class="btn btn-small btn-secondary" title="${qrTitle}"><span title="${qrTitle}">${qrIndicator}</span> QR</button>`;
+                const qrName = (String(fila.alias || '').trim() || String(fila.nombre || '').trim() || `Agente ${fila.id}`);
+                actionHtml += `<button onclick="mostrarQrParaAgente(${fila.id}, '${qrName.replace(/'/g, "\\'")}'); return false;" class="btn btn-small btn-secondary" title="${qrTitle}"><span title="${qrTitle}">${qrIndicator}</span> QR</button>`;
             }
             
             if (canAdmin()) {
@@ -1807,9 +1818,10 @@ async function generarQrIndividualEnContexto(agenteId, options = {}) {
         }
         const box = document.getElementById(resultContainerId);
         if (box) {
+            const qrName = String(data.alias || data.nombre || `Agente ${agenteId}`);
             box.innerHTML = `
                 <div class="card" style="padding:12px;border:1px solid #d8d8d8;border-radius:8px;">
-                    <strong>QR individual generado para:</strong> ${data.nombre || 'Agente'}<br>
+                    <strong>QR individual generado para:</strong> ${escapeHtml(qrName)}<br>
                     <strong>Asignación:</strong> ${data.tiene_asignacion ? 'Con número asignado' : 'Sin número asignado'}<br>
                     <strong>Modo QR:</strong> ${data.es_qr_seguro ? 'Seguro por línea activa' : 'Fallback por UUID (sin línea)'}<br>
                     <strong>URL pública:</strong> <a href="${data.public_url}" target="_blank">Abrir verificación</a><br>
@@ -1927,7 +1939,7 @@ function renderEscaneoResumen(data) {
 
     content.innerHTML = `
         <div class="qr-scan-kpis">
-            <div><strong>Agente:</strong> ${escapeHtml(a.nombre || '-')} (ID ${a.id || '-'})</div>
+            <div><strong>Agente:</strong> ${escapeHtml(getAgentDisplayName(a, '-'))} (ID ${a.id || '-'})</div>
             <div><strong>Estado:</strong> ${escapeHtml(debeTxt)}</div>
             <div><strong>Límite sugerido:</strong> ${escapeHtml(dueDateTxt)}</div>
             <div><strong>Semana:</strong> ${escapeHtml(formatIsoDateLocal(v.semana_inicio || ''))}</div>
@@ -2445,7 +2457,7 @@ function renderLineasEstado(lineas) {
 
     lineas.forEach(linea => {
         const ocupada = !!linea.ocupada;
-        const agente = linea.agente?.nombre ? `${linea.agente.nombre} (ID ${linea.agente.id})` : '-';
+        const agente = linea.agente ? `${getAgentDisplayName(linea.agente)} (ID ${linea.agente.id})` : '-';
         const estado = ocupada ? '<span class="payment-pill unpaid">OCUPADA</span>' : '<span class="payment-pill paid">LIBRE</span>';
         const categoria = String(linea.categoria_linea || 'NO_DEFINIDA');
         const conexion = String(linea.estado_conexion || 'DESCONOCIDA');
@@ -2521,7 +2533,7 @@ function renderLineasGestion(lineas) {
 
     lineas.forEach(linea => {
         const ocupada = !!linea.ocupada;
-        const agente = linea.agente?.nombre ? `${linea.agente.nombre} (ID ${linea.agente.id})` : '-';
+        const agente = linea.agente ? `${getAgentDisplayName(linea.agente)} (ID ${linea.agente.id})` : '-';
         const estado = ocupada ? '<span class="payment-pill unpaid">OCUPADA</span>' : '<span class="payment-pill paid">LIBRE</span>';
         const origen = String(linea.origen || 'MANUAL').toUpperCase();
         const categoria = String(linea.categoria_linea || 'NO_DEFINIDA');
@@ -2532,7 +2544,7 @@ function renderLineasGestion(lineas) {
         if (ocupada) {
             actions.push(`<button type="button" class="btn btn-small btn-danger" onclick="liberarLinea(${linea.id})">Liberar</button>`);
             if (linea.agente?.id) {
-                actions.push(`<button type="button" class="btn btn-small btn-secondary" onclick="mostrarQrParaAgente(${linea.agente.id}, '${String(linea.agente.nombre || 'Agente').replace(/'/g, "\\'")}')">QR Agente</button>`);
+                actions.push(`<button type="button" class="btn btn-small btn-secondary" onclick="mostrarQrParaAgente(${linea.agente.id}, '${String(getAgentDisplayName(linea.agente)).replace(/'/g, "\\'")}')">QR Agente</button>`);
             }
         } else {
             actions.push(`<button type="button" class="btn btn-small btn-secondary" onclick="desactivarLineaGestion(${linea.id})">Desactivar</button>`);
@@ -2762,25 +2774,26 @@ function renderGestionAgentes(agentes) {
     }
 
     let html = '<table class="data-table"><thead><tr>';
-    html += '<th>ID</th><th>Nombre</th><th>Alias</th><th>Teléfono</th><th>Líneas</th><th>Ladas</th><th>Acciones</th>';
+    html += '<th>ID</th><th>Alias (Principal)</th><th>Nombre</th><th>Teléfono</th><th>Líneas</th><th>Ladas</th><th>Acciones</th>';
     html += '</tr></thead><tbody>';
 
     agentes.forEach(agent => {
         const extras = getAgentExtras(agent);
+        const displayName = getAgentDisplayName(agent);
         const lines = Array.isArray(agent.lineas) ? agent.lineas : [];
         const lineText = lines.length ? lines.map(line => `${line.numero} (${line.tipo || 'N/A'})`).join(', ') : 'Sin líneas';
         const ladas = Array.isArray(agent.ladas_preferidas) && agent.ladas_preferidas.length ? agent.ladas_preferidas.join(', ') : '-';
         const identityLabel = buildAgentIdentityLabel(agent);
         html += `<tr>
             <td>${agent.id}</td>
-            <td><strong>${escapeHtml(agent.nombre || '-')}</strong><br><span class="hint">${escapeHtml(identityLabel)}</span></td>
-            <td>${escapeHtml(extras.alias || '-')}</td>
+            <td><strong>${escapeHtml(displayName)}</strong><br><span class="hint">${escapeHtml(identityLabel)}</span></td>
+            <td>${escapeHtml(agent.nombre || '-')}</td>
             <td>${agent.telefono || '-'}</td>
             <td>${lineText}</td>
             <td>${ladas}</td>
             <td>
                 <button onclick="editarAgenteGestion(${agent.id})" class="btn btn-small">Editar</button>
-                <button onclick="mostrarQrParaAgente(${agent.id}, '${String(agent.nombre || 'Agente').replace(/'/g, "\\'")}')" class="btn btn-small btn-secondary">QR</button>
+                <button onclick="mostrarQrParaAgente(${agent.id}, '${String(displayName || 'Agente').replace(/'/g, "\\'")}')" class="btn btn-small btn-secondary">QR</button>
                 <button onclick="irAAsignacionLineaAgente(${agent.id})" class="btn btn-small btn-secondary" title="Asignar o cambiar línea">📞 Línea</button>
                 <button onclick="liberarLineasAgente(${agent.id})" class="btn btn-small btn-secondary">Liberar líneas</button>
                 <button onclick="darBajaAgente(${agent.id})" class="btn btn-small btn-danger">Baja</button>
@@ -2796,7 +2809,7 @@ async function cargarAgentesGestion(showErrors = true) {
     try {
         const search = document.getElementById('gestionAgenteSearch')?.value.trim() || '';
         const res = await apiClient.getAgentesQR(search);
-        const filtered = (res.data || []).filter(a => a.es_activo !== false && String(a.nombre || '').trim() !== '');
+        const filtered = (res.data || []).filter(a => a.es_activo !== false);
         currentAgentManagementRows = dedupeAgentesPorNombreAlias(filtered);
         renderGestionAgentes(currentAgentManagementRows);
     } catch (error) {
@@ -2849,21 +2862,21 @@ async function guardarCambiosAgente(e) {
     const agent = currentAgentManagementRows.find(item => Number(item.id) === agenteId) || {};
     const extras = getAgentExtras(agent);
     const payload = {
-        nombre: document.getElementById('editarAgenteNombre')?.value.trim() || null,
-        telefono: document.getElementById('editarAgenteTelefono')?.value.trim() || null,
+        nombre: normalizeNullableInput(document.getElementById('editarAgenteNombre')?.value),
+        telefono: normalizeNullableInput(document.getElementById('editarAgenteTelefono')?.value),
         datos_adicionales: {
             ...extras,
-            alias: document.getElementById('editarAgenteAlias')?.value.trim() || null,
-            ubicacion: document.getElementById('editarAgenteUbicacion')?.value.trim() || null,
-            fp: document.getElementById('editarAgenteFp')?.value.trim() || null,
-            fc: document.getElementById('editarAgenteFc')?.value.trim() || null,
-            grupo: document.getElementById('editarAgenteGrupo')?.value.trim() || null,
-            numero_voip: document.getElementById('editarAgenteVoip')?.value.trim() || null,
+            alias: normalizeNullableInput(document.getElementById('editarAgenteAlias')?.value),
+            ubicacion: normalizeNullableInput(document.getElementById('editarAgenteUbicacion')?.value),
+            fp: normalizeNullableInput(document.getElementById('editarAgenteFp')?.value),
+            fc: normalizeNullableInput(document.getElementById('editarAgenteFc')?.value),
+            grupo: normalizeNullableInput(document.getElementById('editarAgenteGrupo')?.value),
+            numero_voip: normalizeNullableInput(document.getElementById('editarAgenteVoip')?.value),
         }
     };
 
-    if (!payload.nombre) {
-        alert('El nombre del agente es obligatorio.');
+    if (!payload.nombre && !payload.datos_adicionales.alias) {
+        alert('Captura nombre o alias para identificar al agente.');
         return;
     }
 
@@ -2884,11 +2897,12 @@ async function guardarCambiosAgente(e) {
 async function liberarLineasAgente(agenteId) {
     const agent = currentAgentManagementRows.find(item => Number(item.id) === Number(agenteId));
     const lines = Array.isArray(agent?.lineas) ? agent.lineas : [];
+    const agentLabel = getAgentDisplayName(agent || { id: agenteId }, `ID ${agenteId}`);
     if (!lines.length) {
         alert('Este agente no tiene líneas asignadas.');
         return;
     }
-    if (!(await showAppConfirm(`¿Liberar ${lines.length} línea(s) del agente ${agent.nombre || agenteId}?`, { title: 'Liberar líneas', tone: 'warning' }))) return;
+    if (!(await showAppConfirm(`¿Liberar ${lines.length} línea(s) del agente ${agentLabel}?`, { title: 'Liberar líneas', tone: 'warning' }))) return;
 
     try {
         for (const line of lines) {
@@ -2905,7 +2919,7 @@ async function liberarLineasAgente(agenteId) {
 
 async function darBajaAgente(agenteId) {
     const agent = currentAgentManagementRows.find(item => Number(item.id) === Number(agenteId));
-    const label = agent?.nombre || `ID ${agenteId}`;
+    const label = getAgentDisplayName(agent || { id: agenteId }, `ID ${agenteId}`);
     if (!(await showAppConfirm(`¿Dar de baja al agente ${label}?`, { title: 'Baja de agente', tone: 'warning', acceptText: 'Dar de baja' }))) return;
     if ((agent?.lineas || []).length && !(await showAppConfirm('El agente tiene líneas asignadas. La baja no las libera automáticamente.', { title: '¿Continuar con la baja?', tone: 'warning', acceptText: 'Continuar' }))) return;
 
@@ -2986,7 +3000,7 @@ async function cargarLineasYAgentes() {
         if (agenteSelect) {
             let html = '<option value="">-- Agente --</option>';
             agentes.forEach(a => {
-                html += `<option value="${a.id}">${escapeHtml(a.nombre || 'Agente')} | ${escapeHtml(buildAgentIdentityLabel(a))}</option>`;
+                html += `<option value="${a.id}">${escapeHtml(getAgentDisplayName(a))} | ${escapeHtml(buildAgentIdentityLabel(a))}</option>`;
             });
             agenteSelect.innerHTML = html;
             if (pendingAltaAgentId) {
@@ -3126,24 +3140,24 @@ async function crearAgenteManual(e) {
     e.preventDefault();
     const modo = document.getElementById('agenteModoAsignacion')?.value || 'ninguna';
     const payload = {
-        nombre: document.getElementById('agenteNombreInput')?.value.trim(),
-        alias: document.getElementById('agenteAliasInput')?.value.trim() || null,
-        ubicacion: document.getElementById('agenteUbicacionInput')?.value.trim() || null,
-        fp: document.getElementById('agenteFpInput')?.value.trim() || null,
-        fc: document.getElementById('agenteFcInput')?.value.trim() || null,
-        grupo: document.getElementById('agenteGrupoInput')?.value.trim() || null,
+        nombre: normalizeNullableInput(document.getElementById('agenteNombreInput')?.value),
+        alias: normalizeNullableInput(document.getElementById('agenteAliasInput')?.value),
+        ubicacion: normalizeNullableInput(document.getElementById('agenteUbicacionInput')?.value),
+        fp: normalizeNullableInput(document.getElementById('agenteFpInput')?.value),
+        fc: normalizeNullableInput(document.getElementById('agenteFcInput')?.value),
+        grupo: normalizeNullableInput(document.getElementById('agenteGrupoInput')?.value),
         modo_asignacion: modo,
-        lada_objetivo: document.getElementById('agenteLadaObjetivoSelect')?.value || null
+        lada_objetivo: normalizeNullableInput(document.getElementById('agenteLadaObjetivoSelect')?.value)
     };
 
-    if (!payload.nombre) {
-        alert('El nombre del agente es obligatorio.');
+    if (!payload.nombre && !payload.alias) {
+        alert('Captura nombre o alias para crear el agente.');
         return;
     }
 
     if (modo === 'manual') {
         payload.linea_id = Number(document.getElementById('agenteLineaManualSelect')?.value || 0) || null;
-        payload.numero_linea_manual = document.getElementById('agenteLineaManualInput')?.value.trim() || null;
+        payload.numero_linea_manual = normalizeNullableInput(document.getElementById('agenteLineaManualInput')?.value);
         payload.categoria_linea = document.getElementById('agenteLineaCategoriaSelect')?.value || 'NO_DEFINIDA';
         payload.estado_conexion = document.getElementById('agenteLineaConexionSelect')?.value || 'DESCONOCIDA';
         if (!payload.linea_id && !payload.numero_linea_manual) {
@@ -3274,6 +3288,10 @@ async function eliminarDato(id, uuid = '') {
         if (confirmacion !== null) showAppAlert('Palabra incorrecta. Operación cancelada.', { tone: 'warning', title: 'Cancelado' });
         return;
     }
+
+    try {
+        try {
+            await apiClient.eliminarDato(id);
         } catch (error) {
             const detail = String(error?.message || '').toLowerCase();
             if (!uuid || !detail.includes('no encontrado')) {

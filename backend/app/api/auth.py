@@ -34,8 +34,15 @@ async def registrar(usuario_in: UsuarioCrear, db: Session = Depends(get_db), req
             detail="Email ya está registrado"
         )
     
+    # Registro público: forzar mínimo privilegio y evitar elevación por payload cliente.
+    usuario_seguro = usuario_in.model_copy(update={
+        "rol": "viewer",
+        "es_admin": False,
+        "es_activo": True,
+    })
+
     # Crear usuario
-    usuario = repo_usuario.crear(usuario_in)
+    usuario = repo_usuario.crear(usuario_seguro)
     
     # Auditoría
     repo_auditoria.registrar_accion(

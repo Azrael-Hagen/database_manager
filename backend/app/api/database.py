@@ -148,6 +148,7 @@ async def execute_query(
 ):
     """Ejecutar una consulta SQL personalizada."""
     db_name = _safe_ident(db_name, "Base de datos")
+    require_admin_role(current_user, "Solo administradores pueden ejecutar consultas SQL personalizadas")
     try:
         sql_query = query or (payload or {}).get("query")
         if not sql_query or not str(sql_query).strip():
@@ -157,10 +158,6 @@ async def execute_query(
             )
 
         is_select = str(sql_query).strip().upper().startswith("SELECT")
-        if is_select:
-            pass
-        else:
-            require_admin_role(current_user, "Solo administradores pueden ejecutar SQL de modificación")
 
         logger.info(f"Usuario {current_user['username']} ejecutando query en BD {db_name}: {str(sql_query)[:100]}...")
         
