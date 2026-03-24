@@ -1553,7 +1553,7 @@ async function mostrarQrParaAgente(agenteId, agenteName) {
                 <button type="button" class="btn btn-secondary" onclick="descargarQrAgente(${agenteId})">
                     📥 Descargar PNG
                 </button>
-                <button type="button" class="btn" onclick="navigator.clipboard.writeText('${data.public_url}'); alert('URL copiada');">
+                <button type="button" class="btn" onclick="copiarUrlQr('${String(data.public_url || '').replace(/'/g, "\\'")}')">
                     📋 Copiar URL
                 </button>
             </div>
@@ -1805,7 +1805,7 @@ async function generarQrIndividualEnContexto(agenteId, options = {}) {
                     <strong>URL pública:</strong> <a href="${data.public_url}" target="_blank">Abrir verificación</a><br>
                     <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
                         <button type="button" class="btn btn-secondary" onclick="descargarQrAgente(${agenteId})">Descargar PNG</button>
-                        <button type="button" class="btn" onclick="navigator.clipboard.writeText('${data.public_url}')">Copiar URL</button>
+                        <button type="button" class="btn" onclick="copiarUrlQr('${String(data.public_url || '').replace(/'/g, "\\'")}')">Copiar URL</button>
                     </div>
                 </div>
             `;
@@ -1813,6 +1813,20 @@ async function generarQrIndividualEnContexto(agenteId, options = {}) {
     } catch (error) {
         console.error('Error:', error);
         alert('Error generando QR individual: ' + error.message);
+    }
+}
+
+async function copiarUrlQr(url) {
+    const value = String(url || '').trim();
+    if (!value) {
+        alert('No hay URL de QR para copiar.');
+        return;
+    }
+    try {
+        await copiarTextoPortapapeles(value);
+        alert('URL copiada al portapapeles.');
+    } catch (_) {
+        alert('No se pudo copiar automáticamente. URL: ' + value);
     }
 }
 
