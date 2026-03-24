@@ -37,7 +37,13 @@ def override_get_db():
         db.close()
 
 
-app.dependency_overrides[get_db] = override_get_db
+def _bind_test_db_override() -> None:
+    # Test modules share a single FastAPI app instance; enforce our override
+    # to avoid cross-module DB leakage when other suites replace get_db.
+    app.dependency_overrides[get_db] = override_get_db
+
+
+_bind_test_db_override()
 client = TestClient(app, raise_server_exceptions=False, base_url="https://testserver:8443")
 
 _REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
@@ -47,10 +53,12 @@ _STYLE_CSS = os.path.join(_REPO_ROOT, "web", "css", "style.css")
 
 
 def _db() -> Session:
+    _bind_test_db_override()
     return TestingSessionLocal()
 
 
 def _clear_agent_tables() -> None:
+    _bind_test_db_override()
     db = _db()
     try:
         db.query(AgenteLineaAsignacion).delete()

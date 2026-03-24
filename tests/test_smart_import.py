@@ -39,6 +39,14 @@ app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app, base_url="https://testserver:8443")
 
 
+@pytest.fixture(autouse=True)
+def _bind_smart_import_db_override():
+    # test_sin_linea_e2e and other modules mutate dependency_overrides globally.
+    # Rebind here to keep this suite isolated.
+    app.dependency_overrides[get_db] = override_get_db
+    yield
+
+
 # ---------------------------------------------------------------------------
 # Helper factories
 # ---------------------------------------------------------------------------

@@ -302,25 +302,6 @@
                 <div id="auditoriaContainer" class="table-responsive"></div>
             </section>
                     <div class="form-group">
-            <!-- Sección Estado de Agentes -->
-            <section id="estadoAgentesSection" class="panel" style="display: none;">
-                <h1>Estado de Agentes</h1>
-                <p class="hint">Vista consolidada por agente (una fila por agente): muestra todas sus líneas activas y el conteo total. El cobro semanal se calcula por línea activa; si no tiene líneas, no debe generar adeudo. El QR se mantiene único por agente.</p>
-                        <label>Base de Datos:</label>
-                        <select id="queryDatabase">
-                            <option value="">-- Selecciona BD --</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Consulta SQL:</label>
-                        <textarea id="querySQL" rows="8" placeholder="SELECT * FROM tabla LIMIT 10;\n\n-- Puedes ejecutar consultas completas (DDL/DML)"></textarea>
-                    </div>
-                    <button onclick="ejecutarQuerySQL()" class="btn">Ejecutar</button>
-                    <button onclick="cerrarQueryPanel()" class="btn btn-secondary">Cerrar</button>
-                    <div id="queryResult" style="margin-top: 20px;"></div>
-                </div>
-            </section>
-
             <!-- Sección de Importación -->
             <section id="importarSection" class="panel" style="display: none;">
                 <h1>Importar Datos</h1>
@@ -1250,4 +1231,5 @@
     <script src="js/qrCobros.js"></script>
 </body>
 </html>
+
 
