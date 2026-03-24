@@ -10,6 +10,7 @@ from app.models import AgenteLineaAsignacion, AlertaPago, ConfigSistema, DatoImp
 CUOTA_SEMANAL_KEY = "CUOTA_SEMANAL"
 LAST_ALERT_CHECK_KEY = "LAST_ALERT_CHECK_DATE"
 DEFAULT_CUOTA = 300.0
+MANUAL_DEUDA_AJUSTE_PREFIX = "DEUDA_AJUSTE_MANUAL_AGENTE_"
 
 
 def monday_of_week(ref: date) -> date:
@@ -63,6 +64,26 @@ def set_cuota_semanal(db: Session, cuota: float) -> float:
     return float(cuota)
 
 
+def _manual_deuda_key(agente_id: int) -> str:
+    return f"{MANUAL_DEUDA_AJUSTE_PREFIX}{int(agente_id)}"
+
+
+def get_manual_deuda_ajuste(db: Session, agente_id: int) -> float:
+    row = _get_config_row(db, _manual_deuda_key(agente_id))
+    if not row or row.valor in (None, ""):
+        return 0.0
+    try:
+        return float(row.valor)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def set_manual_deuda_ajuste(db: Session, agente_id: int, monto: float) -> float:
+    value = float(monto)
+    set_config_value(db, _manual_deuda_key(agente_id), f"{value:.2f}")
+    return value
+
+
 def _weeks_between(start_monday: date, end_monday: date) -> int:
     if end_monday < start_monday:
         return 0
@@ -111,11 +132,14 @@ def resumen_cobranza_agente(db: Session, agente: DatoImportado, semana: date | N
     lineas_activas = len(assignments)
 
     cuota_semanal_total = float(tarifa_por_linea) * float(lineas_activas)
-    deuda_total = 0.0
+    deuda_base_total = 0.0
     for item in assignments:
         weeks_due = _weeks_between(item["start_week"], semana_ref)
-        deuda_total += float(tarifa_por_linea) * float(weeks_due)
-        deuda_total += float(item["cargo_inicial"])
+        deuda_base_total += float(tarifa_por_linea) * float(weeks_due)
+        deuda_base_total += float(item["cargo_inicial"])
+
+    ajuste_manual_deuda = float(get_manual_deuda_ajuste(db, agente.id))
+    deuda_total = max(deuda_base_total + ajuste_manual_deuda, 0.0)
 
     total_abonado_rows = db.query(PagoSemanal.monto).filter(
         PagoSemanal.agente_id == agente.id,
@@ -140,7 +164,7 @@ def resumen_cobranza_agente(db: Session, agente: DatoImportado, semana: date | N
         if saldo_acumulado % float(tarifa_por_linea) > 0.0001:
             semanas_pendientes += 1
 
-    if lineas_activas == 0:
+    if lineas_activas == 0 and saldo_acumulado <= 0.0001:
         pagado_semana = True
 
     return {
@@ -148,6 +172,8 @@ def resumen_cobranza_agente(db: Session, agente: DatoImportado, semana: date | N
         "tarifa_linea_semanal": float(tarifa_por_linea),
         "lineas_activas": int(lineas_activas),
         "cuota_semanal": float(cuota_semanal_total),
+        "deuda_base_total": float(deuda_base_total),
+        "ajuste_manual_deuda": float(ajuste_manual_deuda),
         "deuda_total": float(deuda_total),
         "total_abonado": float(total_abonado),
         "saldo_acumulado": float(saldo_acumulado),

@@ -45,6 +45,7 @@ from app.utils.pagos import (
     monday_of_week,
     obtener_reporte_semanal,
     resumen_cobranza_agente,
+    set_manual_deuda_ajuste,
     set_cuota_semanal,
 )
 
@@ -1142,6 +1143,105 @@ async def resumen_pagos_agente(
     }
 
 
+@router.get("/agentes/{agente_id}/deuda-manual")
+async def obtener_deuda_manual_agente(
+    agente_id: int,
+    semana: date | None = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Consultar ajuste manual de deuda y resumen actual del agente."""
+    agente = db.query(DatoImportado).filter(
+        DatoImportado.id == agente_id,
+        DatoImportado.es_activo.is_(True),
+    ).first()
+    if not agente:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agente no encontrado")
+
+    resumen = resumen_cobranza_agente(db, agente, semana)
+    return {
+        "status": "success",
+        "agente": {"id": agente.id, "nombre": agente.nombre, "uuid": agente.uuid},
+        "data": {
+            "semana_inicio": resumen["semana_inicio"].isoformat() if resumen.get("semana_inicio") else None,
+            "deuda_base_total": float(resumen.get("deuda_base_total") or 0),
+            "ajuste_manual_deuda": float(resumen.get("ajuste_manual_deuda") or 0),
+            "deuda_total": float(resumen.get("deuda_total") or 0),
+            "total_abonado": float(resumen.get("total_abonado") or 0),
+            "saldo_acumulado": float(resumen.get("saldo_acumulado") or 0),
+            "lineas_activas": int(resumen.get("lineas_activas") or 0),
+        },
+    }
+
+
+@router.put("/agentes/{agente_id}/deuda-manual")
+async def actualizar_deuda_manual_agente(
+    agente_id: int,
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Actualizar ajuste manual de deuda de un agente.
+
+    modos:
+    - ajuste: guarda monto directamente como ajuste (+/-) sobre deuda base.
+    - saldo_objetivo: calcula ajuste para llegar al saldo acumulado deseado.
+    """
+    require_admin_role(current_user, "Solo admin puede editar deuda manual")
+    agente = db.query(DatoImportado).filter(
+        DatoImportado.id == agente_id,
+        DatoImportado.es_activo.is_(True),
+    ).first()
+    if not agente:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agente no encontrado")
+
+    mode = str((payload or {}).get("modo") or "ajuste").strip().lower()
+    raw_monto = (payload or {}).get("monto")
+    semana_raw = str((payload or {}).get("semana") or "").strip()
+    semana_ref = None
+    if semana_raw:
+        try:
+            semana_ref = date.fromisoformat(semana_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Semana inválida") from exc
+
+    if raw_monto in (None, ""):
+        monto = 0.0
+    else:
+        try:
+            monto = float(raw_monto)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Monto inválido") from exc
+
+    if mode not in {"ajuste", "saldo_objetivo"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="modo debe ser ajuste o saldo_objetivo")
+
+    if mode == "ajuste":
+        nuevo_ajuste = set_manual_deuda_ajuste(db, agente.id, monto)
+    else:
+        resumen_prev = resumen_cobranza_agente(db, agente, semana_ref)
+        deuda_base = float(resumen_prev.get("deuda_base_total") or 0)
+        abonado = float(resumen_prev.get("total_abonado") or 0)
+        target_deuda_total = max(float(monto) + abonado, 0.0)
+        nuevo_ajuste = set_manual_deuda_ajuste(db, agente.id, target_deuda_total - deuda_base)
+
+    resumen = resumen_cobranza_agente(db, agente, semana_ref)
+    return {
+        "status": "success",
+        "agente": {"id": agente.id, "nombre": agente.nombre},
+        "data": {
+            "modo_aplicado": mode,
+            "semana_inicio": resumen["semana_inicio"].isoformat() if resumen.get("semana_inicio") else None,
+            "deuda_base_total": float(resumen.get("deuda_base_total") or 0),
+            "ajuste_manual_deuda": float(resumen.get("ajuste_manual_deuda") or 0),
+            "deuda_total": float(resumen.get("deuda_total") or 0),
+            "total_abonado": float(resumen.get("total_abonado") or 0),
+            "saldo_acumulado": float(resumen.get("saldo_acumulado") or 0),
+            "lineas_activas": int(resumen.get("lineas_activas") or 0),
+        },
+    }
+
+
 @router.get("/verificar/{agente_id}")
 async def verificar_agente(
     agente_id: int,
@@ -1198,6 +1298,8 @@ async def verificar_agente(
             "tarifa_linea_semanal": float(resumen_pago["tarifa_linea_semanal"]),
             "lineas_activas": int(resumen_pago["lineas_activas"]),
             "cuota_semanal": float(resumen_pago["cuota_semanal"]),
+            "deuda_base_total": float(resumen_pago.get("deuda_base_total") or 0),
+            "ajuste_manual_deuda": float(resumen_pago.get("ajuste_manual_deuda") or 0),
             "deuda_total": float(resumen_pago["deuda_total"]),
             "total_abonado": float(resumen_pago["total_abonado"]),
             "saldo_acumulado": float(resumen_pago["saldo_acumulado"]),

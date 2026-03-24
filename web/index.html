@@ -637,6 +637,26 @@
                 </form>
                 <div id="resumenPagoAgenteContainer" style="margin-top: 10px;"></div>
 
+                <h3 style="margin-top: 22px;">Control Manual de Deuda</h3>
+                <div id="deudaManualPanel" class="card" style="margin-top: 10px; padding: 14px; border: 1px solid #d8e6f4; border-radius: 12px; background: #f9fcff; color: #173049;">
+                    <p class="hint">Permite ajustar manualmente cuánto debe un agente. Usa <strong>Saldo objetivo</strong> para fijar el saldo acumulado deseado, o <strong>Ajuste</strong> para sumar/restar sobre la deuda base calculada.</p>
+                    <div class="search-bar" style="margin-top:8px;">
+                        <input type="number" id="deudaManualAgenteId" placeholder="ID Agente" min="1">
+                        <input type="date" id="deudaManualSemana" placeholder="Semana (opcional)">
+                        <select id="deudaManualModo">
+                            <option value="saldo_objetivo">Saldo objetivo</option>
+                            <option value="ajuste">Ajuste (+/-)</option>
+                        </select>
+                        <input type="number" id="deudaManualMonto" placeholder="Monto MXN" step="0.01">
+                    </div>
+                    <div class="search-bar" style="margin-top:8px;">
+                        <button type="button" class="btn" onclick="aplicarDeudaManualAgente()">Aplicar Ajuste</button>
+                        <button type="button" class="btn btn-secondary" onclick="consultarDeudaManualAgente()">Consultar Actual</button>
+                        <button type="button" class="btn btn-secondary" onclick="limpiarDeudaManualAgente()">Limpiar Ajuste (0)</button>
+                    </div>
+                    <div id="deudaManualResult" style="margin-top:10px;"></div>
+                </div>
+
                 <h3 style="margin-top: 22px;">Configuración de Tarifa por Línea</h3>
                 <form onsubmit="guardarCuotaSemanal(event)">
                     <div class="form-group">

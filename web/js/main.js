@@ -265,6 +265,8 @@ function applyRoleBasedUI() {
     if (purgeBtn) purgeBtn.style.display = canSuperAdmin() ? '' : 'none';
     const maintenancePanel = document.getElementById('dbMaintenancePanel');
     if (maintenancePanel) maintenancePanel.style.display = canAdmin() ? 'block' : 'none';
+    const deudaManualPanel = document.getElementById('deudaManualPanel');
+    if (deudaManualPanel) deudaManualPanel.style.display = canAdmin() ? 'block' : 'none';
     // Papelera panel — only super_admin
     const papeleraSection = document.getElementById('papeleraSection');
     if (papeleraSection) papeleraSection.style.display = canSuperAdmin() ? '' : 'none';
@@ -1898,6 +1900,8 @@ function renderEscaneoResumen(data) {
     const tarifaLinea = Number(v.tarifa_linea_semanal ?? v.cuota_semanal ?? 0);
     const lineasActivas = Number(v.lineas_activas ?? (Array.isArray(a.lineas) ? a.lineas.length : 0));
     const cuota = Number(v.cuota_semanal ?? (tarifaLinea * lineasActivas));
+    const deudaBase = Number(v.deuda_base_total ?? 0);
+    const ajusteManual = Number(v.ajuste_manual_deuda ?? 0);
     const debe = deuda > 0.009 || !v.pagado;
     const debeTxt = debe ? 'Debe pagar' : 'Sin adeudo';
     const dueDate = getDueDateSaturday(v.semana_inicio);
@@ -1925,6 +1929,8 @@ function renderEscaneoResumen(data) {
             <div><strong>Cargo semanal actual:</strong> $${cuota.toFixed(2)} MXN</div>
             <div><strong>Monto semana:</strong> $${Number(v.monto ?? 0).toFixed(2)} MXN</div>
             <div><strong>Total abonado:</strong> $${Number(v.total_abonado ?? 0).toFixed(2)} MXN</div>
+            <div><strong>Deuda base:</strong> $${deudaBase.toFixed(2)} MXN</div>
+            <div><strong>Ajuste manual:</strong> $${ajusteManual.toFixed(2)} MXN</div>
             <div><strong>Saldo acumulado:</strong> $${deuda.toFixed(2)} MXN</div>
             <div><strong>Semanas pendientes:</strong> ${Number(v.semanas_pendientes ?? 0)}</div>
             <div><strong>Último pago:</strong> ${v.fecha_pago ? new Date(v.fecha_pago).toLocaleString() : 'Sin pago'}</div>
@@ -3450,6 +3456,8 @@ async function registrarPagoSemanal(e) {
         };
         renderReciboPago(lastReceiptData);
         alert('Pago semanal guardado correctamente.');
+        const deudaManualAgenteId = document.getElementById('deudaManualAgenteId');
+        if (deudaManualAgenteId) deudaManualAgenteId.value = String(payload.agente_id || '');
         if (document.getElementById('qrAgenteId').value === String(payload.agente_id)) {
             await verificarAgenteQR();
         }
@@ -3501,22 +3509,134 @@ async function consultarResumenPagoActual(showAlerts = true) {
     try {
         const res = await apiClient.getResumenPagoAgente(agenteId, semana);
         const data = res.data || {};
+        const deudaBase = Number(data.deuda_base_total || 0);
+        const ajusteManual = Number(data.ajuste_manual_deuda || 0);
         container.innerHTML = `
             <div class="card" style="padding:12px;border-radius:8px;">
                 <strong>Semana:</strong> ${data.semana_inicio || '-'}<br>
                 <strong>Tarifa por línea:</strong> $${Number(data.tarifa_linea_semanal || 0).toFixed(2)} MXN<br>
                 <strong>Líneas activas:</strong> ${Number(data.lineas_activas || 0)}<br>
                 <strong>Cargo semanal actual:</strong> $${Number(data.cuota_semanal || 0).toFixed(2)} MXN<br>
+                <strong>Deuda base (sin ajuste):</strong> $${deudaBase.toFixed(2)} MXN<br>
+                <strong>Ajuste manual aplicado:</strong> $${ajusteManual.toFixed(2)} MXN<br>
                 <strong>Deuda total:</strong> $${Number(data.deuda_total || 0).toFixed(2)} MXN<br>
                 <strong>Total abonado:</strong> $${Number(data.total_abonado || 0).toFixed(2)} MXN<br>
                 <strong>Saldo acumulado:</strong> $${Number(data.saldo_acumulado || 0).toFixed(2)} MXN<br>
                 <strong>Semanas pendientes:</strong> ${Number(data.semanas_pendientes || 0)}
             </div>
         `;
+
+        const deudaManualAgenteId = document.getElementById('deudaManualAgenteId');
+        const deudaManualSemana = document.getElementById('deudaManualSemana');
+        if (deudaManualAgenteId) deudaManualAgenteId.value = String(agenteId);
+        if (deudaManualSemana && data.semana_inicio) deudaManualSemana.value = String(data.semana_inicio);
     } catch (error) {
         console.error('Error:', error);
         container.innerHTML = '<p style="color:#b00020;">No fue posible obtener el resumen de pagos.</p>';
         if (showAlerts) alert('Error consultando resumen de pagos: ' + error.message);
+    }
+}
+
+function renderDeudaManualResultado(data, label = 'Consulta') {
+    const el = document.getElementById('deudaManualResult');
+    if (!el) return;
+    const deudaBase = Number(data?.deuda_base_total || 0);
+    const ajuste = Number(data?.ajuste_manual_deuda || 0);
+    const deudaTotal = Number(data?.deuda_total || 0);
+    const abonado = Number(data?.total_abonado || 0);
+    const saldo = Number(data?.saldo_acumulado || 0);
+    el.innerHTML = `
+        <div class="card" style="padding:12px;border-radius:8px;">
+            <strong>${escapeHtml(label)}:</strong><br>
+            <strong>Semana:</strong> ${escapeHtml(String(data?.semana_inicio || '-'))}<br>
+            <strong>Deuda base:</strong> $${deudaBase.toFixed(2)} MXN<br>
+            <strong>Ajuste manual:</strong> $${ajuste.toFixed(2)} MXN<br>
+            <strong>Deuda total:</strong> $${deudaTotal.toFixed(2)} MXN<br>
+            <strong>Total abonado:</strong> $${abonado.toFixed(2)} MXN<br>
+            <strong>Saldo acumulado:</strong> $${saldo.toFixed(2)} MXN
+        </div>
+    `;
+}
+
+async function consultarDeudaManualAgente(showAlerts = true) {
+    const agenteId = Number(document.getElementById('deudaManualAgenteId')?.value || 0);
+    const semana = document.getElementById('deudaManualSemana')?.value || '';
+    if (!agenteId) {
+        if (showAlerts) alert('Ingresa el ID del agente para consultar deuda manual.');
+        return;
+    }
+    try {
+        const res = await apiClient.getDeudaManualAgente(agenteId, semana);
+        renderDeudaManualResultado(res.data || {}, `Agente ${res.agente?.nombre || agenteId}`);
+    } catch (error) {
+        console.error('Error:', error);
+        if (showAlerts) alert('Error consultando deuda manual: ' + error.message);
+    }
+}
+
+async function aplicarDeudaManualAgente() {
+    const agenteId = Number(document.getElementById('deudaManualAgenteId')?.value || 0);
+    const semana = document.getElementById('deudaManualSemana')?.value || '';
+    const modo = String(document.getElementById('deudaManualModo')?.value || 'saldo_objetivo');
+    const montoRaw = document.getElementById('deudaManualMonto')?.value || '';
+    const monto = Number(montoRaw);
+
+    if (!agenteId) {
+        alert('Ingresa el ID del agente para aplicar ajuste manual.');
+        return;
+    }
+    if (!Number.isFinite(monto)) {
+        alert('Ingresa un monto válido para aplicar ajuste manual.');
+        return;
+    }
+    if (modo === 'saldo_objetivo' && monto < 0) {
+        alert('El saldo objetivo no puede ser negativo.');
+        return;
+    }
+
+    try {
+        const payload = { modo, monto };
+        if (semana) payload.semana = semana;
+        const res = await apiClient.setDeudaManualAgente(agenteId, payload);
+        renderDeudaManualResultado(res.data || {}, 'Ajuste aplicado');
+        alert('Ajuste manual de deuda guardado correctamente.');
+
+        const pagoAgente = document.getElementById('pagoAgenteId');
+        if (pagoAgente && Number(pagoAgente.value || 0) === agenteId) {
+            await consultarResumenPagoActual(false);
+        }
+        if (document.getElementById('qrAgenteId')?.value === String(agenteId)) {
+            await verificarAgenteQR();
+        }
+        await cargarReporteSemanal();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error aplicando ajuste manual de deuda: ' + error.message);
+    }
+}
+
+async function limpiarDeudaManualAgente() {
+    const agenteId = Number(document.getElementById('deudaManualAgenteId')?.value || 0);
+    const semana = document.getElementById('deudaManualSemana')?.value || '';
+    if (!agenteId) {
+        alert('Ingresa el ID del agente para limpiar ajuste manual.');
+        return;
+    }
+    if (!confirm('¿Quitar ajuste manual de deuda para este agente (monto = 0)?')) return;
+    try {
+        const payload = { modo: 'ajuste', monto: 0 };
+        if (semana) payload.semana = semana;
+        const res = await apiClient.setDeudaManualAgente(agenteId, payload);
+        renderDeudaManualResultado(res.data || {}, 'Ajuste limpiado');
+        alert('Ajuste manual limpiado.');
+        const pagoAgente = document.getElementById('pagoAgenteId');
+        if (pagoAgente && Number(pagoAgente.value || 0) === agenteId) {
+            await consultarResumenPagoActual(false);
+        }
+        await cargarReporteSemanal();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error limpiando ajuste manual: ' + error.message);
     }
 }
 

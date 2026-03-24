@@ -223,6 +223,15 @@ class APIClient {
         return this.request('GET', `/qr/pagos/resumen/${agenteId}${qs}`);
     }
 
+    async getDeudaManualAgente(agenteId, semana = '') {
+        const qs = semana ? `?semana=${encodeURIComponent(semana)}` : '';
+        return this.request('GET', `/qr/agentes/${agenteId}/deuda-manual${qs}`);
+    }
+
+    async setDeudaManualAgente(agenteId, payload) {
+        return this.request('PUT', `/qr/agentes/${agenteId}/deuda-manual`, payload);
+    }
+
     async editarPagoSemanalAdmin(pagoId, payload) {
         return this.request('PUT', `/qr/pagos/${pagoId}`, payload);
     }

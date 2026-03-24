@@ -373,6 +373,8 @@ class TestFrontendAssets:
         assert "lineasSection" in html
         assert "lineasGestionContainer" in html
         assert "guardarLineaGestion(event)" in html
+        assert "deudaManualPanel" in html
+        assert "aplicarDeudaManualAgente()" in html
         assert "qrExportIds" in html
         assert "qrExportLayout" in html
         assert "serverVersionInfo" in html
@@ -384,6 +386,8 @@ class TestFrontendAssets:
         assert "async function generarQRAgenteIndividual" in js
         assert "async function guardarLineaGestion" in js
         assert "async function cargarLineasGestion" in js
+        assert "async function aplicarDeudaManualAgente" in js
+        assert "async function consultarDeudaManualAgente" in js
         assert "async function exportarQRLote" in js
         assert "async function loadServerVersionInfo" in js
 
@@ -465,3 +469,53 @@ class TestLineasGestionDebugE2E:
         debug_libre = next((r for r in libres_rows if r.get("id") == linea_id), None)
         print("DEBUG lineas libres:", libres_rows)
         assert debug_libre is not None
+
+
+class TestDeudaManualE2E:
+    @classmethod
+    def setup_class(cls):
+        cls.admin_headers = {"Authorization": f"Bearer {_token('e2e_admin_deuda_manual', 'admin')}"}
+
+    def setup_method(self):
+        _clear_agent_tables()
+
+    def test_control_manual_deuda_consulta_aplica_y_limpia(self):
+        agente = _mk_agente("Deuda Manual")
+
+        inicial = client.get(f"/api/qr/agentes/{agente.id}/deuda-manual", headers=self.admin_headers)
+        assert inicial.status_code == 200, inicial.text
+        data_inicial = inicial.json().get("data", {})
+        assert float(data_inicial.get("ajuste_manual_deuda") or 0) == 0.0
+
+        saldo_objetivo = client.put(
+            f"/api/qr/agentes/{agente.id}/deuda-manual",
+            headers=self.admin_headers,
+            json={"modo": "saldo_objetivo", "monto": 240},
+        )
+        assert saldo_objetivo.status_code == 200, saldo_objetivo.text
+        data_saldo = saldo_objetivo.json().get("data", {})
+        assert float(data_saldo.get("saldo_acumulado") or 0) >= 239.99
+        assert float(data_saldo.get("ajuste_manual_deuda") or 0) >= 239.99
+
+        verificacion = client.get(f"/api/qr/verificar/{agente.id}", headers=self.admin_headers)
+        assert verificacion.status_code == 200, verificacion.text
+        ver = verificacion.json().get("verificacion", {})
+        assert float(ver.get("ajuste_manual_deuda") or 0) >= 239.99
+
+        ajuste_directo = client.put(
+            f"/api/qr/agentes/{agente.id}/deuda-manual",
+            headers=self.admin_headers,
+            json={"modo": "ajuste", "monto": 125},
+        )
+        assert ajuste_directo.status_code == 200, ajuste_directo.text
+        data_ajuste = ajuste_directo.json().get("data", {})
+        assert abs(float(data_ajuste.get("ajuste_manual_deuda") or 0) - 125.0) < 0.01
+
+        limpiar = client.put(
+            f"/api/qr/agentes/{agente.id}/deuda-manual",
+            headers=self.admin_headers,
+            json={"modo": "ajuste", "monto": 0},
+        )
+        assert limpiar.status_code == 200, limpiar.text
+        data_limpio = limpiar.json().get("data", {})
+        assert abs(float(data_limpio.get("ajuste_manual_deuda") or 0)) < 0.01
