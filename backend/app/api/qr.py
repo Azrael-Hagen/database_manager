@@ -267,7 +267,11 @@ def _fetch_extension_source_numbers(db: Session) -> list[str]:
 
 def _sync_extensions_inventory(db: Session) -> dict[str, int]:
     desired_description = _managed_extension_description()
-    source_numbers = _fetch_extension_source_numbers(db)
+    try:
+        source_numbers = _fetch_extension_source_numbers(db)
+    except Exception as exc:
+        logger.warning("No se pudo sincronizar inventario extensions_pbx; se mantiene inventario local activo", exc_info=exc)
+        source_numbers = []
     source_set = set(source_numbers)
     existing_lines = {row.numero: row for row in db.query(LineaTelefonica).all()}
     now = datetime.utcnow()
@@ -422,6 +426,10 @@ def _get_managed_active_line_query(db: Session):
         LineaTelefonica.es_activa.is_(True),
         _managed_extension_filter(),
     )
+
+
+def _get_active_line_query(db: Session):
+    return db.query(LineaTelefonica).filter(LineaTelefonica.es_activa.is_(True))
 
 
 def _render_public_status_page(payload: dict) -> HTMLResponse:
@@ -891,7 +899,7 @@ def _resolve_or_create_line_for_manual_assignment(db: Session, payload: dict) ->
     _sync_extensions_inventory(db)
     linea_id = int((payload or {}).get("linea_id") or 0)
     if linea_id > 0:
-        linea = _get_managed_active_line_query(db).filter(
+        linea = _get_active_line_query(db).filter(
             LineaTelefonica.id == linea_id,
         ).first()
         if not linea:
@@ -900,19 +908,29 @@ def _resolve_or_create_line_for_manual_assignment(db: Session, payload: dict) ->
 
     raw_number = (payload or {}).get("numero_linea_manual")
     numero = _safe_line_number(raw_number)
-    existing = _get_managed_active_line_query(db).filter(LineaTelefonica.numero == numero).first()
+    existing = _get_active_line_query(db).filter(LineaTelefonica.numero == numero).first()
     if not existing:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="La linea indicada no existe en el inventario sincronizado desde extensions_pbx",
+        existing_any = db.query(LineaTelefonica).filter(LineaTelefonica.numero == numero).first()
+        if existing_any:
+            existing_any.es_activa = True
+            db.flush()
+            return existing_any
+        row = LineaTelefonica(
+            numero=numero,
+            tipo="MANUAL",
+            descripcion="Alta manual desde flujo de agente",
+            es_activa=True,
         )
+        db.add(row)
+        db.flush()
+        return row
     return existing
 
 
 def _choose_free_line_automatically(db: Session, lada_objetivo: str | None = None) -> LineaTelefonica | None:
     _sync_extensions_inventory(db)
     active_assignments = _active_line_assignments_map(db)
-    lineas = _get_managed_active_line_query(db).order_by(LineaTelefonica.numero.asc()).all()
+    lineas = _get_active_line_query(db).order_by(LineaTelefonica.numero.asc()).all()
     available = [l for l in lineas if l.id not in active_assignments]
     if not available:
         return None
@@ -1541,7 +1559,7 @@ async def listar_lineas(
     if mode not in {"todas", "libres", "ocupadas"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="estado debe ser: todas, libres u ocupadas")
 
-    query = _get_managed_active_line_query(db)
+    query = _get_active_line_query(db)
     if search:
         term = f"%{search.strip()}%"
         query = query.filter(
@@ -1572,6 +1590,7 @@ async def listar_lineas(
             "numero": linea.numero,
             "tipo": linea.tipo,
             "descripcion": linea.descripcion,
+            "origen": "PBX" if str(linea.descripcion or "").startswith(SYNCED_EXTENSION_PREFIX) else "MANUAL",
             "lada": resolved_lada,
             "ocupada": ocupada,
             "agente": {
@@ -1591,16 +1610,44 @@ async def crear_linea(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Sincronizar/activar una linea del inventario fuente extensions_pbx."""
+    """Crear, reactivar o sincronizar una linea operativa."""
     require_capture_role(current_user)
     numero = _safe_line_number((payload or {}).get("numero", ""))
-    sync_result = _sync_extensions_inventory(db)
-    row = _get_managed_active_line_query(db).filter(LineaTelefonica.numero == numero).first()
-    if not row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="La linea indicada no existe en registro_agentes.extensions_pbx",
+    tipo = str((payload or {}).get("tipo") or "MANUAL").strip().upper() or "MANUAL"
+    descripcion = str((payload or {}).get("descripcion") or "").strip() or None
+    sincronizar = bool((payload or {}).get("sincronizar", True))
+
+    sync_result = _sync_extensions_inventory(db) if sincronizar else {
+        "source": 0,
+        "created": 0,
+        "updated": 0,
+        "deactivated": 0,
+        "ladas_created": 0,
+        "ladas_reactivated": 0,
+    }
+
+    row = db.query(LineaTelefonica).filter(LineaTelefonica.numero == numero).first()
+    created = False
+    reactivated = False
+    if row:
+        if not row.es_activa:
+            row.es_activa = True
+            reactivated = True
+        if tipo:
+            row.tipo = tipo
+        if descripcion is not None:
+            row.descripcion = descripcion
+        row.fecha_actualizacion = datetime.utcnow()
+    else:
+        row = LineaTelefonica(
+            numero=numero,
+            tipo=tipo,
+            descripcion=descripcion,
+            es_activa=True,
         )
+        db.add(row)
+        created = True
+
     db.commit()
     db.refresh(row)
     return {
@@ -1609,9 +1656,63 @@ async def crear_linea(
             "id": row.id,
             "numero": row.numero,
             "tipo": row.tipo,
+            "descripcion": row.descripcion,
+            "origen": "PBX" if str(row.descripcion or "").startswith(SYNCED_EXTENSION_PREFIX) else "MANUAL",
+            "created": created,
+            "reactivated": reactivated,
             "sincronizadas": sync_result["source"],
             "ladas_creadas": sync_result.get("ladas_created", 0),
             "ladas_reactivadas": sync_result.get("ladas_reactivated", 0),
+        },
+    }
+
+
+@router.put("/lineas/{linea_id}")
+async def actualizar_linea(
+    linea_id: int,
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Actualizar metadatos de una linea operativa."""
+    require_capture_role(current_user)
+    _sync_extensions_inventory(db)
+
+    row = db.query(LineaTelefonica).filter(LineaTelefonica.id == linea_id, LineaTelefonica.es_activa.is_(True)).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linea no encontrada")
+
+    raw_numero = (payload or {}).get("numero")
+    new_numero = _safe_line_number(raw_numero) if raw_numero not in (None, "") else row.numero
+    tipo = str((payload or {}).get("tipo") or row.tipo or "MANUAL").strip().upper() or "MANUAL"
+    descripcion = (payload or {}).get("descripcion")
+    if descripcion is not None:
+        descripcion = str(descripcion).strip() or None
+    else:
+        descripcion = row.descripcion
+
+    duplicate = db.query(LineaTelefonica).filter(
+        LineaTelefonica.numero == new_numero,
+        LineaTelefonica.id != linea_id,
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ya existe otra linea con ese numero")
+
+    row.numero = new_numero
+    row.tipo = tipo
+    row.descripcion = descripcion
+    row.fecha_actualizacion = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+
+    return {
+        "status": "success",
+        "data": {
+            "id": row.id,
+            "numero": row.numero,
+            "tipo": row.tipo,
+            "descripcion": row.descripcion,
+            "origen": "PBX" if str(row.descripcion or "").startswith(SYNCED_EXTENSION_PREFIX) else "MANUAL",
         },
     }
 
@@ -1646,7 +1747,7 @@ async def asignar_linea_a_agente(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Debe enviar agente_id")
 
     _sync_extensions_inventory(db)
-    linea = _get_managed_active_line_query(db).filter(
+    linea = _get_active_line_query(db).filter(
         LineaTelefonica.id == linea_id,
     ).first()
     if not linea:
@@ -1705,7 +1806,7 @@ async def liberar_linea(
     agente_id = int((payload or {}).get("agente_id") or 0)
     _sync_extensions_inventory(db)
 
-    linea = _get_managed_active_line_query(db).filter(LineaTelefonica.id == linea_id).first()
+    linea = _get_active_line_query(db).filter(LineaTelefonica.id == linea_id).first()
     if not linea:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linea no encontrada")
 
@@ -1744,7 +1845,7 @@ async def desactivar_linea(
     """Desactivar una linea del inventario (no elimina historial)."""
     require_admin_role(current_user, "Solo administradores pueden desactivar lineas")
     _sync_extensions_inventory(db)
-    linea = _get_managed_active_line_query(db).filter(LineaTelefonica.id == linea_id).first()
+    linea = _get_active_line_query(db).filter(LineaTelefonica.id == linea_id).first()
     if not linea:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Linea no encontrada")
 

@@ -18,10 +18,10 @@ DEFAULT_VERSION_INFO: dict[str, Any] = {
     "channel": "production",
     "current": {
         "version": "1.5.0",
-        "revision": 1,
+        "revision": 5,
         "release_date": "2026-03-23",
         "codename": "Static Agent QR",
-        "summary": "QR estatico por agente y exportacion PDF por lotes",
+        "summary": "Gestion exclusiva de lineas, QR operativo corregido y validacion E2E/debug",
     },
     "history": [],
 }

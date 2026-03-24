@@ -383,6 +383,10 @@ class APIClient {
         return this.request('POST', '/qr/lineas', payload);
     }
 
+    async actualizarLinea(lineaId, payload) {
+        return this.request('PUT', `/qr/lineas/${lineaId}`, payload);
+    }
+
     async syncLineas() {
         return this.request('POST', '/qr/lineas/sync', {});
     }

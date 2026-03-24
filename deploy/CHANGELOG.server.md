@@ -2,6 +2,19 @@
 
 Acceso previsto solo desde la maquina servidor mediante la API interna de versionado.
 
+## 1.5.0-rev5 - 2026-03-23
+- Se agrega seccion exclusiva de Gestion de Lineas con alta/edicion y tabla dedicada.
+- Se habilita actualizacion de lineas por API y soporte de lineas manuales fuera de extensions_pbx.
+- Se corrige UX de botones QR para abrir vista modal consistente en secciones operativas.
+- Se agrega fallback seguro para sincronizacion PBX cuando la tabla legacy no esta disponible.
+- Validacion final: suite completa en verde (45 passed) y prueba debug de flujo de lineas.
+
+## 1.5.0-rev4 - 2026-03-23
+- Se formaliza cierre limpio del bloque de cambios operativos para cobro por linea y estado consolidado.
+- Se verifica entorno de ejecucion con Python 3.14 y dependencias completas en servidor local.
+- Suite de validacion ejecutada en verde: 44 pruebas aprobadas.
+- Se registra trazabilidad tecnica de cierre en checkpoint del mismo dia.
+
 ## 1.5.0-rev3 - 2026-03-23
 - Se aplica flujo operativo de cobro por línea activa por semana ($300 MXN por línea configurable desde cuota base).
 - Se integra captura de primer cobro en asignaciones iniciales (semana de inicio y/o cargo inicial).

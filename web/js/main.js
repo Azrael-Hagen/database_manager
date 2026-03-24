@@ -27,6 +27,8 @@ let currentEditingAgentId = null;
 let currentBackupDir = '';
 let pendingAltaAgentId = null;
 let currentAltasAgents = [];
+let currentLineasGestionRows = [];
+let currentLineaEditId = null;
 let currentTableBrowserState = { database: '', table: '', orderBy: 'id', direction: 'desc', limit: 50 };
 let currentUsuariosRows = [];
 let altasTourActive = false;
@@ -220,7 +222,7 @@ function canAccessSection(section) {
     const role = getCurrentRole();
     if (role === 'super_admin' || role === 'admin') return true;
     if (role === 'capture') {
-        return ['dashboard', 'datos', 'importar', 'altasAgentes', 'estadoAgentes', 'alertas'].includes(section);
+        return ['dashboard', 'datos', 'importar', 'altasAgentes', 'lineas', 'estadoAgentes', 'alertas'].includes(section);
     }
     return ['dashboard', 'datos', 'alertas'].includes(section);
 }
@@ -242,6 +244,7 @@ function applyRoleBasedUI() {
         databases: canAdmin(),
         importar: canCapture(),
         altasAgentes: canCapture(),
+        lineas: canCapture(),
         cambiosBajas: canAdmin(),
         qrScan: canAdmin(),
         qr: canAdmin(),
@@ -627,7 +630,7 @@ async function validarSesionActiva() {
 
 // === AUTENTICACIÓN ===
 function showLogin() {
-    const ids = ['loginSection', 'registerSection', 'dashboardSection', 'datosSection', 'databasesSection', 'importarSection', 'altasAgentesSection', 'cambiosBajasSection', 'qrSection', 'usuariosSection', 'auditoriaSection', 'estadoAgentesSection', 'alertasSection'];
+    const ids = ['loginSection', 'registerSection', 'dashboardSection', 'datosSection', 'databasesSection', 'importarSection', 'altasAgentesSection', 'lineasSection', 'cambiosBajasSection', 'qrSection', 'usuariosSection', 'auditoriaSection', 'estadoAgentesSection', 'alertasSection'];
     ids.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = id === 'loginSection' ? 'block' : 'none';
@@ -1042,6 +1045,8 @@ function loadSection(section, eventRef = null) {
     document.getElementById('databasesSection').style.display = 'none';
     document.getElementById('importarSection').style.display = 'none';
     document.getElementById('altasAgentesSection').style.display = 'none';
+    const _lineasEl = document.getElementById('lineasSection');
+    if (_lineasEl) _lineasEl.style.display = 'none';
     document.getElementById('cambiosBajasSection').style.display = 'none';
     document.getElementById('qrScanSection').style.display = 'none';
     document.getElementById('qrSection').style.display = 'none';
@@ -1075,6 +1080,10 @@ function loadSection(section, eventRef = null) {
             document.getElementById('altasAgentesSection').style.display = 'block';
             cargarLineasYAgentes();
             maybeAutoStartAltasTour();
+            break;
+        case 'lineas':
+            document.getElementById('lineasSection').style.display = 'block';
+            cargarLineasGestion();
             break;
         case 'cambiosBajas':
             document.getElementById('cambiosBajasSection').style.display = 'block';
@@ -1561,6 +1570,7 @@ async function mostrarQrParaAgente(agenteId, agenteName) {
         
     } catch (error) {
         console.error('Error mostrando QR:', error);
+        alert('No se pudo mostrar el QR: ' + error.message);
     }
 }
 
@@ -1630,11 +1640,7 @@ function mostrarDatos(datos) {
             
             // Si es agente y tiene QR, mostrar botón para verlo
             if (isAgentTable) {
-                if (hasQr) {
-                    actionHtml += `<button onclick="mostrarQrParaAgente(${fila.id}, '${(fila.nombre || 'Agente').replace(/'/g, "\\'")}'); return false;" class="btn btn-small btn-secondary" title="${qrTitle}"><span title="${qrTitle}">${qrIndicator}</span> QR</button>`;
-                } else {
-                    actionHtml += `<button onclick="previsualizarQrAlta(${fila.id})" class="btn btn-small btn-secondary" title="Generar QR">⭕ QR</button>`;
-                }
+                actionHtml += `<button onclick="mostrarQrParaAgente(${fila.id}, '${(fila.nombre || 'Agente').replace(/'/g, "\\'")}'); return false;" class="btn btn-small btn-secondary" title="${qrTitle}"><span title="${qrTitle}">${qrIndicator}</span> QR</button>`;
             }
             
             if (canAdmin()) {
@@ -1826,6 +1832,11 @@ function previsualizarQrGestion(agenteId) {
         navigateSection: null,
         setQrForm: false,
     });
+}
+
+async function sincronizarLineasPBXDesdeGestion() {
+    await sincronizarLineasPBX({ preventDefault: () => {} });
+    await cargarLineasGestion();
 }
 
 function getActiveQrScannerId() {
@@ -2373,9 +2384,13 @@ function renderLineasEstado(lineas) {
         const ocupada = !!linea.ocupada;
         const agente = linea.agente?.nombre ? `${linea.agente.nombre} (ID ${linea.agente.id})` : '-';
         const estado = ocupada ? '<span class="payment-pill unpaid">OCUPADA</span>' : '<span class="payment-pill paid">LIBRE</span>';
-        const action = ocupada
-            ? `<button class="btn btn-small btn-danger" onclick="liberarLinea(${linea.id})">Liberar</button>`
-            : '<span class="hint">Disponible</span>';
+        const actions = [];
+        if (ocupada) {
+            actions.push(`<button class="btn btn-small btn-danger" onclick="liberarLinea(${linea.id})">Liberar</button>`);
+        } else {
+            actions.push('<span class="hint">Disponible</span>');
+        }
+        actions.push(`<button class="btn btn-small btn-secondary" onclick="abrirGestionLinea(${linea.id})">Editar</button>`);
         html += `<tr>
             <td>${linea.id}</td>
             <td>${linea.numero}</td>
@@ -2383,11 +2398,181 @@ function renderLineasEstado(lineas) {
             <td>${linea.tipo || '-'}</td>
             <td>${estado}</td>
             <td>${agente}</td>
-            <td>${action}</td>
+            <td>${actions.join(' ')}</td>
         </tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;
+}
+
+function abrirGestionLinea(lineaId) {
+    currentLineaEditId = Number(lineaId) || null;
+    loadSection('lineas');
+}
+
+function limpiarFormularioLineaGestion() {
+    currentLineaEditId = null;
+    const lineaId = document.getElementById('lineaGestionId');
+    const numero = document.getElementById('lineaGestionNumero');
+    const tipo = document.getElementById('lineaGestionTipo');
+    const descripcion = document.getElementById('lineaGestionDescripcion');
+    const result = document.getElementById('lineaGestionResult');
+    if (lineaId) lineaId.value = '';
+    if (numero) numero.value = '';
+    if (tipo) tipo.value = 'MANUAL';
+    if (descripcion) descripcion.value = '';
+    if (result) result.innerHTML = '';
+}
+
+function renderLineasGestion(lineas) {
+    const container = document.getElementById('lineasGestionContainer');
+    if (!container) return;
+    if (!Array.isArray(lineas) || !lineas.length) {
+        container.innerHTML = '<p class="hint">No hay líneas para mostrar.</p>';
+        return;
+    }
+
+    let html = '<table class="data-table"><thead><tr>';
+    html += '<th>ID</th><th>Número</th><th>Lada</th><th>Tipo</th><th>Origen</th><th>Descripción</th><th>Estado</th><th>Agente</th><th>Acciones</th>';
+    html += '</tr></thead><tbody>';
+
+    lineas.forEach(linea => {
+        const ocupada = !!linea.ocupada;
+        const agente = linea.agente?.nombre ? `${linea.agente.nombre} (ID ${linea.agente.id})` : '-';
+        const estado = ocupada ? '<span class="payment-pill unpaid">OCUPADA</span>' : '<span class="payment-pill paid">LIBRE</span>';
+        const origen = String(linea.origen || 'MANUAL').toUpperCase();
+        const actions = [];
+        actions.push(`<button type="button" class="btn btn-small" onclick="editarLineaGestion(${linea.id})">Editar</button>`);
+        if (ocupada) {
+            actions.push(`<button type="button" class="btn btn-small btn-danger" onclick="liberarLinea(${linea.id})">Liberar</button>`);
+            if (linea.agente?.id) {
+                actions.push(`<button type="button" class="btn btn-small btn-secondary" onclick="mostrarQrParaAgente(${linea.agente.id}, '${String(linea.agente.nombre || 'Agente').replace(/'/g, "\\'")}')">QR Agente</button>`);
+            }
+        } else {
+            actions.push(`<button type="button" class="btn btn-small btn-secondary" onclick="desactivarLineaGestion(${linea.id})">Desactivar</button>`);
+        }
+
+        html += `<tr>
+            <td>${linea.id}</td>
+            <td>${escapeHtml(linea.numero || '-')}</td>
+            <td>${escapeHtml(linea.lada || '-')}</td>
+            <td>${escapeHtml(linea.tipo || '-')}</td>
+            <td>${escapeHtml(origen)}</td>
+            <td>${escapeHtml(linea.descripcion || '-')}</td>
+            <td>${estado}</td>
+            <td>${escapeHtml(agente)}</td>
+            <td>${actions.join(' ')}</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+function editarLineaGestion(lineaId) {
+    const linea = currentLineasGestionRows.find(item => Number(item.id) === Number(lineaId));
+    if (!linea) {
+        alert('No se encontró la línea en el listado actual.');
+        return;
+    }
+    currentLineaEditId = Number(linea.id);
+    const lineaIdEl = document.getElementById('lineaGestionId');
+    const numero = document.getElementById('lineaGestionNumero');
+    const tipo = document.getElementById('lineaGestionTipo');
+    const descripcion = document.getElementById('lineaGestionDescripcion');
+    if (lineaIdEl) lineaIdEl.value = String(linea.id);
+    if (numero) numero.value = String(linea.numero || '');
+    if (tipo) tipo.value = String(linea.tipo || 'MANUAL').toUpperCase();
+    if (descripcion) descripcion.value = String(linea.descripcion || '');
+    numero?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function guardarLineaGestion(e) {
+    e.preventDefault();
+    const lineaId = Number(document.getElementById('lineaGestionId')?.value || currentLineaEditId || 0);
+    const numero = document.getElementById('lineaGestionNumero')?.value.trim();
+    const tipo = document.getElementById('lineaGestionTipo')?.value || 'MANUAL';
+    const descripcion = document.getElementById('lineaGestionDescripcion')?.value.trim() || '';
+    const result = document.getElementById('lineaGestionResult');
+
+    if (!numero) {
+        alert('El número de línea es obligatorio.');
+        return;
+    }
+
+    const payload = {
+        numero,
+        tipo,
+        descripcion,
+        sincronizar: true,
+    };
+
+    try {
+        if (lineaId > 0) {
+            await apiClient.actualizarLinea(lineaId, payload);
+            if (result) result.innerHTML = '<p style="color:green;">Línea actualizada correctamente.</p>';
+        } else {
+            await apiClient.crearLinea(payload);
+            if (result) result.innerHTML = '<p style="color:green;">Línea creada/reactivada correctamente.</p>';
+        }
+        limpiarFormularioLineaGestion();
+        await cargarLineasYAgentes();
+        await cargarLineasGestion();
+    } catch (error) {
+        console.error('Error:', error);
+        if (result) result.innerHTML = `<p style="color:red;">Error: ${escapeHtml(error.message)}</p>`;
+        alert('Error guardando línea: ' + error.message);
+    }
+}
+
+async function desactivarLineaGestion(lineaId) {
+    if (!confirm('¿Desactivar esta línea?')) return;
+    try {
+        await apiClient.desactivarLinea(lineaId);
+        await cargarLineasYAgentes();
+        await cargarLineasGestion();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error desactivando línea: ' + error.message);
+    }
+}
+
+async function cargarLineasGestion() {
+    const container = document.getElementById('lineasGestionContainer');
+    if (!container) return;
+    try {
+        const search = (document.getElementById('lineasGestionSearch')?.value || '').trim();
+        const lada = (document.getElementById('lineasGestionLada')?.value || '').trim();
+        const estado = (document.getElementById('lineasGestionEstado')?.value || 'todas').trim() || 'todas';
+        const [lineasRes, ladasRes] = await Promise.all([
+            apiClient.getLineas(search, false, lada, estado),
+            apiClient.getLadas(''),
+        ]);
+        const lineas = Array.isArray(lineasRes?.data) ? lineasRes.data : [];
+        currentLineasGestionRows = lineas;
+        renderLineasGestion(lineas);
+
+        const ladas = Array.isArray(ladasRes?.data) ? ladasRes.data : [];
+        const ladaSelect = document.getElementById('lineasGestionLada');
+        if (ladaSelect) {
+            const prev = ladaSelect.value;
+            let html = '<option value="">-- Todas las ladas --</option>';
+            ladas.forEach(l => {
+                html += `<option value="${l.codigo}">${l.codigo}${l.nombre_region ? ` - ${l.nombre_region}` : ''}</option>`;
+            });
+            ladaSelect.innerHTML = html;
+            if (prev && ladas.some(l => l.codigo === prev)) {
+                ladaSelect.value = prev;
+            }
+        }
+
+        if (currentLineaEditId) {
+            editarLineaGestion(currentLineaEditId);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        container.innerHTML = `<p style="color:red;">Error cargando líneas: ${escapeHtml(error.message)}</p>`;
+    }
 }
 
 function getAgentExtras(agent) {
@@ -2494,7 +2679,7 @@ function renderGestionAgentes(agentes) {
             <td>${ladas}</td>
             <td>
                 <button onclick="editarAgenteGestion(${agent.id})" class="btn btn-small">Editar</button>
-                <button onclick="previsualizarQrGestion(${agent.id})" class="btn btn-small btn-secondary">QR</button>
+                <button onclick="mostrarQrParaAgente(${agent.id}, '${String(agent.nombre || 'Agente').replace(/'/g, "\\'")}')" class="btn btn-small btn-secondary">QR</button>
                 <button onclick="irAAsignacionLineaAgente(${agent.id})" class="btn btn-small btn-secondary" title="Asignar o cambiar línea">📞 Línea</button>
                 <button onclick="liberarLineasAgente(${agent.id})" class="btn btn-small btn-secondary">Liberar líneas</button>
                 <button onclick="darBajaAgente(${agent.id})" class="btn btn-small btn-danger">Baja</button>
@@ -2710,6 +2895,9 @@ async function cargarLineasYAgentes() {
         }
 
         renderLineasEstado(lineas);
+        if (currentSection === 'lineas') {
+            renderLineasGestion(lineas);
+        }
         cambiarModoAsignacionAgente();
     } catch (error) {
         console.error('Error:', error);
@@ -4450,7 +4638,7 @@ async function cargarEstadoAgentes() {
                 <td style="${qrClass}">${tieneQr}</td>
                 <td>${escapeHtml(alta)}</td>
                 <td>
-                    <button type="button" class="btn btn-small" onclick="generarQRAgenteIndividual(${ag.id})" title="Generar y ver código QR de este agente">&#128247; QR</button>
+                    <button type="button" class="btn btn-small" onclick="mostrarQrParaAgente(${ag.id}, '${String(ag.nombre || 'Agente').replace(/'/g, "\\'")}')" title="Generar y ver código QR de este agente">&#128247; QR</button>
                     <button type="button" class="btn btn-small btn-secondary" onclick="loadSection('altasAgentes')" title="Ir a Altas para asignar línea">&#128222; Línea</button>
                 </td>
             </tr>`;
@@ -4485,18 +4673,9 @@ async function generarQRMasivo() {
 }
 
 async function generarQRAgenteIndividual(agenteId) {
-    const result = document.getElementById('estadoAgentesResult');
-    if (result) result.innerHTML = '<p class="hint">Generando QR...</p>';
-    try {
-        return await generarQrIndividualEnContexto(agenteId, {
-            resultContainerId: 'estadoAgentesResult',
-            qrContainerId: 'estadoAgentesQrPreview',
-            navigateSection: null,
-            setQrForm: false,
-        });
-    } catch (err) {
-        if (result) result.innerHTML = `<p style="color:red;">Error al generar QR: ${escapeHtml(err.message)}</p>`;
-    }
+    const rows = Array.isArray(currentAgentManagementRows) ? currentAgentManagementRows : [];
+    const found = rows.find(item => Number(item.id) === Number(agenteId));
+    return mostrarQrParaAgente(agenteId, found?.nombre || 'Agente');
 }
 
 // === GESTIÓN DE USUARIOS ===

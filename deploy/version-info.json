@@ -3,12 +3,35 @@
   "channel": "production",
   "current": {
     "version": "1.5.0",
-    "revision": 3,
+    "revision": 5,
     "release_date": "2026-03-23",
     "codename": "Static Agent QR",
-    "summary": "Cobro semanal por linea con estado consolidado por agente y filtros de ocupacion"
+    "summary": "Gestion exclusiva de lineas, QR operativo corregido y validacion E2E/debug"
   },
   "history": [
+    {
+      "version": "1.5.0",
+      "revision": 5,
+      "release_date": "2026-03-23",
+      "codename": "Static Agent QR",
+      "changes": [
+        "Se agrega seccion dedicada para alta, edicion y tabla exclusiva de lineas operativas.",
+        "Se corrigen botones QR para mostrar modal visible y consistente en secciones operativas.",
+        "Se habilita gestion manual de lineas con fallback seguro cuando no existe fuente legacy PBX.",
+        "Se valida coherencia end-to-end y se agrega prueba debug de flujo de lineas."
+      ]
+    },
+    {
+      "version": "1.5.0",
+      "revision": 4,
+      "release_date": "2026-03-23",
+      "codename": "Static Agent QR",
+      "changes": [
+        "Se cierra el bloque operativo dejando el proyecto limpio y estable para continuidad.",
+        "Se valida la suite completa con entorno Python 3.14 (44 pruebas en verde).",
+        "Se documenta el cierre en changelog y checkpoint tecnico para trazabilidad de soporte."
+      ]
+    },
     {
       "version": "1.5.0",
       "revision": 3,

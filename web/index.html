@@ -46,6 +46,7 @@
             <li><a href="#" onclick="loadSection('databases', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-server-4417119_116634.ico" alt="">Bases de Datos</a></li>
             <li><a href="#" onclick="loadSection('importar', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-download-4341287_120571.ico" alt="">Importar</a></li>
             <li><a href="#" onclick="loadSection('altasAgentes', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-check-4341282_120572.ico" alt="">Altas de Agentes</a></li>
+            <li><a href="#" onclick="loadSection('lineas', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-ring-4341316_120544.ico" alt="">Gestión de Líneas</a></li>
             <li><a href="#" onclick="loadSection('cambiosBajas', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-settings-4341324_120534.ico" alt="">Cambios y Bajas</a></li>
             <li><a href="#" onclick="loadSection('qrScan', event)" class="menu-item"><img class="menu-icon" src="sources/iconfinder-security-4341326_120558.ico" alt="">Escaneo QR</a></li>
             <li><a href="#" onclick="loadSection('qr', event)" class="menu-item"><img class="menu-icon" src="sources/map_98439.ico" alt="">Generar QR</a></li>
@@ -431,6 +432,48 @@
                 </div>
                 <p class="hint">Costo base operativo: <strong>$300.00 MXN por línea por semana</strong>. Un agente puede tener una o más líneas y mantiene un solo QR.</p>
                 <div id="lineasEstadoContainer" class="table-responsive" style="margin-top: 12px;"></div>
+            </section>
+
+            <section id="lineasSection" class="panel" style="display: none;">
+                <h1>Gestión de Líneas</h1>
+                <p class="hint">Sección exclusiva de líneas: alta/reactivación, edición operativa, liberación y baja lógica. Esta vista consulta inventario real persistido en BD.</p>
+
+                <h3 style="margin-top: 14px;">Alta / Edición de Línea</h3>
+                <form onsubmit="guardarLineaGestion(event)">
+                    <input type="hidden" id="lineaGestionId">
+                    <div class="search-bar">
+                        <input type="text" id="lineaGestionNumero" placeholder="Número de línea" required>
+                        <select id="lineaGestionTipo">
+                            <option value="MANUAL">MANUAL</option>
+                            <option value="VOIP">VOIP</option>
+                            <option value="CELULAR">CELULAR</option>
+                            <option value="EXT_PBX">EXT_PBX</option>
+                            <option value="OTRA">OTRA</option>
+                        </select>
+                        <input type="text" id="lineaGestionDescripcion" placeholder="Descripción opcional">
+                    </div>
+                    <div class="search-bar" style="margin-top:8px;">
+                        <button type="submit" class="btn">Guardar Línea</button>
+                        <button type="button" class="btn btn-secondary" onclick="limpiarFormularioLineaGestion()">Limpiar Formulario</button>
+                        <button type="button" class="btn btn-secondary" onclick="sincronizarLineasPBXDesdeGestion()">Sincronizar PBX</button>
+                    </div>
+                </form>
+                <div id="lineaGestionResult" style="margin-top:8px;"></div>
+
+                <h3 style="margin-top: 18px;">Tabla Exclusiva de Líneas</h3>
+                <div class="search-bar" style="margin-top:8px;">
+                    <input type="text" id="lineasGestionSearch" placeholder="Buscar número/tipo/descripción" oninput="cargarLineasGestion()">
+                    <select id="lineasGestionLada" onchange="cargarLineasGestion()">
+                        <option value="">-- Todas las ladas --</option>
+                    </select>
+                    <select id="lineasGestionEstado" onchange="cargarLineasGestion()">
+                        <option value="todas">Todas</option>
+                        <option value="libres">Solo libres</option>
+                        <option value="ocupadas">Solo ocupadas</option>
+                    </select>
+                    <button type="button" class="btn btn-secondary" onclick="cargarLineasGestion()">Refrescar</button>
+                </div>
+                <div id="lineasGestionContainer" class="table-responsive" style="margin-top: 12px;"></div>
             </section>
 
             <section id="cambiosBajasSection" class="panel" style="display: none;">

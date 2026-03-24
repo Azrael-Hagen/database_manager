@@ -370,6 +370,9 @@ class TestFrontendAssets:
         assert "estadoAgentesSearch" in html
         assert "estadoAgentesContainer" in html
         assert "generarQRMasivo()" in html
+        assert "lineasSection" in html
+        assert "lineasGestionContainer" in html
+        assert "guardarLineaGestion(event)" in html
         assert "qrExportIds" in html
         assert "qrExportLayout" in html
         assert "serverVersionInfo" in html
@@ -379,12 +382,16 @@ class TestFrontendAssets:
         assert "async function cargarEstadoAgentes" in js
         assert "async function generarQRMasivo" in js
         assert "async function generarQRAgenteIndividual" in js
+        assert "async function guardarLineaGestion" in js
+        assert "async function cargarLineasGestion" in js
         assert "async function exportarQRLote" in js
         assert "async function loadServerVersionInfo" in js
 
     def test_js_tiene_wiring_menu_dashboard(self):
         js = open(_MAIN_JS, encoding="utf-8").read()
         assert "case 'estadoAgentes'" in js
+        assert "case 'lineas'" in js
+        assert "lineas: canCapture()" in js
         assert "estadoAgentes: canCapture()" in js
         assert "totals.sin_linea" in js
 
@@ -394,3 +401,67 @@ class TestFrontendAssets:
         assert ".menu-badge-warning" in css
         assert ".estado-agentes-banner" in css
         assert ".btn-warning" in css
+
+
+class TestLineasGestionDebugE2E:
+    @classmethod
+    def setup_class(cls):
+        cls.capture_headers = {"Authorization": f"Bearer {_token('e2e_capture_lineas', 'capture')}"}
+        cls.admin_headers = {"Authorization": f"Bearer {_token('e2e_admin_lineas', 'admin')}"}
+
+    def setup_method(self):
+        _clear_agent_tables()
+
+    def test_debug_flujo_lineas_crear_editar_asignar_y_listar(self):
+        agente = _mk_agente("Debug Lineas")
+
+        crear = client.post(
+            "/api/qr/lineas",
+            headers=self.capture_headers,
+            json={
+                "numero": "7771001",
+                "tipo": "MANUAL",
+                "descripcion": "Linea debug inicial",
+                "sincronizar": False,
+            },
+        )
+        assert crear.status_code == 200, crear.text
+        linea = crear.json()["data"]
+        linea_id = linea["id"]
+
+        editar = client.put(
+            f"/api/qr/lineas/{linea_id}",
+            headers=self.capture_headers,
+            json={
+                "numero": "7771001",
+                "tipo": "VOIP",
+                "descripcion": "Linea debug editada",
+            },
+        )
+        assert editar.status_code == 200, editar.text
+        assert editar.json()["data"]["tipo"] == "VOIP"
+
+        asignar = client.post(
+            f"/api/qr/lineas/{linea_id}/asignar",
+            headers=self.capture_headers,
+            json={"agente_id": agente.id},
+        )
+        assert asignar.status_code == 200, asignar.text
+
+        ocupadas = client.get("/api/qr/lineas?estado=ocupadas", headers=self.capture_headers)
+        assert ocupadas.status_code == 200, ocupadas.text
+        rows = ocupadas.json().get("data", [])
+        debug_row = next((r for r in rows if r.get("id") == linea_id), None)
+        print("DEBUG lineas ocupadas:", rows)
+        assert debug_row is not None
+        assert debug_row.get("agente", {}).get("id") == agente.id
+
+        liberar = client.post(f"/api/qr/lineas/{linea_id}/liberar", headers=self.admin_headers, json={})
+        assert liberar.status_code == 200, liberar.text
+
+        libres = client.get("/api/qr/lineas?estado=libres", headers=self.capture_headers)
+        assert libres.status_code == 200, libres.text
+        libres_rows = libres.json().get("data", [])
+        debug_libre = next((r for r in libres_rows if r.get("id") == linea_id), None)
+        print("DEBUG lineas libres:", libres_rows)
+        assert debug_libre is not None
