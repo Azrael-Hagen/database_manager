@@ -141,11 +141,120 @@
         });
     }
 
+    function showAppConfirm(message, options = {}) {
+        return new Promise((resolve) => {
+            const tone = String(options.tone || 'warning').trim().toLowerCase();
+            const title = String(options.title || 'Confirmar acción');
+            const msgText = String(message || '').trim();
+            const detail = String(options.detail || '').trim();
+            const acceptText = String(options.acceptText || 'Aceptar');
+            const cancelText = String(options.cancelText || 'Cancelar');
+
+            const backdrop = document.createElement('div');
+            backdrop.className = 'app-alert-backdrop visible';
+            backdrop.innerHTML = `
+                <div class="app-alert-modal ${escapeHtml(tone)}" role="alertdialog" aria-modal="true">
+                    <div class="app-alert-header">
+                        <div class="app-alert-badge">Confirmar</div>
+                        <button type="button" class="app-alert-close" aria-label="Cerrar">×</button>
+                    </div>
+                    <h3 class="app-alert-title">${escapeHtml(title)}</h3>
+                    <div class="app-alert-message"><p>${escapeHtml(msgText)}</p></div>
+                    ${detail ? `<div class="app-alert-detail">${escapeHtml(detail)}</div>` : ''}
+                    <div class="app-alert-actions app-confirm-actions">
+                        <button type="button" class="btn btn-secondary" data-result="false">${escapeHtml(cancelText)}</button>
+                        <button type="button" class="btn" data-result="true">${escapeHtml(acceptText)}</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(backdrop);
+
+            const closeAndResolve = (value) => {
+                document.removeEventListener('keydown', keyHandler);
+                backdrop.remove();
+                resolve(value);
+            };
+
+            const keyHandler = (e) => {
+                if (e.key === 'Escape') closeAndResolve(false);
+                if (e.key === 'Enter') closeAndResolve(true);
+            };
+
+            backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeAndResolve(false); });
+            backdrop.querySelector('[data-result="true"]')?.addEventListener('click', () => closeAndResolve(true));
+            backdrop.querySelector('[data-result="false"]')?.addEventListener('click', () => closeAndResolve(false));
+            backdrop.querySelector('.app-alert-close')?.addEventListener('click', () => closeAndResolve(false));
+            document.addEventListener('keydown', keyHandler);
+            backdrop.querySelector('[data-result="true"]')?.focus();
+        });
+    }
+
+    function showAppPrompt(message, options = {}) {
+        return new Promise((resolve) => {
+            const tone = String(options.tone || 'info').trim().toLowerCase();
+            const title = String(options.title || 'Ingresa un valor');
+            const msgText = String(message || '').trim();
+            const detail = String(options.detail || '').trim();
+            const placeholder = String(options.placeholder || '');
+            const defaultValue = String(options.defaultValue || '');
+            const acceptText = String(options.acceptText || 'Aceptar');
+            const cancelText = String(options.cancelText || 'Cancelar');
+            const type = ['text', 'password', 'number', 'email'].includes(options.type) ? options.type : 'text';
+
+            const backdrop = document.createElement('div');
+            backdrop.className = 'app-alert-backdrop visible';
+            backdrop.innerHTML = `
+                <div class="app-alert-modal ${escapeHtml(tone)}" role="alertdialog" aria-modal="true">
+                    <div class="app-alert-header">
+                        <div class="app-alert-badge">Entrada</div>
+                        <button type="button" class="app-alert-close" aria-label="Cerrar">×</button>
+                    </div>
+                    <h3 class="app-alert-title">${escapeHtml(title)}</h3>
+                    <div class="app-alert-message"><p>${escapeHtml(msgText)}</p></div>
+                    ${detail ? `<div class="app-alert-detail">${escapeHtml(detail)}</div>` : ''}
+                    <div class="app-prompt-input-wrap">
+                        <input type="${escapeHtml(type)}" class="app-prompt-input"
+                               placeholder="${escapeHtml(placeholder)}"
+                               value="${escapeHtml(defaultValue)}"
+                               autocomplete="off" />
+                    </div>
+                    <div class="app-alert-actions app-confirm-actions">
+                        <button type="button" class="btn btn-secondary" data-result="cancel">${escapeHtml(cancelText)}</button>
+                        <button type="button" class="btn" data-result="accept">${escapeHtml(acceptText)}</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(backdrop);
+            const input = backdrop.querySelector('.app-prompt-input');
+
+            const closeAndResolve = (value) => {
+                document.removeEventListener('keydown', keyHandler);
+                backdrop.remove();
+                resolve(value);
+            };
+
+            const keyHandler = (e) => {
+                if (e.key === 'Escape') closeAndResolve(null);
+                if (e.key === 'Enter') closeAndResolve(input?.value ?? null);
+            };
+
+            backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeAndResolve(null); });
+            backdrop.querySelector('[data-result="cancel"]')?.addEventListener('click', () => closeAndResolve(null));
+            backdrop.querySelector('[data-result="accept"]')?.addEventListener('click', () => closeAndResolve(input?.value ?? null));
+            backdrop.querySelector('.app-alert-close')?.addEventListener('click', () => closeAndResolve(null));
+            document.addEventListener('keydown', keyHandler);
+            input?.focus();
+            input?.select();
+        });
+    }
+
     global.AppUtils = {
         escapeHtml,
         getErrorMessage,
         ensureAppAlertRoot,
         showAppAlert,
+        showAppConfirm,
+        showAppPrompt,
         formatDateTimeSafe,
         toDateTimeLocalValue,
         formatDisplayDateTime,

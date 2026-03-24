@@ -163,6 +163,14 @@ function showAppAlert(message, options = {}) {
     return window.AppUtils.showAppAlert(message, options);
 }
 
+function showAppConfirm(message, options = {}) {
+    return window.AppUtils.showAppConfirm(message, options);
+}
+
+function showAppPrompt(message, options = {}) {
+    return window.AppUtils.showAppPrompt(message, options);
+}
+
 function formatDateTimeSafe(value) {
     return window.AppUtils.formatDateTimeSafe(value);
 }
@@ -680,7 +688,7 @@ function showApp() {
     syncRealtimeControls();
     loadSection('dashboard');
     startRealtimeUpdates();
-    refreshAlertBadgeAndNotify(true);
+    refreshAlertBadgeAndNotify(false);
     setTimeout(() => {
         applyQrDeepLinkIfPresent().catch((err) => console.warn('Deep link QR no aplicado:', err?.message || err));
     }, 120);
@@ -1478,7 +1486,6 @@ async function cargarTodosLosDatos() {
             rows = rows.filter(row => Object.values(row).some(v => String(v ?? '').toLowerCase().includes(s)));
         }
         mostrarDatos(rows);
-        alert(`Mostrando ${rows.length} registros de ${dbName}.${tableName}`);
     } catch (error) {
         console.error('Error:', error);
         alert('Error al cargar todos los datos: ' + error.message);
@@ -1536,48 +1543,24 @@ async function mostrarQrParaAgente(agenteId, agenteName) {
         const result = await apiClient.getQrAgente(agenteId);
         const data = result.data || {};
         
-        // Crear modal o panel para mostrar el QR
+        // Crear modal para mostrar el QR con estilos unificados de la aplicacion
         const modal = document.createElement('div');
         modal.className = 'modal-overlay-qr';
-        modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0,0,0,0.7);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 10000;
-            animation: fadeIn 0.3s ease-in;
-        `;
         
         const content = document.createElement('div');
         content.className = 'modal-content-qr';
-        content.style.cssText = `
-            background: white;
-            border-radius: 12px;
-            padding: 30px;
-            max-width: 500px;
-            width: 90%;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-            position: relative;
-            animation: slideUp 0.3s ease-out;
-        `;
         
         content.innerHTML = `
-            <button type="button" class="close-modal-qr" onclick="this.closest('.modal-overlay-qr').remove()" 
-                    style="position: absolute; top: 12px; right: 12px; background: none; border: none; font-size: 28px; cursor: pointer; color: #999;">
+            <button type="button" class="close-modal-qr" onclick="this.closest('.modal-overlay-qr').remove()">
                 ✕
             </button>
-            <h2 style="margin-top: 0; color: #333; text-align: center;">QR del Agente</h2>
-            <p style="text-align: center; color: #666; margin: 10px 0;">
+            <h2>QR del Agente</h2>
+            <p class="qr-modal-meta">
                 <strong>${agenteName}</strong><br>
-                <span style="font-size: 0.9em; color: #999;">ID: ${agenteId}</span>
+                <span>ID: ${agenteId}</span>
             </p>
-            <div id="qr-preview-container" style="text-align: center; margin: 20px 0; padding: 20px; background: #f9f9f9; border-radius: 8px;"></div>
-            <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+            <div id="qr-preview-container" class="qr-modal-preview"></div>
+            <div class="qr-modal-actions">
                 <button type="button" class="btn btn-secondary" onclick="descargarQrAgente(${agenteId})">
                     📥 Descargar PNG
                 </button>
@@ -1585,8 +1568,8 @@ async function mostrarQrParaAgente(agenteId, agenteName) {
                     📋 Copiar URL
                 </button>
             </div>
-            <p style="text-align: center; font-size: 0.85em; color: #999; margin-top: 15px;">
-                ${data.public_url ? `<a href="${data.public_url}" target="_blank" style="color: #0066cc; text-decoration: none;">Abrir en navegador ↗</a>` : 'URL no disponible'}
+            <p class="qr-modal-link">
+                ${data.public_url ? `<a href="${data.public_url}" target="_blank">Abrir en navegador ↗</a>` : 'URL no disponible'}
             </p>
         `;
         
@@ -1695,9 +1678,9 @@ async function editarDato(id, uuid = '') {
         alert('Solo administradores pueden editar registros existentes.');
         return;
     }
-    const nuevoValor = prompt('Nuevo nombre del agente:');
+    const nuevoValor = await showAppPrompt('Ingresa el nuevo nombre del agente:', { title: 'Editar nombre del agente', placeholder: 'Nombre completo' });
     if (!nuevoValor) return;
-    const esActivo = confirm('¿Debe quedar ACTIVO este agente?\nAceptar = activo / Cancelar = inactivo');
+    const esActivo = await showAppConfirm('¿Debe quedar ACTIVO este agente?', { title: 'Estado del agente', acceptText: 'Activo', cancelText: 'Inactivo', tone: 'info' });
 
     try {
         let targetId = id;
@@ -1721,7 +1704,6 @@ async function editarDato(id, uuid = '') {
         });
 
         if (response.ok) {
-            alert('Dato actualizado');
             buscarDatos();
             return;
         }
@@ -1738,10 +1720,10 @@ async function eliminarDatoDefinitivo(id) {
         alert('Solo super administradores pueden eliminar definitivamente.');
         return;
     }
-    if (!confirm('⚠️ ADVERTENCIA: Esto eliminará el registro y sus dependencias de forma PERMANENTE.\n¿Desea continuar con la primera confirmación?')) return;
-    const confirmacion = prompt('Para confirmar, escribe la palabra CONFIRMAR:');
+    if (!(await showAppConfirm('Esto eliminará el registro y sus dependencias de forma PERMANENTE. Esta acción no se puede deshacer.', { title: '⚠️ Eliminar definitivamente', tone: 'error', acceptText: 'Sí, continuar' }))) return;
+    const confirmacion = await showAppPrompt('Para confirmar la eliminación, escribe la palabra CONFIRMAR:', { title: 'Confirmar eliminación', placeholder: 'CONFIRMAR', tone: 'error', acceptText: 'Confirmar eliminación' });
     if (confirmacion !== 'CONFIRMAR') {
-        alert('Operación cancelada. No se realizaron cambios.');
+        if (confirmacion !== null) showAppAlert('Palabra incorrecta. Operación cancelada.', { tone: 'warning', title: 'Cancelado' });
         return;
     }
     try {
@@ -1759,10 +1741,10 @@ async function purgarDatosInactivos() {
         alert('Solo super administradores pueden purgar registros.');
         return;
     }
-    if (!confirm('⚠️ ADVERTENCIA: Se eliminarán DEFINITIVAMENTE todos los registros inactivos.\n¿Desea continuar con la primera confirmación?')) return;
-    const confirmacion = prompt('Para confirmar, escribe la palabra CONFIRMAR:');
+    if (!(await showAppConfirm('Se eliminarán DEFINITIVAMENTE todos los registros inactivos. Esta acción no se puede deshacer.', { title: '⚠️ Purgar registros inactivos', tone: 'error', acceptText: 'Sí, purgar' }))) return;
+    const confirmacion = await showAppPrompt('Para confirmar la purga, escribe la palabra CONFIRMAR:', { title: 'Confirmar purgado', placeholder: 'CONFIRMAR', tone: 'error', acceptText: 'Confirmar purgado' });
     if (confirmacion !== 'CONFIRMAR') {
-        alert('Operación cancelada. No se realizaron cambios.');
+        if (confirmacion !== null) showAppAlert('Palabra incorrecta. Operación cancelada.', { tone: 'warning', title: 'Cancelado' });
         return;
     }
     try {
@@ -1780,7 +1762,7 @@ async function rollbackDato(id) {
         alert('Solo super administradores pueden restaurar registros.');
         return;
     }
-    if (!confirm(`¿Restaurar el registro ID ${id} desde la papelera?`)) return;
+    if (!(await showAppConfirm(`¿Restaurar el registro ID ${id} desde la papelera?`, { title: 'Restaurar registro', tone: 'info' }))) return;
     try {
         const result = await apiClient.rollbackDato(id);
         alert(result.mensaje || `Registro ${id} restaurado correctamente.`);
@@ -1852,7 +1834,10 @@ async function copiarUrlQr(url) {
     }
     try {
         await copiarTextoPortapapeles(value);
-        alert('URL copiada al portapapeles.');
+        const panel = document.getElementById('qrVerificationResult');
+        if (panel) {
+            panel.innerHTML = '<p class="hint" style="color:green;">URL copiada al portapapeles.</p>';
+        }
     } catch (_) {
         alert('No se pudo copiar automáticamente. URL: ' + value);
     }
@@ -2642,7 +2627,7 @@ async function guardarLineaGestion(e) {
 }
 
 async function desactivarLineaGestion(lineaId) {
-    if (!confirm('¿Desactivar esta línea?')) return;
+    if (!(await showAppConfirm('¿Desactivar esta línea?', { title: 'Desactivar línea', tone: 'warning' }))) return;
     try {
         await apiClient.desactivarLinea(lineaId);
         await cargarLineasYAgentes();
@@ -2903,7 +2888,7 @@ async function liberarLineasAgente(agenteId) {
         alert('Este agente no tiene líneas asignadas.');
         return;
     }
-    if (!confirm(`¿Liberar ${lines.length} línea(s) del agente ${agent.nombre || agenteId}?`)) return;
+    if (!(await showAppConfirm(`¿Liberar ${lines.length} línea(s) del agente ${agent.nombre || agenteId}?`, { title: 'Liberar líneas', tone: 'warning' }))) return;
 
     try {
         for (const line of lines) {
@@ -2921,8 +2906,8 @@ async function liberarLineasAgente(agenteId) {
 async function darBajaAgente(agenteId) {
     const agent = currentAgentManagementRows.find(item => Number(item.id) === Number(agenteId));
     const label = agent?.nombre || `ID ${agenteId}`;
-    if (!confirm(`¿Dar de baja al agente ${label}?`)) return;
-    if ((agent?.lineas || []).length && !confirm('El agente tiene líneas asignadas. La baja no las libera automáticamente. ¿Continuar?')) return;
+    if (!(await showAppConfirm(`¿Dar de baja al agente ${label}?`, { title: 'Baja de agente', tone: 'warning', acceptText: 'Dar de baja' }))) return;
+    if ((agent?.lineas || []).length && !(await showAppConfirm('El agente tiene líneas asignadas. La baja no las libera automáticamente.', { title: '¿Continuar con la baja?', tone: 'warning', acceptText: 'Continuar' }))) return;
 
     try {
         await apiClient.eliminarDato(agenteId);
@@ -3062,12 +3047,16 @@ function resolveAltasAgent(agenteId) {
     return currentAltasAgents.find(item => Number(item.id) === Number(agenteId)) || null;
 }
 
-function solicitarConfiguracionPrimerCobro(agente, contexto = 'asignar') {
+async function solicitarConfiguracionPrimerCobro(agente, contexto = 'asignar') {
     const agenteNombre = String(agente?.nombre || `ID ${agente?.id || ''}`).trim();
     const intro = contexto === 'alta'
-        ? `El agente ${agenteNombre} tendrá su primera línea.\nConfigura el inicio de cobro o cargo inicial.`
-        : `Primera línea para ${agenteNombre}.\nConfigura el inicio de cobro o cargo inicial.`;
-    const choice = prompt(`${intro}\n\nOpciones:\n1 = Semana de inicio\n2 = Cargo inicial\n3 = Ambos\nEnter = omitir`, '1');
+        ? `El agente ${agenteNombre} tendrá su primera línea. Configura el inicio de cobro o cargo inicial.`
+        : `Primera línea para ${agenteNombre}. Configura el inicio de cobro o cargo inicial.`;
+    const choice = await showAppPrompt('¿Qué configurar?\n1 = Semana de inicio  2 = Cargo inicial  3 = Ambos  (deja vacío para omitir)', {
+        title: intro,
+        placeholder: '1',
+        defaultValue: '1',
+    });
     if (choice === null) return null;
 
     const mode = String(choice || '').trim();
@@ -3077,22 +3066,33 @@ function solicitarConfiguracionPrimerCobro(agente, contexto = 'asignar') {
 
     if (askWeek) {
         const suggestedWeek = mondayISO();
-        const weekRaw = prompt('Semana de inicio de cobro (AAAA-MM-DD). Deja vacío para usar semana actual:', suggestedWeek);
+        const weekRaw = await showAppPrompt('Semana de inicio de cobro (AAAA-MM-DD):', {
+            title: 'Semana de inicio',
+            placeholder: suggestedWeek,
+            defaultValue: suggestedWeek,
+            detail: 'Deja el valor actual para usar la semana corriente.',
+        });
         if (weekRaw === null) return null;
         const week = String(weekRaw || '').trim() || suggestedWeek;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(week) || Number.isNaN(new Date(`${week}T00:00:00`).getTime())) {
-            alert('Formato de semana inválido. Usa AAAA-MM-DD.');
+            showAppAlert('Formato de semana inválido. Usa AAAA-MM-DD.', { tone: 'error', title: 'Formato incorrecto' });
             return null;
         }
         billing.cobroDesdeSemana = week;
     }
 
     if (askInitial) {
-        const amountRaw = prompt('Cargo inicial MXN (solo número, ejemplo 300 o 450.50):', '0');
+        const amountRaw = await showAppPrompt('Cargo inicial (MXN):', {
+            title: 'Cargo inicial',
+            placeholder: '0',
+            defaultValue: '0',
+            type: 'number',
+            detail: 'Ejemplo: 300 o 450.50',
+        });
         if (amountRaw === null) return null;
         const parsed = Number(String(amountRaw).replace(',', '.'));
         if (!Number.isFinite(parsed) || parsed < 0) {
-            alert('Cargo inicial inválido.');
+            showAppAlert('Cargo inicial inválido.', { tone: 'error', title: 'Valor incorrecto' });
             return null;
         }
         billing.cargoInicial = parsed;
@@ -3153,7 +3153,7 @@ async function crearAgenteManual(e) {
     }
 
     if (modo === 'manual' || modo === 'auto') {
-        const billing = solicitarConfiguracionPrimerCobro(payload, 'alta');
+        const billing = await solicitarConfiguracionPrimerCobro(payload, 'alta');
         if (billing === null) {
             alert('Alta cancelada para no guardar una asignación inicial sin validar cobro.');
             return;
@@ -3238,7 +3238,7 @@ async function asignarLineaAgente(e) {
         const lineasActuales = Array.isArray(agente?.lineas) ? agente.lineas.length : 0;
         let billing = { cobroDesdeSemana: null, cargoInicial: 0 };
         if (lineasActuales === 0) {
-            const configured = solicitarConfiguracionPrimerCobro(agente || { id: agenteId }, 'asignar');
+            const configured = await solicitarConfiguracionPrimerCobro(agente || { id: agenteId }, 'asignar');
             if (configured === null) {
                 alert('Asignación cancelada.');
                 return;
@@ -3256,7 +3256,7 @@ async function asignarLineaAgente(e) {
 }
 
 async function liberarLinea(lineaId) {
-    if (!confirm('¿Liberar esta línea?')) return;
+    if (!(await showAppConfirm('¿Liberar esta línea?', { title: 'Liberar línea', tone: 'warning' }))) return;
     try {
         await apiClient.liberarLinea(lineaId);
         alert('Línea liberada.');
@@ -3268,16 +3268,12 @@ async function liberarLinea(lineaId) {
 }
 
 async function eliminarDato(id, uuid = '') {
-    if (!confirm(`⚠️ ¿Estás seguro de que deseas eliminar el registro ID ${id}?\nEsta acción lo marcará como inactivo.`)) return;
-    const confirmacion = prompt('Para confirmar, escribe la palabra CONFIRMAR:');
+    if (!(await showAppConfirm(`¿Eliminar el registro ID ${id}? Esta acción lo marcará como inactivo.`, { title: 'Eliminar registro', tone: 'warning', acceptText: 'Eliminar' }))) return;
+    const confirmacion = await showAppPrompt('Para confirmar, escribe la palabra CONFIRMAR:', { title: 'Confirmar eliminación', placeholder: 'CONFIRMAR', tone: 'warning', acceptText: 'Confirmar' });
     if (confirmacion !== 'CONFIRMAR') {
-        alert('Operación cancelada. No se realizaron cambios.');
+        if (confirmacion !== null) showAppAlert('Palabra incorrecta. Operación cancelada.', { tone: 'warning', title: 'Cancelado' });
         return;
     }
-
-    try {
-        try {
-            await apiClient.eliminarDato(id);
         } catch (error) {
             const detail = String(error?.message || '').toLowerCase();
             if (!uuid || !detail.includes('no encontrado')) {
@@ -3757,7 +3753,7 @@ async function limpiarDeudaManualAgente() {
         alert('Ingresa el ID del agente para limpiar ajuste manual.');
         return;
     }
-    if (!confirm('¿Quitar ajuste manual de deuda para este agente (monto = 0)?')) return;
+    if (!(await showAppConfirm('¿Quitar ajuste manual de deuda para este agente (monto = 0)?', { title: 'Limpiar ajuste', tone: 'warning' }))) return;
     try {
         const payload = { modo: 'ajuste', monto: 0 };
         if (semana) payload.semana = semana;
@@ -3956,14 +3952,14 @@ async function editarPagoAdminDesdeReporte(pagoId, agenteId) {
         alert('Solo administradores pueden editar pagos manualmente.');
         return;
     }
-    const montoRaw = prompt('Nuevo monto semanal (MXN):');
+    const montoRaw = await showAppPrompt('Nuevo monto semanal:', { title: 'Editar pago', placeholder: 'Ej: 300 o 450.50', type: 'number' });
     if (montoRaw === null) return;
     const monto = Number(montoRaw);
     if (!Number.isFinite(monto) || monto < 0) {
         alert('Monto inválido.');
         return;
     }
-    const observaciones = prompt('Observaciones (opcional):') || null;
+    const observaciones = await showAppPrompt('Observaciones (opcional):', { title: 'Observaciones', placeholder: 'Deja en blanco si no aplica' }) || null;
     try {
         await apiClient.editarPagoSemanalAdmin(pagoId, { monto, observaciones });
         alert('Pago actualizado correctamente.');
@@ -4181,8 +4177,8 @@ async function cargarRespaldos() {
 }
 
 async function restaurarRespaldo(filename) {
-    if (!confirm(`¿Restaurar el respaldo ${filename}? Esta acción reemplazará la base actual.`)) return;
-    if (!confirm('Confirma nuevamente la restauración. Se hará un respaldo de rescate antes de continuar.')) return;
+    if (!(await showAppConfirm(`¿Restaurar el respaldo ${filename}? Esta acción reemplazará la base actual.`, { title: 'Restaurar respaldo', tone: 'warning', acceptText: 'Restaurar' }))) return;
+    if (!(await showAppConfirm('Confirma nuevamente. Se hará un respaldo de rescate antes de continuar.', { title: 'Segunda confirmación', tone: 'warning', acceptText: 'Sí, restaurar' }))) return;
     try {
         const res = await apiClient.restoreBackup(filename);
         alert(`Respaldo restaurado: ${res?.data?.file || filename}`);
@@ -4347,8 +4343,8 @@ function toggleMostrarOcultas() {
 }
 
 async function eliminarDatabase(name) {
-    if (!confirm(`¿Eliminar permanentemente la base de datos "${name}"?\nEsta acción borrará todos sus datos y no se puede deshacer.`)) return;
-    if (!confirm(`Segunda confirmación: ¿continuar con la eliminación de "${name}"?`)) return;
+    if (!(await showAppConfirm(`¿Eliminar permanentemente la base de datos "${name}"? Esta acción borrará todos sus datos y no se puede deshacer.`, { title: 'Eliminar base de datos', tone: 'error', acceptText: 'Eliminar' }))) return;
+    if (!(await showAppConfirm(`Segunda confirmación: ¿continuar con la eliminación de "${name}"?`, { title: 'Confirmar eliminación', tone: 'error', acceptText: 'Sí, eliminar definitivamente' }))) return;
     try {
         await apiClient.deleteDatabase(name);
         alert(`Base de datos "${name}" eliminada.`);
@@ -4413,7 +4409,7 @@ async function eliminarTablasPruebaUI(database) {
         alert('Solo administradores pueden eliminar tablas de prueba.');
         return;
     }
-    if (!confirm(`Se eliminarán tablas de prueba en ${database} con prefijos tmp_, temp_, test_, ui_temp_ o debug_. ¿Continuar?`)) {
+    if (!(await showAppConfirm(`Se eliminarán tablas de prueba en ${database} con prefijos tmp_, temp_, test_, ui_temp_ o debug_.`, { title: 'Eliminar tablas de prueba', tone: 'warning', acceptText: 'Eliminar' }))) {
         return;
     }
 
@@ -4493,9 +4489,9 @@ async function verVistas(database) {
 }
 
 async function crearVistaTemporal(database) {
-    const viewName = prompt('Nombre de la vista: (solo letras, números y _)');
+    const viewName = await showAppPrompt('Nombre de la vista: (solo letras, números y _)', { title: 'Crear vista', placeholder: 'nombre_vista' });
     if (!viewName) return;
-    const selectQuery = prompt('Consulta SELECT para la vista:');
+    const selectQuery = await showAppPrompt('Consulta SELECT para la vista:', { title: 'Consulta de la vista', placeholder: 'SELECT ...' });
     if (!selectQuery) return;
 
     try {
@@ -4509,7 +4505,7 @@ async function crearVistaTemporal(database) {
 }
 
 async function eliminarVista(database, viewName) {
-    if (!confirm(`¿Eliminar la vista ${viewName}?`)) return;
+    if (!(await showAppConfirm(`¿Eliminar la vista ${viewName}?`, { title: 'Eliminar vista', tone: 'warning', acceptText: 'Eliminar' }))) return;
     try {
         await apiClient.deleteView(database, viewName);
         alert('Vista eliminada.');
@@ -4603,7 +4599,7 @@ async function depurarObjetosTemporales() {
         alert('Selecciona una base de datos para depurar.');
         return;
     }
-    if (!confirm('Se eliminarán objetos temporales o de prueba detectados automáticamente. ¿Continuar?')) return;
+    if (!(await showAppConfirm('Se eliminarán objetos temporales o de prueba detectados automáticamente.', { title: 'Depurar objetos temporales', tone: 'warning', acceptText: 'Depurar' }))) return;
     try {
         const result = await apiClient.purgeTemporaryObjects(database, false);
         alert(result.message || 'Depuración completada.');
@@ -4639,7 +4635,7 @@ async function depurarAgentesRedundantesUI() {
         }
 
         const msg = `Se detectaron ${candidatos} candidatos (test=${testLike}, duplicados=${dupes}).\n¿Aplicar depuración ahora?`;
-        if (!confirm(msg)) return;
+        if (!(await showAppConfirm(msg, { title: 'Depurar agentes redundantes', tone: 'warning', acceptText: 'Aplicar' }))) return;
 
         const result = await apiClient.cleanupRedundantAgents(database, false);
         const finalData = result?.data || {};
@@ -4795,7 +4791,7 @@ function mostrarResultadoQuery(data) {
 }
 
 async function eliminarTabla(database, table) {
-    if (!confirm(`¿Estás seguro de eliminar la tabla ${table}?`)) {
+    if (!(await showAppConfirm(`¿Eliminar la tabla ${table}?`, { title: 'Eliminar tabla', tone: 'error', acceptText: 'Eliminar' }))) {
         return;
     }
     
@@ -4922,7 +4918,7 @@ async function cargarEstadoAgentes() {
 async function generarQRMasivo() {
     const btn = document.getElementById('btnGenerarQRMasivo');
     const result = document.getElementById('estadoAgentesResult');
-    if (!confirm('¿Generar QR automático para todos los agentes que aún no lo tienen?')) return;
+    if (!(await showAppConfirm('¿Generar QR automático para todos los agentes que aún no lo tienen?', { title: 'Generación masiva de QR', tone: 'info', acceptText: 'Generar' }))) return;
     if (btn) btn.disabled = true;
     if (result) result.innerHTML = '<p class="hint">Generando QRs, espera...</p>';
     try {
@@ -5113,7 +5109,7 @@ async function aplicarReclasificacionMasiva() {
 
 async function depurarUsuariosTemporales() {
     if (!canAdmin()) return;
-    if (!confirm('Se eliminarán definitivamente usuarios temporales/obsoletos (excepto admins). ¿Continuar?')) return;
+    if (!(await showAppConfirm('Se eliminarán definitivamente usuarios temporales/obsoletos (excepto admins).', { title: 'Depurar usuarios temporales', tone: 'warning', acceptText: 'Depurar' }))) return;
     try {
         const result = await apiClient.purgeTemporaryUsuarios(true);
         alert(`Depuración completada. Eliminados: ${result.count || 0}`);
@@ -5162,7 +5158,7 @@ async function renovarUsuarioTemporal(userId, diasVigencia = 10) {
 }
 
 async function solicitarPermisosTemporal(userId, role = 'capture') {
-    const motivo = prompt('Motivo de la solicitud de permisos (opcional):') || '';
+    const motivo = await showAppPrompt('Motivo de la solicitud de permisos (opcional):', { title: 'Solicitar permisos temporales', placeholder: 'Motivo o circunstancia' }) || '';
     try {
         await apiClient.solicitarPermisoTemporal(userId, { rol_solicitado: role, motivo });
         alert('Solicitud registrada.');
@@ -5215,7 +5211,7 @@ async function resolverSolicitudPermisoTemporal(userId, aprobar, rolAprobado = '
     const mensaje = aprobar
         ? `¿Aprobar solicitud del usuario ${userId} con rol ${rolAprobado}?`
         : `¿Rechazar solicitud del usuario ${userId}?`;
-    if (!confirm(mensaje)) return;
+    if (!(await showAppConfirm(mensaje, { title: aprobar ? 'Aprobar solicitud' : 'Rechazar solicitud', tone: aprobar ? 'info' : 'warning', acceptText: aprobar ? 'Aprobar' : 'Rechazar' }))) return;
     try {
         await apiClient.resolverSolicitudPermisoTemporal(userId, {
             aprobar: Boolean(aprobar),
@@ -5337,7 +5333,7 @@ async function guardarUsuario(e) {
 }
 
 async function cambiarPassword(userId) {
-    const newPassword = prompt('Ingresa la nueva contraseña:');
+    const newPassword = await showAppPrompt('Ingresa la nueva contraseña:', { title: 'Cambiar contraseña', placeholder: '••••••••', type: 'password', acceptText: 'Cambiar' });
     if (!newPassword) return;
     
     try {
@@ -5353,7 +5349,7 @@ async function eliminarUsuario(userId, hardDelete = false) {
     const message = hardDelete
         ? '¿Eliminar definitivamente este usuario y depurar sus dependencias controladas?'
         : '¿Desactivar este usuario?';
-    if (!confirm(message)) return;
+    if (!(await showAppConfirm(message, { title: hardDelete ? 'Eliminar usuario' : 'Desactivar usuario', tone: hardDelete ? 'error' : 'warning', acceptText: hardDelete ? 'Eliminar definitivamente' : 'Desactivar' }))) return;
     
     try {
         await apiClient.eliminarUsuario(userId, hardDelete);
@@ -5472,7 +5468,7 @@ async function marcarAlertaLeida(id) {
 }
 
 async function desactivarAlerta(id) {
-    if (!confirm('\u00bfDesactivar esta alerta? Dejar\u00e1 de ser visible para los dem\u00e1s.')) return;
+    if (!(await showAppConfirm('¿Desactivar esta alerta? Dejará de ser visible para los demás.', { title: 'Desactivar alerta', tone: 'warning', acceptText: 'Desactivar' }))) return;
     try {
         await fetchJson(`${API_URL}/alertas/${id}`, {
             method: 'DELETE',

@@ -393,6 +393,128 @@ body {
     }
 }
 
+.app-confirm-actions {
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.app-prompt-input-wrap {
+    margin-top: 14px;
+}
+
+.app-prompt-input {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(43, 157, 255, 0.35);
+    background: rgba(255, 255, 255, 0.85);
+    color: #0a2e52;
+    font-family: 'Outfit', 'Segoe UI', sans-serif;
+    font-size: 1rem;
+    outline: none;
+    transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.app-prompt-input:focus {
+    border-color: rgba(43, 157, 255, 0.65);
+    box-shadow: 0 0 0 3px rgba(43, 157, 255, 0.12);
+}
+
+/* QR modal — unified with the app design system */
+.modal-overlay-qr {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(4, 17, 33, 0.52);
+    backdrop-filter: blur(8px);
+    z-index: 10000;
+    padding: 24px;
+    animation: panelEnter 220ms ease;
+}
+
+.modal-content-qr {
+    position: relative;
+    width: min(520px, 100%);
+    background: linear-gradient(180deg, rgba(247, 251, 255, 0.98), rgba(237, 245, 255, 0.98));
+    color: #173049;
+    border: 1px solid rgba(43, 157, 255, 0.24);
+    border-radius: 20px;
+    box-shadow: 0 22px 60px rgba(5, 24, 42, 0.28), 0 0 0 1px rgba(255,255,255,0.45) inset;
+    padding: 24px;
+    animation: panelEnter 220ms ease;
+}
+
+.modal-content-qr h2 {
+    margin: 0 0 6px;
+    font-size: 1.3rem;
+    color: #0a2e52;
+    text-align: center;
+}
+
+.qr-modal-meta {
+    text-align: center;
+    color: #496785;
+    margin: 0 0 16px;
+    font-size: 0.95rem;
+}
+
+.qr-modal-preview {
+    text-align: center;
+    margin: 0 0 16px;
+    padding: 18px;
+    background: rgba(12, 47, 82, 0.05);
+    border-radius: 12px;
+    border: 1px solid rgba(12, 47, 82, 0.08);
+}
+
+.qr-modal-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.qr-modal-link {
+    text-align: center;
+    margin-top: 12px;
+    font-size: 0.85rem;
+    color: #496785;
+}
+
+.qr-modal-link a {
+    color: var(--brand);
+    text-decoration: none;
+}
+
+.qr-modal-link a:hover {
+    text-decoration: underline;
+}
+
+.close-modal-qr {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: rgba(11, 79, 138, 0.08);
+    border: none;
+    color: #335979;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    font-size: 1.3rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 160ms ease;
+}
+
+.close-modal-qr:hover {
+    background: rgba(11, 79, 138, 0.16);
+}
+
 .panel h1,
 .panel h2 {
     color: var(--brand-strong);
