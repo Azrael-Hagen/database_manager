@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
-from sqlalchemy import func, select, text
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database.orm import get_db
@@ -67,6 +67,7 @@ SYNCED_EXTENSION_PREFIX = "SYNC extensions_pbx"
 LEGACY_AGENTES_DB = "registro_agentes"
 LEGACY_AGENTES_TABLE = "agentes"
 LEGACY_LADAS_TABLE = "catalogo_ladas"
+_missing_cobros_movimientos_warned = False
 
 
 def _utcnow() -> datetime:
@@ -696,6 +697,15 @@ def _registrar_movimiento_cobro(
     usuario_id: int | None = None,
     payload: dict | None = None,
 ) -> None:
+    global _missing_cobros_movimientos_warned
+
+    bind = db.get_bind()
+    if bind is None or not inspect(bind).has_table("cobros_movimientos"):
+        if not _missing_cobros_movimientos_warned:
+            logger.warning("Tabla cobros_movimientos no disponible; se omite log de movimiento de cobro")
+            _missing_cobros_movimientos_warned = True
+        return
+
     db.execute(
         text(
             """
@@ -1227,7 +1237,9 @@ async def totales_cobranza(
 
     total_dia = float(
         db.query(func.coalesce(func.sum(PagoSemanal.monto), 0.0))
+        .join(DatoImportado, DatoImportado.id == PagoSemanal.agente_id)
         .filter(
+            DatoImportado.es_activo.is_(True),
             PagoSemanal.fecha_pago.is_not(None),
             PagoSemanal.monto > 0,
             PagoSemanal.fecha_pago >= fecha_inicio_dt,
@@ -1238,7 +1250,9 @@ async def totales_cobranza(
     )
     pagos_dia = int(
         db.query(func.count(PagoSemanal.id))
+        .join(DatoImportado, DatoImportado.id == PagoSemanal.agente_id)
         .filter(
+            DatoImportado.es_activo.is_(True),
             PagoSemanal.fecha_pago.is_not(None),
             PagoSemanal.monto > 0,
             PagoSemanal.fecha_pago >= fecha_inicio_dt,
@@ -1249,7 +1263,9 @@ async def totales_cobranza(
     )
     agentes_dia = int(
         db.query(func.count(func.distinct(PagoSemanal.agente_id)))
+        .join(DatoImportado, DatoImportado.id == PagoSemanal.agente_id)
         .filter(
+            DatoImportado.es_activo.is_(True),
             PagoSemanal.fecha_pago.is_not(None),
             PagoSemanal.monto > 0,
             PagoSemanal.fecha_pago >= fecha_inicio_dt,
@@ -1261,7 +1277,9 @@ async def totales_cobranza(
 
     total_semana = float(
         db.query(func.coalesce(func.sum(PagoSemanal.monto), 0.0))
+        .join(DatoImportado, DatoImportado.id == PagoSemanal.agente_id)
         .filter(
+            DatoImportado.es_activo.is_(True),
             PagoSemanal.semana_inicio == semana_ref,
             PagoSemanal.monto > 0,
         )
@@ -1270,7 +1288,9 @@ async def totales_cobranza(
     )
     pagos_semana = int(
         db.query(func.count(PagoSemanal.id))
+        .join(DatoImportado, DatoImportado.id == PagoSemanal.agente_id)
         .filter(
+            DatoImportado.es_activo.is_(True),
             PagoSemanal.semana_inicio == semana_ref,
             PagoSemanal.monto > 0,
         )
@@ -1279,7 +1299,9 @@ async def totales_cobranza(
     )
     agentes_semana = int(
         db.query(func.count(func.distinct(PagoSemanal.agente_id)))
+        .join(DatoImportado, DatoImportado.id == PagoSemanal.agente_id)
         .filter(
+            DatoImportado.es_activo.is_(True),
             PagoSemanal.semana_inicio == semana_ref,
             PagoSemanal.monto > 0,
         )
@@ -1293,7 +1315,9 @@ async def totales_cobranza(
             func.coalesce(func.sum(PagoSemanal.monto), 0.0).label("monto_total"),
             func.count(PagoSemanal.id).label("pagos"),
         )
+        .join(DatoImportado, DatoImportado.id == PagoSemanal.agente_id)
         .filter(
+            DatoImportado.es_activo.is_(True),
             PagoSemanal.fecha_pago.is_not(None),
             PagoSemanal.monto > 0,
             PagoSemanal.fecha_pago >= semana_inicio_dt,

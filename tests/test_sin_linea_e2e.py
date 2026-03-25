@@ -65,6 +65,7 @@ def _clear_agent_tables() -> None:
     _bind_test_db_override()
     db = _db()
     try:
+        db.query(PagoSemanal).delete()
         db.query(AgenteLineaAsignacion).delete()
         db.query(LineaTelefonica).delete()
         db.query(DatoImportado).delete()
