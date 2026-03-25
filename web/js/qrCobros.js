@@ -61,10 +61,17 @@ function qrSyncContext() {
     }
 
     // --- Sync agent ID ---
-    ['qrAgenteId', 'pagoAgenteId', 'deudaManualAgenteId'].forEach(id => {
+    ['qrAgenteId', 'pagoAgenteId'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = agenteId;
     });
+    // For the deuda manual search combo, use the helper if available; fall back to direct set
+    if (typeof _setDeudaManualAgente === 'function') {
+        _setDeudaManualAgente(agenteId);
+    } else {
+        const el = document.getElementById('deudaManualAgenteId');
+        if (el) el.value = agenteId;
+    }
 
     // --- Sync week ---
     if (semana) {
@@ -108,18 +115,16 @@ async function _qrCtxUpdateBadge(agenteId, semana) {
             headers: { Authorization: `Bearer ${authToken}` },
         });
 
-        const pagado = data?.pagado === true || data?.estado === 'pagado';
-        const deuda  = parseFloat(data?.deuda_acumulada ?? data?.deuda ?? 0);
+        // La respuesta tiene shape: { status, agente, data: { saldo_acumulado, pagado_semana, ... } }
+        const inner  = data?.data || {};
+        const deuda  = parseFloat(inner.saldo_acumulado ?? 0);
 
-        if (pagado && deuda <= 0) {
-            badge.textContent   = 'Al Corriente';
-            badge.style.background = '#16966a';
-        } else if (deuda > 0) {
+        if (deuda > 0.009) {
             badge.textContent   = `Debe $${deuda.toFixed(0)}`;
             badge.style.background = '#d64545';
         } else {
-            badge.textContent   = data?.estado || 'Al Corriente';
-            badge.style.background = '#4a90d9';
+            badge.textContent   = 'Al Corriente';
+            badge.style.background = '#16966a';
         }
         badge.style.color = '#fff';
     } catch (_) {
@@ -138,6 +143,123 @@ let _qrCameraRunning = false;
 let _qrSearchDebounceTimer = null;
 let _qrLastSearchQuery = '';
 const _qrAgentSearchCache = new Map();
+
+// ---------------------------------------------------------------------------
+// Deuda Manual — agent search (by name / ID / phone)
+// ---------------------------------------------------------------------------
+
+let _dmSearchDebounceTimer = null;
+let _dmLastSearchQuery = '';
+const _dmAgentSearchCache = new Map();
+
+/**
+ * Busca agentes para el panel "Control Manual de Deuda".
+ * Acepta nombre, alias, teléfono o ID numérico.
+ */
+function deudaManualSearchAgente(query) {
+    const dropdown = document.getElementById('deudaManualAgentDropdown');
+    const hiddenId = document.getElementById('deudaManualAgenteId');
+    if (!dropdown) return;
+
+    // Limpiar ID oculto mientras escribe (se reasignará al seleccionar)
+    if (hiddenId) hiddenId.value = '';
+
+    const trimmed = (query || '').trim();
+    if (trimmed.length === 0) {
+        dropdown.style.display = 'none';
+        dropdown.innerHTML = '';
+        _dmLastSearchQuery = '';
+        return;
+    }
+
+    // Si es número puro → ofrecer carga directa por ID
+    if (/^\d+$/.test(trimmed)) {
+        const idNum = parseInt(trimmed, 10);
+        if (hiddenId) hiddenId.value = String(idNum);
+        dropdown.innerHTML = `
+            <div class="qr-agent-result" onclick="deudaManualSelectAgent(${idNum}, 'ID: ${idNum}')"
+                style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border,#d8e6f4);font-weight:500;">
+                ID: ${idNum}
+            </div>`;
+        dropdown.style.display = 'block';
+        _dmLastSearchQuery = trimmed;
+        return;
+    }
+
+    if (_dmLastSearchQuery === trimmed) return;
+    _dmLastSearchQuery = trimmed;
+
+    if (_dmSearchDebounceTimer) clearTimeout(_dmSearchDebounceTimer);
+
+    dropdown.innerHTML = '<div style="padding:8px 12px;color:#666;">Buscando…</div>';
+    dropdown.style.display = 'block';
+
+    _dmSearchDebounceTimer = setTimeout(async () => {
+        try {
+            const payload = await apiClient.getAgentesQR(trimmed);
+            const agents = Array.isArray(payload?.data) ? payload.data : [];
+            if (agents.length === 0) {
+                dropdown.innerHTML = '<div style="padding:8px 12px;color:#999;">Sin resultados</div>';
+                return;
+            }
+            const results = agents.slice(0, 8);
+            _dmAgentSearchCache.clear();
+            for (const ag of results) _dmAgentSearchCache.set(String(ag.id), ag);
+
+            dropdown.innerHTML = results.map(ag => {
+                const label = (ag.display_name || ag.alias || ag.nombre || `Agente ${ag.id}`)
+                    .replace(/'/g, "\\'");
+                const meta = [
+                    ag.telefono ? '📞 ' + ag.telefono : '',
+                    ag.alias    ? '🏷 '  + ag.alias    : '',
+                    ag.numero_voip ? '☎ ' + ag.numero_voip : '',
+                    'ID: ' + ag.id,
+                ].filter(Boolean).join('  ');
+                return `<div class="qr-agent-result"
+                    onclick="deudaManualSelectAgent(${ag.id}, '${label}')">
+                    <strong>${label}</strong>
+                    <div style="font-size:0.85em;color:#666;">${meta}</div>
+                </div>`;
+            }).join('');
+        } catch (err) {
+            console.error('Error buscando agente (deuda manual):', err);
+            dropdown.innerHTML = '<div style="padding:8px 12px;color:#c33;">Error en búsqueda</div>';
+        }
+    }, 250);
+}
+
+/**
+ * Selecciona un agente del dropdown de deuda manual.
+ */
+function deudaManualSelectAgent(agentId, displayName) {
+    const searchInput = document.getElementById('deudaManualAgenteSearch');
+    const hiddenId    = document.getElementById('deudaManualAgenteId');
+    const dropdown    = document.getElementById('deudaManualAgentDropdown');
+    const cached      = _dmAgentSearchCache.get(String(agentId));
+
+    const name = cached
+        ? (cached.display_name || cached.alias || cached.nombre || displayName || `ID: ${agentId}`)
+        : (displayName || `ID: ${agentId}`);
+
+    if (searchInput) searchInput.value = name;
+    if (hiddenId)    hiddenId.value    = String(agentId);
+    if (dropdown)  { dropdown.style.display = 'none'; dropdown.innerHTML = ''; }
+    _dmLastSearchQuery = '';
+
+    // Consultar deuda actual al seleccionar
+    if (typeof consultarDeudaManualAgente === 'function') {
+        consultarDeudaManualAgente(false);
+    }
+}
+
+// Cerrar dropdown cuando se hace clic fuera
+document.addEventListener('click', function (e) {
+    const dropdown = document.getElementById('deudaManualAgentDropdown');
+    const search   = document.getElementById('deudaManualAgenteSearch');
+    if (dropdown && !dropdown.contains(e.target) && e.target !== search) {
+        dropdown.style.display = 'none';
+    }
+});
 
 async function qrToggleCamera() {
     const btn = document.getElementById('qrCameraToggleBtn');
@@ -266,7 +388,9 @@ function qrSelectAgent(agentId) {
     const cached = _qrAgentSearchCache.get(String(agentId));
     const fallbackName = String(agentId);
     const selectedName = (cached?.display_name || cached?.alias || cached?.nombre || fallbackName);
-    const selectedVoip = (cached?.numero_voip || cached?.datos_adicionales?.numero_voip || '').toString().trim();
+    // VoIP: primero datos_adicionales, si vacío usar línea EXT_PBX asignada
+    const extPbxLine = (cached?.lineas || []).find(l => l.tipo === 'EXT_PBX');
+    const selectedVoip = (cached?.numero_voip || cached?.datos_adicionales?.numero_voip || extPbxLine?.numero || '').toString().trim();
     
     // Establecer valores
     idInput.value = agentId;

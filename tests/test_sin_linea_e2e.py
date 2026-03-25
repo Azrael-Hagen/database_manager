@@ -3,9 +3,10 @@
 import json
 import os
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -50,6 +51,7 @@ client = TestClient(app, raise_server_exceptions=False, base_url="https://testse
 _REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 _INDEX_HTML = os.path.join(_REPO_ROOT, "web", "index.html")
 _MAIN_JS = os.path.join(_REPO_ROOT, "web", "js", "main.js")
+_API_CLIENT_JS = os.path.join(_REPO_ROOT, "web", "js", "api-client.js")
 _QR_COBROS_JS = os.path.join(_REPO_ROOT, "web", "js", "qrCobros.js")
 _STYLE_CSS = os.path.join(_REPO_ROOT, "web", "css", "style.css")
 
@@ -310,6 +312,37 @@ class TestQrAgentesBusquedaYVoip:
         assert target.get("numero_voip") == "3333"
 
 
+class TestQrExportListado:
+    @classmethod
+    def setup_class(cls):
+        cls.capture_headers = {"Authorization": f"Bearer {_token('e2e_capture_export_qr', 'capture')}"}
+
+    def setup_method(self):
+        _clear_agent_tables()
+
+    def test_listado_export_incluye_agentes_sin_qr_code(self):
+        agente = _mk_agente("Exportable Sin QRCode", activo=True, con_qr=False)
+
+        db = _db()
+        try:
+            row = db.query(DatoImportado).filter(DatoImportado.id == agente.id).first()
+            # Asegura regresion historica: sin qr_code persistido
+            row.qr_code = None
+            db.add(row)
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.get(
+            "/api/qr/agentes/sin-imprimir?estado=todos&solo_activos=true",
+            headers=self.capture_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        rows = body.get("agentes", [])
+        assert any(r.get("id") == agente.id for r in rows)
+
+
 class TestDashboardSinLinea:
     @classmethod
     def setup_class(cls):
@@ -391,6 +424,80 @@ class TestVistaEstadoPagoSinLinea:
         assert target is not None
         assert target.get("estado_pago") == "Pendiente de Pago"
         assert bool(target.get("pagado")) is False
+
+
+class TestTotalesCobranzaQr:
+    @classmethod
+    def setup_class(cls):
+        cls.admin_headers = {"Authorization": f"Bearer {_token('e2e_admin_totales_cobro', 'admin')}"}
+
+    def setup_method(self):
+        _clear_agent_tables()
+
+    def test_totales_cobranza_por_fecha_y_semana(self):
+        semana_ref = monday_of_week(date.today())
+        fecha_ref = semana_ref + timedelta(days=2)
+
+        agente_1 = _mk_agente("Cobro Diario 1")
+        agente_2 = _mk_agente("Cobro Diario 2")
+        agente_3 = _mk_agente("Cobro Otra Semana")
+
+        db = _db()
+        try:
+            db.add_all(
+                [
+                    PagoSemanal(
+                        agente_id=agente_1.id,
+                        telefono="5511110001",
+                        numero_voip="1001",
+                        semana_inicio=semana_ref,
+                        monto=300.0,
+                        pagado=True,
+                        fecha_pago=datetime(fecha_ref.year, fecha_ref.month, fecha_ref.day, 10, 30, 0),
+                    ),
+                    PagoSemanal(
+                        agente_id=agente_2.id,
+                        telefono="5511110002",
+                        numero_voip="1002",
+                        semana_inicio=semana_ref,
+                        monto=150.0,
+                        pagado=True,
+                        fecha_pago=datetime(fecha_ref.year, fecha_ref.month, fecha_ref.day, 14, 45, 0),
+                    ),
+                    PagoSemanal(
+                        agente_id=agente_3.id,
+                        telefono="5511110003",
+                        numero_voip="1003",
+                        semana_inicio=semana_ref - timedelta(days=7),
+                        monto=200.0,
+                        pagado=True,
+                        fecha_pago=datetime(fecha_ref.year, fecha_ref.month, fecha_ref.day, 18, 0, 0),
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.get(
+            f"/api/qr/pagos/totales?fecha={fecha_ref.isoformat()}&semana={semana_ref.isoformat()}",
+            headers=self.admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body.get("status") == "success"
+
+        data = body.get("data") or {}
+        assert data.get("fecha") == fecha_ref.isoformat()
+        assert data.get("semana_inicio") == semana_ref.isoformat()
+
+        # Diario suma pagos por fecha (sin importar semana operativa)
+        assert float(data.get("total_pagado_dia") or 0) == pytest.approx(650.0)
+        assert int(data.get("pagos_registrados_dia") or 0) == 3
+
+        # Semanal suma pagos asociados a la semana operativa seleccionada
+        assert float(data.get("total_pagado_semana") or 0) == pytest.approx(450.0)
+        assert int(data.get("pagos_registrados_semana") or 0) == 2
 
 
 class TestQrStaticoYExportacion:
@@ -574,6 +681,9 @@ class TestFrontendAssets:
         assert "qrExportLayout" in html
         assert "oficio" in html
         assert "serverVersionInfo" in html
+        assert "miCuentaSection" in html
+        assert "regAccountMode" in html
+        assert "tempUsername" in html
 
     def test_js_tiene_funciones(self):
         js = open(_MAIN_JS, encoding="utf-8").read()
@@ -602,6 +712,18 @@ class TestFrontendAssets:
         assert "lineas: canCapture()" in js
         assert "estadoAgentes: canCapture()" in js
         assert "totals.sin_linea" in js
+        assert "case 'miCuenta'" in js
+        assert "return ['miCuenta'].includes(section);" in js
+
+    def test_js_tiene_autoservicio_limitado(self):
+        js = open(_MAIN_JS, encoding="utf-8").read()
+        api_js = open(_API_CLIENT_JS, encoding="utf-8").read()
+        assert "async function cargarResumenAutoservicio()" in js
+        assert "async function solicitarCuentaNormalLimitada()" in js
+        assert "isLimitedViewer()" in js
+        assert "registrar-temporal" in js
+        assert "async registrarTemporal(" in api_js
+        assert "async getSelfServiceResumen()" in api_js
 
     def test_qr_scan_tiene_continuidad_y_antirebote(self):
         js = open(_MAIN_JS, encoding="utf-8").read()

@@ -41,6 +41,7 @@
     <!-- Sidebar -->
     <div class="sidebar" id="appSidebar">
         <ul class="menu">
+            <li><a href="#" onclick="loadSection('miCuenta', event)" class="menu-item menu-tone-core" id="menuMiCuenta"><img class="menu-icon" src="sources/iconfinder-key-4341299_120569.ico" alt="Mi consulta">Mi Consulta</a></li>
             <li><a href="#" onclick="loadSection('dashboard', event)" class="menu-item menu-tone-core active"><img class="menu-icon" src="sources/iconfinder-home-4341294_120570.ico" alt="Inicio">Dashboard</a></li>
             <li><a href="#" onclick="loadSection('datos', event)" class="menu-item menu-tone-core"><img class="menu-icon" src="sources/iconfinder-image-4341296_120549.ico" alt="Datos">Datos</a></li>
             <li><a href="#" onclick="loadSection('databases', event)" class="menu-item menu-tone-core"><img class="menu-icon" src="sources/iconfinder-server-4417119_116634.ico" alt="Bases de datos">Bases de Datos</a></li>
@@ -87,6 +88,13 @@
                 <h2>Registrar Nueva Cuenta</h2>
                 <form onsubmit="registrar(event)">
                     <div class="form-group">
+                        <label>Tipo de Cuenta:</label>
+                        <select id="regAccountMode">
+                            <option value="normal">Usuario normal limitado</option>
+                            <option value="temporal">Usuario temporal limitado (máx. 10 días)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
                         <label>Usuario:</label>
                         <input type="text" id="regUsername" required>
                     </div>
@@ -108,6 +116,13 @@
                     <button type="submit" class="btn">Registrar</button>
                     <button type="button" onclick="showLogin()" class="btn btn-secondary">Volver al Login</button>
                 </form>
+            </section>
+
+            <section id="miCuentaSection" class="panel" style="display: none;">
+                <h1>Mi Consulta</h1>
+                <p class="hint">Vista limitada: solo muestra coincidencias reales de tu cuenta con la base y el adeudo asociado.</p>
+                <div id="selfServiceSummaryContainer" class="table-responsive" style="margin-top:10px;"></div>
+                <div id="selfServiceRequestContainer" style="margin-top:12px;"></div>
             </section>
 
             <!-- Sección de Dashboard -->
@@ -671,7 +686,7 @@
                 <p class="hint">Esta pantalla concentra mantenimiento operativo: busca un agente activo, corrige datos, libera líneas si hace falta, revisa su QR y aplica la baja suave sin salir del flujo.</p>
 
                 <div class="search-bar">
-                    <input type="text" id="gestionAgenteSearch" placeholder="Buscar por nombre o teléfono" onkeyup="cargarAgentesGestion(false)">
+                    <input type="text" id="gestionAgenteSearch" placeholder="Buscar por nombre o teléfono" oninput="programarBusquedaAgentesGestion()">
                     <button type="button" class="btn" onclick="cargarAgentesGestion()">Buscar / Refrescar</button>
                 </div>
 
@@ -875,6 +890,7 @@
                                 </div>
                                 <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
                                     <button type="button" class="btn btn-secondary" onclick="consultarResumenPagoActual()">📋 Consultar Resumen</button>
+                                    <button type="button" class="btn btn-secondary" onclick="abrirControlManualDeudaDesdePago()">⚖ Ajustar saldo manual</button>
                                     <button type="submit" class="btn" style="background:var(--success);">💳 Guardar Pago</button>
                                 </div>
                             </form>
@@ -887,12 +903,14 @@
                 <div id="qrTabReporte" class="qr-tab-content" style="display:none;">
                     <div class="search-bar" style="margin-bottom:10px;">
                         <input type="date" id="reporteSemanaInput">
+                        <input type="date" id="reporteCobroFechaInput" title="Fecha para total diario">
                         <input type="text" id="reporteAgenteInput" placeholder="Filtrar por agente">
                         <button type="button" class="btn" onclick="cargarReporteSemanal()">📊 Ver Reporte</button>
                         <button type="button" class="btn btn-secondary" onclick="procesarAlertasPagoManual()">🔔 Procesar Alertas</button>
                         <button type="button" class="btn btn-secondary" onclick="generarBackupManual()">💾 Respaldar Base</button>
                     </div>
                     <div id="reporteSemanalResumen" style="margin-top:10px;"></div>
+                    <div id="reporteCobranzaTotales" style="margin-top:10px;"></div>
                     <div id="reporteSemanalContainer" class="table-responsive" style="margin-top:12px;"></div>
                     <div id="alertasPagoContainer" class="table-responsive" style="margin-top:12px;"></div>
 
@@ -938,6 +956,7 @@
                         </select>
                         <button type="button" class="btn btn-secondary" onclick="qrExportCargarAgentes()">🔄 Actualizar lista</button>
                     </div>
+                    <p class="hint" style="margin-top:-2px;margin-bottom:8px;">Flujo sugerido: 1) filtra agentes, 2) selecciona, 3) exporta PDF, 4) usa marcar/desmarcar para control de impresión.</p>
 
                     <!-- Acciones masivas -->
                     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
@@ -959,13 +978,42 @@
                         <select id="qrExportLayout" style="min-width:180px;">
                             <option value="sheet">Hoja carta — 27 QR/página</option>
                             <option value="labels">Etiquetas compactas — 44 QR/página</option>
-                            <option value="oficio">Hoja oficio — 30 QR/página</option>
+                            <option value="oficio">Hoja oficio — 27 QR/página (compacto)</option>
                         </select>
                         <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;">
                             <input type="checkbox" id="qrExportMarcarImpreso" checked>
                             Marcar como impresos al exportar
                         </label>
                         <button type="button" class="btn" onclick="exportarQRLoteSeleccionados()" style="margin-left:auto;">📄 Exportar seleccionados</button>
+                    </div>
+
+                    <div class="card" style="margin-top:10px;padding:10px;border:1px solid #d8e6f4;border-radius:10px;background:#f9fcff;">
+                        <strong style="display:block;margin-bottom:8px;">Editor de Etiquetas (espacios)</strong>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">
+                            <label style="font-size:12px;display:flex;flex-direction:column;gap:4px;">
+                                Tamaño QR
+                                <input type="number" id="qrLabelEditQrSize" min="28" max="140" step="1" value="86" style="width:95px;">
+                            </label>
+                            <label style="font-size:12px;display:flex;flex-direction:column;gap:4px;">
+                                Espacio lateral
+                                <input type="number" id="qrLabelEditBorderGap" min="0" max="12" step="0.1" value="1.0" style="width:95px;">
+                            </label>
+                            <label style="font-size:12px;display:flex;flex-direction:column;gap:4px;">
+                                Separación vertical
+                                <input type="number" id="qrLabelEditCellH" min="52" max="180" step="0.5" value="101.5" style="width:105px;">
+                            </label>
+                            <label style="font-size:12px;display:flex;flex-direction:column;gap:4px;">
+                                Texto inferior
+                                <input type="number" id="qrLabelEditPadBottom" min="0" max="12" step="0.1" value="2.0" style="width:95px;">
+                            </label>
+                            <label style="font-size:12px;display:flex;align-items:center;gap:6px;padding-bottom:4px;">
+                                <input type="checkbox" id="qrLabelEditDrawBorder" checked>
+                                Mostrar borde
+                            </label>
+                            <button type="button" class="btn btn-secondary" onclick="qrLabelEditorGuardar()">Guardar ajustes</button>
+                            <button type="button" class="btn btn-secondary" onclick="qrLabelEditorRestaurar()">Restablecer</button>
+                        </div>
+                        <p class="hint" style="margin-top:8px;">Tip: baja <strong>Separación vertical</strong> para compactar huecos entre etiquetas.</p>
                     </div>
                     <div id="qrExportResult" style="margin-top:10px;"></div>
 
@@ -1003,7 +1051,12 @@
                     <div id="deudaManualPanel" class="card" style="padding:14px;border:1px solid #d8e6f4;border-radius:12px;background:#f9fcff;margin-top:10px;">
                         <p class="hint">Usa <strong>Saldo objetivo</strong> para fijar el saldo acumulado deseado, o <strong>Ajuste</strong> para sumar/restar sobre la deuda base calculada.</p>
                         <div class="search-bar" style="margin-top:8px;">
-                            <input type="number" id="deudaManualAgenteId" placeholder="ID Agente" min="1">
+                            <div style="position:relative;display:inline-block;">
+                                <input type="text" id="deudaManualAgenteSearch" placeholder="Buscar agente por nombre o ID…" style="width:220px;" autocomplete="off"
+                                    oninput="deudaManualSearchAgente(this.value)" onfocus="if(this.value) deudaManualSearchAgente(this.value)">
+                                <input type="hidden" id="deudaManualAgenteId">
+                                <div id="deudaManualAgentDropdown" style="display:none;position:absolute;top:100%;left:0;z-index:9999;background:#fff;border:1px solid #c5d6e8;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.13);min-width:280px;max-height:220px;overflow-y:auto;"></div>
+                            </div>
                             <input type="date" id="deudaManualSemana">
                             <select id="deudaManualModo">
                                 <option value="saldo_objetivo">Saldo objetivo</option>
@@ -1061,6 +1114,7 @@
                     <h3>Registro Temporal (máx. 10 días)</h3>
                     <form onsubmit="crearUsuarioTemporal(event)">
                         <div class="search-bar" style="margin-top:8px;">
+                            <input type="text" id="tempUsername" placeholder="Usuario temporal" required>
                             <input type="email" id="tempEmail" placeholder="Email temporal" required>
                             <input type="text" id="tempNombre" placeholder="Nombre completo (opcional)">
                             <input type="password" id="tempPassword" placeholder="Contraseña temporal" required>

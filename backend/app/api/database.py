@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Uplo
 from sqlalchemy import text, inspect
 from sqlalchemy.orm import Session
 from app.database.orm import get_db
+from app.database import orm as orm_schema
 from app.security import get_current_user, require_admin_role, require_capture_role, require_server_machine_request
 from app.utils.agent_cleanup import cleanup_redundant_agents
 import logging
@@ -562,7 +563,7 @@ async def maintenance_overview(
         )
     ).mappings().all()
     protected = {
-        "usuarios", "datos_importados", "import_logs", "auditoria_acciones", "config_sistema",
+        "usuarios", "agentes_operativos", "import_logs", "auditoria_acciones", "config_sistema",
         "pagos_semanales", "lineas_telefonicas", "agente_linea_asignaciones", "alertas_pago", "recibos_pago",
         "ladas_catalogo", "agente_lada_preferencias", "esquemas_base_datos"
     }
@@ -610,61 +611,7 @@ async def create_useful_views(
     require_admin_role(current_user, "Solo administradores pueden crear vistas útiles")
     try:
         db.execute(text(f"USE `{db_name}`"))
-        statements = {
-            "vw_agentes_qr_estado": """
-                CREATE OR REPLACE VIEW `vw_agentes_qr_estado` AS
-                SELECT id, uuid, nombre, telefono, COALESCE(es_activo, 1) AS es_activo,
-                       CASE WHEN qr_filename IS NOT NULL AND qr_filename <> '' THEN 1 ELSE 0 END AS tiene_qr,
-                       fecha_creacion
-                FROM datos_importados
-            """,
-            "vw_usuarios_roles": """
-                CREATE OR REPLACE VIEW `vw_usuarios_roles` AS
-                SELECT id, username, email, nombre_completo, rol, es_activo, fecha_creacion, fecha_ultima_sesion
-                FROM usuarios
-            """,
-            "vw_pagos_pendientes": """
-                CREATE OR REPLACE VIEW `vw_pagos_pendientes` AS
-                SELECT p.id, p.agente_id, d.nombre, p.telefono, p.numero_voip, p.semana_inicio, p.monto, p.pagado,
-                       p.fecha_pago, CASE WHEN a.id IS NULL THEN 0 ELSE 1 END AS alerta_emitida
-                FROM pagos_semanales p
-                LEFT JOIN datos_importados d ON d.id = p.agente_id
-                LEFT JOIN alertas_pago a ON a.agente_id = p.agente_id AND a.semana_inicio = p.semana_inicio AND a.atendida = 0
-                WHERE COALESCE(p.pagado, 0) = 0
-            """,
-            "vw_agentes_extensiones_pago_actual": """
-                CREATE OR REPLACE VIEW `vw_agentes_extensiones_pago_actual` AS
-                SELECT
-                    d.id AS agente_id,
-                    d.uuid,
-                    d.nombre,
-                    COALESCE(d.es_activo, 1) AS es_activo,
-                    l.id AS linea_id,
-                    l.numero AS extension_numero,
-                    l.tipo AS extension_tipo,
-                    CASE
-                        WHEN ala.id IS NULL OR l.id IS NULL THEN 'SIN_LINEA'
-                        ELSE 'ASIGNADA'
-                    END AS linea_estado,
-                    p.semana_inicio,
-                    COALESCE(p.pagado, 0) AS pagado_semana,
-                    COALESCE(p.monto, 0) AS monto_semana,
-                    p.fecha_pago,
-                    CASE
-                        WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'DEBE'
-                        ELSE 'PAGADO'
-                    END AS estado_pago
-                FROM datos_importados d
-                LEFT JOIN agente_linea_asignaciones ala
-                    ON ala.agente_id = d.id AND ala.es_activa = 1
-                LEFT JOIN lineas_telefonicas l
-                    ON l.id = ala.linea_id AND COALESCE(l.es_activa, 1) = 1
-                LEFT JOIN pagos_semanales p
-                    ON p.agente_id = d.id
-                   AND p.semana_inicio = DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
-                WHERE COALESCE(d.es_activo, 1) = 1
-            """,
-        }
+        statements = orm_schema.get_useful_views_sql_map(db.connection())
         created = []
         for name, sql in statements.items():
             db.execute(text(sql))
@@ -709,7 +656,7 @@ async def purge_temporary_objects(
         if include_empty and table_type == "BASE TABLE" and not should_drop:
             row_count = int(db.execute(text(f"SELECT COUNT(*) FROM `{name}`")).scalar() or 0)
             should_drop = row_count == 0 and lower_name not in {
-                "usuarios", "datos_importados", "import_logs", "auditoria_acciones", "config_sistema",
+                "usuarios", "agentes_operativos", "import_logs", "auditoria_acciones", "config_sistema",
                 "pagos_semanales", "lineas_telefonicas", "agente_linea_asignaciones", "alertas_pago", "recibos_pago",
                 "ladas_catalogo", "agente_lada_preferencias", "esquemas_base_datos"
             }

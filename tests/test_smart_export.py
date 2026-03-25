@@ -137,7 +137,7 @@ class TestListExportTables:
         response = client.get("/api/smart-export/tables", headers=_auth("capture"))
         assert response.status_code == 200
         body = response.json()
-        assert "datos_importados" in body["tablas"]
+        assert "agentes_operativos" in body["tablas"]
         assert "lineas_telefonicas" in body["tablas"]
 
     def test_admin_sees_extra_tables(self):
@@ -167,7 +167,7 @@ class TestListExportTables:
 class TestListTableFields:
     def test_fields_for_datos_importados(self):
         response = client.get(
-            "/api/smart-export/fields/datos_importados",
+            "/api/smart-export/fields/agentes_operativos",
             headers=_auth("capture"),
         )
         assert response.status_code == 200
@@ -242,7 +242,7 @@ class TestSmartExport:
     def test_csv_export_returns_bytes(self):
         resp = self._export(
             {
-                "tabla": "datos_importados",
+                "tabla": "agentes_operativos",
                 "campos": ["nombre", "email"],
                 "formato": "csv",
             }
@@ -256,7 +256,7 @@ class TestSmartExport:
     def test_excel_export_returns_xlsx(self):
         resp = self._export(
             {
-                "tabla": "datos_importados",
+                "tabla": "agentes_operativos",
                 "campos": ["nombre", "email"],
                 "formato": "excel",
             }
@@ -267,7 +267,7 @@ class TestSmartExport:
     def test_txt_export_tab_delimited(self):
         resp = self._export(
             {
-                "tabla": "datos_importados",
+                "tabla": "agentes_operativos",
                 "campos": ["nombre", "ciudad"],
                 "formato": "txt",
             }
@@ -280,7 +280,7 @@ class TestSmartExport:
     def test_dat_export_pipe_delimited(self):
         resp = self._export(
             {
-                "tabla": "datos_importados",
+                "tabla": "agentes_operativos",
                 "campos": ["nombre", "ciudad"],
                 "formato": "dat",
             }
@@ -295,7 +295,7 @@ class TestSmartExport:
     def test_filter_eq(self):
         resp = self._export(
             {
-                "tabla": "datos_importados",
+                "tabla": "agentes_operativos",
                 "campos": ["nombre", "ciudad"],
                 "filtros": [{"campo": "ciudad", "operador": "eq", "valor": "Guadalajara"}],
                 "formato": "csv",
@@ -311,7 +311,7 @@ class TestSmartExport:
     def test_filter_contains(self):
         resp = self._export(
             {
-                "tabla": "datos_importados",
+                "tabla": "agentes_operativos",
                 "campos": ["nombre"],
                 "filtros": [{"campo": "nombre", "operador": "contains", "valor": "Export"}],
                 "formato": "csv",
@@ -325,7 +325,7 @@ class TestSmartExport:
     def test_filter_is_null(self):
         resp = self._export(
             {
-                "tabla": "datos_importados",
+                "tabla": "agentes_operativos",
                 "campos": ["nombre", "empresa"],
                 "filtros": [{"campo": "empresa", "operador": "is_null"}],
                 "formato": "csv",
@@ -336,7 +336,7 @@ class TestSmartExport:
     def test_filter_in(self):
         resp = self._export(
             {
-                "tabla": "datos_importados",
+                "tabla": "agentes_operativos",
                 "campos": ["ciudad"],
                 "filtros": [
                     {
@@ -357,7 +357,7 @@ class TestSmartExport:
 
     def test_invalid_format_rejected(self):
         resp = self._export(
-            {"tabla": "datos_importados", "campos": ["nombre"], "formato": "pdf"}
+            {"tabla": "agentes_operativos", "campos": ["nombre"], "formato": "pdf"}
         )
         assert resp.status_code == 422
 
@@ -384,7 +384,7 @@ class TestSmartExport:
     def test_invalid_column_rejected(self):
         resp = self._export(
             {
-                "tabla": "datos_importados",
+                "tabla": "agentes_operativos",
                 "campos": ["nombre", "nonexistent_col_xyz"],
                 "formato": "csv",
             }
@@ -394,7 +394,7 @@ class TestSmartExport:
     def test_invalid_filter_operator_rejected(self):
         resp = self._export(
             {
-                "tabla": "datos_importados",
+                "tabla": "agentes_operativos",
                 "campos": ["nombre"],
                 "filtros": [{"campo": "nombre", "operador": "DROP TABLE", "valor": "x"}],
                 "formato": "csv",
@@ -404,14 +404,14 @@ class TestSmartExport:
 
     def test_empty_campos_rejected(self):
         resp = self._export(
-            {"tabla": "datos_importados", "campos": [], "formato": "csv"}
+            {"tabla": "agentes_operativos", "campos": [], "formato": "csv"}
         )
         assert resp.status_code == 422
 
     def test_limit_respected(self):
         resp = self._export(
             {
-                "tabla": "datos_importados",
+                "tabla": "agentes_operativos",
                 "campos": ["nombre"],
                 "formato": "csv",
                 "limite": 1,
@@ -425,7 +425,7 @@ class TestSmartExport:
     def test_custom_filename_in_header(self):
         resp = self._export(
             {
-                "tabla": "datos_importados",
+                "tabla": "agentes_operativos",
                 "campos": ["nombre"],
                 "formato": "csv",
                 "nombre_archivo": "mi_reporte",
@@ -438,7 +438,7 @@ class TestSmartExport:
     def test_unauthenticated_blocked(self):
         resp = client.post(
             "/api/smart-export/export",
-            json={"tabla": "datos_importados", "campos": ["nombre"], "formato": "csv"},
+            json={"tabla": "agentes_operativos", "campos": ["nombre"], "formato": "csv"},
         )
         # FastAPI OAuth2PasswordBearer returns 403 when no Authorization header is present
         assert resp.status_code in {401, 403}

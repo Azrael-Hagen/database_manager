@@ -5,9 +5,9 @@ from sqlalchemy.orm import Session
 from app.database.orm import get_db
 from app.database.repositorios import RepositorioUsuario, RepositorioAuditoria
 from app.api.usuarios import _purge_expired_temp_users
-from app.schemas import UsuarioCrear, UsuarioAuth, Usuario, Token
-from app.security import create_access_token, get_current_user, get_client_ip, ACCESS_TOKEN_EXPIRE_MINUTES, normalize_role
-from datetime import timedelta
+from app.schemas import UsuarioCrear, UsuarioAuth, Usuario, Token, UsuarioTemporalCrear
+from app.security import create_access_token, get_current_user, get_client_ip, ACCESS_TOKEN_EXPIRE_MINUTES, normalize_role, hash_password
+from datetime import timedelta, datetime, timezone
 from fastapi import Request
 import logging
 
@@ -55,6 +55,54 @@ async def registrar(usuario_in: UsuarioCrear, db: Session = Depends(get_db), req
         ip_origen=get_client_ip(request) if request else None
     )
     
+    return usuario
+
+
+@router.post("/registrar-temporal", response_model=Usuario)
+async def registrar_temporal(usuario_in: UsuarioTemporalCrear, db: Session = Depends(get_db), request: Request = None):
+    """Registrar nuevo usuario temporal de acceso limitado desde el login."""
+    repo_usuario = RepositorioUsuario(db)
+    repo_auditoria = RepositorioAuditoria(db)
+
+    if repo_usuario.obtener_por_username(usuario_in.username):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username ya existe"
+        )
+
+    if repo_usuario.obtener_por_email(usuario_in.email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email ya está registrado"
+        )
+
+    expira_en = datetime.now(timezone.utc) + timedelta(days=min(int(usuario_in.dias_vigencia or 10), 10))
+    usuario = repo_usuario.crear_usuario(
+        {
+            "username": usuario_in.username,
+            "email": usuario_in.email,
+            "nombre_completo": usuario_in.nombre_completo,
+            "hashed_password": hash_password(usuario_in.password),
+            "rol": "viewer",
+            "es_admin": False,
+            "es_activo": True,
+            "es_temporal": True,
+            "temporal_expira_en": expira_en,
+            "temporal_renovaciones": 0,
+            "solicitud_permiso_estado": "none",
+        }
+    )
+
+    repo_auditoria.registrar_accion(
+        usuario_id=usuario.id,
+        tipo_accion="REGISTER",
+        tabla="usuarios",
+        registro_id=usuario.id,
+        descripcion=f"Usuario temporal registrado: {usuario.username}",
+        resultado="SUCCESS",
+        ip_origen=get_client_ip(request) if request else None
+    )
+
     return usuario
 
 

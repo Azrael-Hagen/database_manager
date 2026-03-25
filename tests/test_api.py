@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.database.orm import Base, get_db
 from app.database.repositorios import RepositorioUsuario
-from app.models import Usuario
+from app.models import Usuario, DatoImportado
 from app.schemas import UsuarioCrear
 from app.security import create_access_token
 from app import security as security_module
@@ -478,6 +478,156 @@ class TestAlertasRoles:
         items = data.get("items", [])
         role_keys = {item.get("role") for item in items}
         assert {"viewer", "capture", "admin", "super_admin"}.issubset(role_keys)
+
+
+class TestUsuariosAutoservicioLimitado:
+    """Cobertura del portal limitado y transición temporal -> normal limitado."""
+
+    def _crear_usuario(self, *, username: str, email: str, rol: str = "viewer", es_temporal: bool = False) -> Usuario:
+        db = TestingSessionLocal()
+        repo = RepositorioUsuario(db)
+        existente = repo.obtener_por_username(username)
+        if existente:
+            db.close()
+            return existente
+        usuario = repo.crear(
+            UsuarioCrear(
+                username=username,
+                email=email,
+                password="TestPassword123!",
+                nombre_completo="Usuario Portal",
+                rol=rol,
+                es_admin=rol in {"admin", "super_admin"},
+            )
+        )
+        if es_temporal:
+            usuario = repo.actualizar_usuario(
+                usuario.id,
+                {
+                    "es_temporal": True,
+                    "rol": "viewer",
+                    "es_admin": False,
+                    "solicitud_permiso_estado": "none",
+                },
+            )
+        db.close()
+        return usuario
+
+    def _login_headers(self, username: str) -> dict:
+        response = https_client.post(
+            "/api/auth/login",
+            json={"username": username, "password": "TestPassword123!"},
+        )
+        assert response.status_code == 200
+        token = response.json()["access_token"]
+        return {"Authorization": f"Bearer {token}"}
+
+    def test_registro_temporal_publico_crea_usuario_temporal_limited(self):
+        suffix = uuid.uuid4().hex[:8]
+        response = client.post(
+            "/api/auth/registrar-temporal",
+            json={
+                "username": f"temp_public_{suffix}",
+                "email": f"temp_public_{suffix}@example.com",
+                "password": "TestPassword123!",
+                "nombre_completo": "Temporal Publico",
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["rol"] == "viewer"
+        assert data["es_temporal"] is True
+        assert data["es_admin"] is False
+
+    def test_autoservicio_retorna_solo_agente_relacionado_al_usuario(self):
+        suffix = uuid.uuid4().hex[:8]
+        username = f"viewer_self_{suffix}"
+        email = f"viewer_self_{suffix}@example.com"
+        usuario = self._crear_usuario(username=username, email=email, rol="viewer", es_temporal=True)
+
+        db = TestingSessionLocal()
+        db.add(DatoImportado(nombre="Viewer Self", email=email, telefono="5551112233", es_activo=True))
+        db.add(DatoImportado(nombre="Otro Agente", email=f"otro_{suffix}@example.com", telefono="5559990000", es_activo=True))
+        db.commit()
+        db.close()
+
+        response = https_client.get("/api/usuarios/self-service/resumen", headers=self._login_headers(username))
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "success"
+        assert body["usuario"]["id"] == usuario.id
+        assert len(body["agentes"]) == 1
+        assert body["agentes"][0]["email"] == email
+        assert body["agentes"][0]["deuda_total"] >= 0
+        assert body["agentes"][0]["saldo_acumulado"] >= 0
+
+    def test_temporal_puede_solicitar_pase_a_usuario_normal_limitado(self):
+        suffix = uuid.uuid4().hex[:8]
+        username = f"temp_request_{suffix}"
+        usuario = self._crear_usuario(username=username, email=f"temp_request_{suffix}@example.com", rol="viewer", es_temporal=True)
+
+        response = https_client.post(
+            f"/api/usuarios/{usuario.id}/solicitud-permisos",
+            headers=self._login_headers(username),
+            json={"rol_solicitado": "viewer", "motivo": "Quiero ser usuario normal limitado"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["es_temporal"] is True
+        assert data["solicitud_permiso_estado"] == "pending"
+        assert data["solicitud_permiso_rol"] == "viewer"
+
+    def test_admin_puede_cambiar_rol_y_consulta_refleja_persistencia(self):
+        suffix = uuid.uuid4().hex[:8]
+        admin_name = f"admin_roles_{suffix}"
+        target_name = f"target_roles_{suffix}"
+        self._crear_usuario(username=admin_name, email=f"{admin_name}@example.com", rol="admin")
+        target = self._crear_usuario(username=target_name, email=f"{target_name}@example.com", rol="viewer")
+
+        update_response = https_client.put(
+            f"/api/usuarios/{target.id}",
+            headers=self._login_headers(admin_name),
+            json={"rol": "capture", "es_admin": False, "es_activo": True},
+        )
+
+        assert update_response.status_code == 200
+        assert update_response.json()["rol"] == "capture"
+
+        get_response = https_client.get(
+            f"/api/usuarios/{target.id}",
+            headers=self._login_headers(admin_name),
+        )
+        assert get_response.status_code == 200
+        assert get_response.json()["rol"] == "capture"
+
+    def test_admin_puede_aprobar_pase_de_temporal_a_normal_limitado(self):
+        suffix = uuid.uuid4().hex[:8]
+        admin_name = f"admin_approve_{suffix}"
+        temp_name = f"temp_approve_{suffix}"
+        self._crear_usuario(username=admin_name, email=f"{admin_name}@example.com", rol="admin")
+        temporal = self._crear_usuario(username=temp_name, email=f"{temp_name}@example.com", rol="viewer", es_temporal=True)
+
+        request_response = https_client.post(
+            f"/api/usuarios/{temporal.id}/solicitud-permisos",
+            headers=self._login_headers(temp_name),
+            json={"rol_solicitado": "viewer", "motivo": "Pase a cuenta normal"},
+        )
+        assert request_response.status_code == 200
+
+        resolve_response = https_client.post(
+            f"/api/usuarios/solicitudes-permisos/{temporal.id}/resolver",
+            headers=self._login_headers(admin_name),
+            json={"aprobar": True, "rol_aprobado": "viewer"},
+        )
+
+        assert resolve_response.status_code == 200
+        data = resolve_response.json()
+        assert data["rol"] == "viewer"
+        assert data["es_temporal"] is False
+        assert data["es_admin"] is False
 
 
 class TestDatosRobustezUpdate:

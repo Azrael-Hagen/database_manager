@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request, status, Depends, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
-from fastapi.exceptions import RequestValidationError
+from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from contextlib import asynccontextmanager
 import logging
 import os
@@ -217,6 +217,20 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "status": "error",
             "mensaje": "Validación fallida",
             "detalles": str(exc.errors())
+        },
+    )
+
+
+@app.exception_handler(ResponseValidationError)
+async def response_validation_exception_handler(request: Request, exc: ResponseValidationError):
+    """Manejar errores de validación en respuestas — registra detalle para diagnóstico."""
+    logger.error(f"Error de validación en respuesta [{request.method} {request.url.path}]: {exc}")
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "status": "error",
+            "mensaje": "Error interno del servidor",
+            "detalles": str(exc) if config.API_DEBUG else None,
         },
     )
 

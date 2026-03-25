@@ -3,6 +3,7 @@
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+import json
 import re
 from datetime import date
 
@@ -115,14 +116,14 @@ class UsuarioTemporalRenovar(BaseModel):
 
 class SolicitudPermisoCrear(BaseModel):
     """Solicitud de escalamiento de permisos para usuarios temporales."""
-    rol_solicitado: str = Field("capture", pattern="^(capture|admin)$")
+    rol_solicitado: str = Field("viewer", pattern="^(viewer|capture|admin)$")
     motivo: Optional[str] = Field(None, max_length=500)
 
 
 class SolicitudPermisoResolver(BaseModel):
     """Resolver solicitud de escalamiento."""
     aprobar: bool = True
-    rol_aprobado: str = Field("capture", pattern="^(capture|admin)$")
+    rol_aprobado: str = Field("viewer", pattern="^(viewer|capture|admin)$")
 
 
 class TempUsuarioHistorialItem(BaseModel):
@@ -175,7 +176,19 @@ class DatoImportadoBase(BaseModel):
     ciudad: Optional[str] = Field(None, max_length=100)
     pais: Optional[str] = Field(None, max_length=100)
     datos_adicionales: Optional[Dict[str, Any]] = None
-    
+
+    @field_validator('datos_adicionales', mode='before')
+    @classmethod
+    def parse_datos_adicionales(cls, v):
+        """Acepta tanto dict como JSON-string para datos_adicionales."""
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        return v
+
     @field_validator('telefono')
     @classmethod
     def validate_telefono(cls, v):

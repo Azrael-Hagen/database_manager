@@ -10,8 +10,8 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
-from sqlalchemy import select, text
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select, text
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database.orm import get_db
 from app.models import (
@@ -48,6 +48,7 @@ from app.utils.backups import (
 from app.utils.qr_print import build_agent_qr_pdf
 from app.utils.pagos import (
     generar_alertas_miercoles_pendientes,
+    get_manual_deuda_ajuste,
     get_cuota_semanal,
     monday_of_week,
     obtener_reporte_semanal,
@@ -663,8 +664,16 @@ def _refresh_agent_qr_for_state(db: Session, agente: DatoImportado, request: Req
     generator = QRGenerator()
     filename = f"agente_{agente.id}_{agente.uuid}.png"
     filepath = generator.generate_qr_from_text(public_url, filename)
+    qr_blob = None
+    try:
+        with open(filepath, "rb") as fh:
+            qr_blob = fh.read()
+    except Exception:
+        qr_blob = None
 
     agente.qr_filename = filename
+    if qr_blob:
+        agente.qr_code = qr_blob
     agente.contenido_qr = json.dumps(payload, ensure_ascii=False)
     db.add(agente)
     db.flush()
@@ -674,6 +683,38 @@ def _refresh_agent_qr_for_state(db: Session, agente: DatoImportado, request: Req
 
 def _has_assignment(dato: DatoImportado) -> bool:
     return False
+
+
+def _registrar_movimiento_cobro(
+    db: Session,
+    *,
+    agente_id: int,
+    tipo_movimiento: str,
+    monto: float = 0.0,
+    semana_inicio: date | None = None,
+    referencia_pago_id: int | None = None,
+    usuario_id: int | None = None,
+    payload: dict | None = None,
+) -> None:
+    db.execute(
+        text(
+            """
+            INSERT INTO cobros_movimientos
+                (agente_id, semana_inicio, tipo_movimiento, monto, referencia_pago_id, usuario_id, payload_json)
+            VALUES
+                (:agente_id, :semana_inicio, :tipo_movimiento, :monto, :referencia_pago_id, :usuario_id, :payload_json)
+            """
+        ),
+        {
+            "agente_id": int(agente_id),
+            "semana_inicio": semana_inicio,
+            "tipo_movimiento": str(tipo_movimiento or "OTRO")[:30],
+            "monto": float(monto or 0.0),
+            "referencia_pago_id": int(referencia_pago_id) if referencia_pago_id else None,
+            "usuario_id": int(usuario_id) if usuario_id else None,
+            "payload_json": json.dumps(payload or {}, ensure_ascii=False),
+        },
+    )
 
 
 def _active_line_assignments_map(db: Session) -> dict[int, AgenteLineaAsignacion]:
@@ -699,6 +740,25 @@ def _agent_active_lines(db: Session, agente_id: int) -> list[dict]:
             "tipo": row.linea.tipo,
             "fecha_asignacion": row.fecha_asignacion.isoformat() if row.fecha_asignacion else None,
         })
+    return result
+
+
+def _agent_active_lines_from_prefetch(dato: DatoImportado) -> list[dict]:
+    """Return active lines using prefetched relationships (no extra DB hits)."""
+    result = []
+    for row in (dato.lineas_asignadas or []):
+        if not row.es_activa:
+            continue
+        if not row.linea or not row.linea.es_activa:
+            continue
+        result.append(
+            {
+                "linea_id": row.linea.id,
+                "numero": row.linea.numero,
+                "tipo": row.linea.tipo,
+                "fecha_asignacion": row.fecha_asignacion.isoformat() if row.fecha_asignacion else None,
+            }
+        )
     return result
 
 
@@ -989,6 +1049,7 @@ async def registrar_pago_semanal(
             observaciones=pago_in.observaciones,
         )
         db.add(pago)
+        tipo_mov = "ABONO_INICIAL"
     else:
         pago.telefono = telefono_final
         pago.numero_voip = voip_final
@@ -996,6 +1057,7 @@ async def registrar_pago_semanal(
         pago.pagado = bool(pago.monto >= cuota)
         pago.observaciones = pago_in.observaciones or pago.observaciones
         pago.fecha_pago = _utcnow() if monto_final > 0 else pago.fecha_pago
+        tipo_mov = "ABONO"
 
     if pago.pagado:
         alertas = db.query(AlertaPago).filter(
@@ -1009,6 +1071,22 @@ async def registrar_pago_semanal(
 
     db.commit()
     db.refresh(pago)
+
+    _registrar_movimiento_cobro(
+        db,
+        agente_id=agente.id,
+        tipo_movimiento="LIQUIDACION" if bool(pago_in.liquidar_total) else tipo_mov,
+        monto=float(monto_final),
+        semana_inicio=semana,
+        referencia_pago_id=pago.id,
+        usuario_id=current_user.get("id"),
+        payload={
+            "pagado_semana": bool(pago.pagado),
+            "observaciones": pago.observaciones,
+            "telefono": pago.telefono,
+            "numero_voip": pago.numero_voip,
+        },
+    )
 
     resumen_after = resumen_cobranza_agente(db, agente, semana)
 
@@ -1056,6 +1134,8 @@ async def editar_pago_semanal_admin(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pago no encontrado")
 
     cuota = get_cuota_semanal(db)
+    monto_anterior = float(pago.monto or 0)
+    pagado_anterior = bool(pago.pagado)
     if payload.monto is not None:
         pago.monto = float(payload.monto)
     if payload.pagado is not None:
@@ -1067,6 +1147,22 @@ async def editar_pago_semanal_admin(
     pago.fecha_pago = _utcnow() if pago.pagado else None
 
     db.add(pago)
+    _registrar_movimiento_cobro(
+        db,
+        agente_id=pago.agente_id,
+        tipo_movimiento="EDICION_PAGO",
+        monto=float(pago.monto or 0) - monto_anterior,
+        semana_inicio=pago.semana_inicio,
+        referencia_pago_id=pago.id,
+        usuario_id=current_user.get("id"),
+        payload={
+            "monto_anterior": monto_anterior,
+            "monto_nuevo": float(pago.monto or 0),
+            "pagado_anterior": pagado_anterior,
+            "pagado_nuevo": bool(pago.pagado),
+            "observaciones": pago.observaciones,
+        },
+    )
     db.commit()
     db.refresh(pago)
 
@@ -1108,6 +1204,131 @@ async def resumen_pagos_agente(
         "data": {
             **resumen,
             "semana_inicio": resumen["semana_inicio"].isoformat() if resumen.get("semana_inicio") else None,
+        },
+    }
+
+
+@router.get("/pagos/totales")
+async def totales_cobranza(
+    fecha: date | None = Query(None),
+    semana: date | None = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Resumen de cobranza: total cobrado por fecha y acumulado de semana operativa."""
+    _ = current_user
+    fecha_ref = fecha or date.today()
+    semana_ref = monday_of_week(semana or fecha_ref)
+    semana_fin = semana_ref + timedelta(days=6)
+    fecha_inicio_dt = datetime(fecha_ref.year, fecha_ref.month, fecha_ref.day)
+    fecha_fin_dt = fecha_inicio_dt + timedelta(days=1)
+    semana_inicio_dt = datetime(semana_ref.year, semana_ref.month, semana_ref.day)
+    semana_fin_dt = semana_inicio_dt + timedelta(days=7)
+
+    total_dia = float(
+        db.query(func.coalesce(func.sum(PagoSemanal.monto), 0.0))
+        .filter(
+            PagoSemanal.fecha_pago.is_not(None),
+            PagoSemanal.monto > 0,
+            PagoSemanal.fecha_pago >= fecha_inicio_dt,
+            PagoSemanal.fecha_pago < fecha_fin_dt,
+        )
+        .scalar()
+        or 0.0
+    )
+    pagos_dia = int(
+        db.query(func.count(PagoSemanal.id))
+        .filter(
+            PagoSemanal.fecha_pago.is_not(None),
+            PagoSemanal.monto > 0,
+            PagoSemanal.fecha_pago >= fecha_inicio_dt,
+            PagoSemanal.fecha_pago < fecha_fin_dt,
+        )
+        .scalar()
+        or 0
+    )
+    agentes_dia = int(
+        db.query(func.count(func.distinct(PagoSemanal.agente_id)))
+        .filter(
+            PagoSemanal.fecha_pago.is_not(None),
+            PagoSemanal.monto > 0,
+            PagoSemanal.fecha_pago >= fecha_inicio_dt,
+            PagoSemanal.fecha_pago < fecha_fin_dt,
+        )
+        .scalar()
+        or 0
+    )
+
+    total_semana = float(
+        db.query(func.coalesce(func.sum(PagoSemanal.monto), 0.0))
+        .filter(
+            PagoSemanal.semana_inicio == semana_ref,
+            PagoSemanal.monto > 0,
+        )
+        .scalar()
+        or 0.0
+    )
+    pagos_semana = int(
+        db.query(func.count(PagoSemanal.id))
+        .filter(
+            PagoSemanal.semana_inicio == semana_ref,
+            PagoSemanal.monto > 0,
+        )
+        .scalar()
+        or 0
+    )
+    agentes_semana = int(
+        db.query(func.count(func.distinct(PagoSemanal.agente_id)))
+        .filter(
+            PagoSemanal.semana_inicio == semana_ref,
+            PagoSemanal.monto > 0,
+        )
+        .scalar()
+        or 0
+    )
+
+    rows = (
+        db.query(
+            func.date(PagoSemanal.fecha_pago).label("fecha_pago"),
+            func.coalesce(func.sum(PagoSemanal.monto), 0.0).label("monto_total"),
+            func.count(PagoSemanal.id).label("pagos"),
+        )
+        .filter(
+            PagoSemanal.fecha_pago.is_not(None),
+            PagoSemanal.monto > 0,
+            PagoSemanal.fecha_pago >= semana_inicio_dt,
+            PagoSemanal.fecha_pago < semana_fin_dt,
+        )
+        .group_by(func.date(PagoSemanal.fecha_pago))
+        .all()
+    )
+    daily_map = {str(r.fecha_pago): {"monto": float(r.monto_total or 0.0), "pagos": int(r.pagos or 0)} for r in rows}
+
+    serie = []
+    for i in range(7):
+        day = semana_ref + timedelta(days=i)
+        day_iso = day.isoformat()
+        serie.append(
+            {
+                "fecha": day_iso,
+                "monto": float(daily_map.get(day_iso, {}).get("monto", 0.0)),
+                "pagos": int(daily_map.get(day_iso, {}).get("pagos", 0)),
+            }
+        )
+
+    return {
+        "status": "success",
+        "data": {
+            "fecha": fecha_ref.isoformat(),
+            "semana_inicio": semana_ref.isoformat(),
+            "semana_fin": semana_fin.isoformat(),
+            "total_pagado_dia": total_dia,
+            "pagos_registrados_dia": pagos_dia,
+            "agentes_cobrados_dia": agentes_dia,
+            "total_pagado_semana": total_semana,
+            "pagos_registrados_semana": pagos_semana,
+            "agentes_cobrados_semana": agentes_semana,
+            "serie_diaria_semana": serie,
         },
     }
 
@@ -1185,6 +1406,7 @@ async def actualizar_deuda_manual_agente(
     if mode not in {"ajuste", "saldo_objetivo"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="modo debe ser ajuste o saldo_objetivo")
 
+    ajuste_anterior = float(get_manual_deuda_ajuste(db, agente.id))
     if mode == "ajuste":
         nuevo_ajuste = set_manual_deuda_ajuste(db, agente.id, monto)
     else:
@@ -1193,6 +1415,21 @@ async def actualizar_deuda_manual_agente(
         abonado = float(resumen_prev.get("total_abonado") or 0)
         target_deuda_total = max(float(monto) + abonado, 0.0)
         nuevo_ajuste = set_manual_deuda_ajuste(db, agente.id, target_deuda_total - deuda_base)
+
+    _registrar_movimiento_cobro(
+        db,
+        agente_id=agente.id,
+        tipo_movimiento="AJUSTE_DEUDA",
+        monto=float(nuevo_ajuste) - ajuste_anterior,
+        semana_inicio=monday_of_week(semana_ref or date.today()) if semana_ref else None,
+        referencia_pago_id=None,
+        usuario_id=current_user.get("id"),
+        payload={
+            "modo": mode,
+            "ajuste_anterior": ajuste_anterior,
+            "ajuste_nuevo": float(nuevo_ajuste),
+        },
+    )
 
     resumen = resumen_cobranza_agente(db, agente, semana_ref)
     return {
@@ -1339,6 +1576,7 @@ async def verificar_por_codigo_escaneado(
 @router.get("/agentes")
 async def listar_agentes_qr(
     search: str | None = Query(None),
+    limit: int = Query(500, ge=1, le=2000),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1353,7 +1591,12 @@ async def listar_agentes_qr(
             (DatoImportado.datos_adicionales.ilike(term))
         )
 
-    agentes = query.limit(500).all()
+    query = query.options(
+        selectinload(DatoImportado.ladas_preferidas).selectinload(AgenteLadaPreferencia.lada),
+        selectinload(DatoImportado.lineas_asignadas).joinedload(AgenteLineaAsignacion.linea),
+    )
+
+    agentes = query.limit(limit).all()
     agentes = sorted(
         agentes,
         key=lambda item: (
@@ -1362,25 +1605,31 @@ async def listar_agentes_qr(
             int(item.id or 0),
         ),
     )
-    return {
-        "status": "success",
-        "data": [
+
+    data = []
+    for a in agentes:
+        extras = _safe_json_object(a.datos_adicionales)
+        alias = extras.get("alias") if isinstance(extras, dict) else None
+        data.append(
             {
                 "id": a.id,
                 "uuid": a.uuid,
                 "nombre": a.nombre,
-                "alias": _safe_json_object(a.datos_adicionales).get("alias"),
-                "display_name": _legacy_agent_display_name(a.nombre, _safe_json_object(a.datos_adicionales).get("alias"), a.id),
+                "alias": alias,
+                "display_name": _legacy_agent_display_name(a.nombre, alias, a.id),
                 "telefono": a.telefono,
                 "numero_voip": _extract_voip(a),
-                "datos_adicionales": _safe_json_object(a.datos_adicionales),
+                "datos_adicionales": extras,
                 "ladas_preferidas": [
                     pref.lada.codigo for pref in sorted(a.ladas_preferidas, key=lambda x: x.prioridad) if pref.lada and pref.lada.es_activa
                 ],
-                "lineas": _agent_active_lines(db, a.id),
+                "lineas": _agent_active_lines_from_prefetch(a),
             }
-            for a in agentes
-        ],
+        )
+
+    return {
+        "status": "success",
+        "data": data,
     }
 
 
@@ -2101,7 +2350,7 @@ async def listar_agentes_extension_estado_pago(
                             WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'Pendiente de Pago'
                             ELSE 'Al Corriente'
                         END AS estado_pago
-                    FROM datos_importados d
+                    FROM agentes_operativos d
                     LEFT JOIN agente_linea_asignaciones ala
                         ON ala.agente_id = d.id AND ala.es_activa = 1
                     LEFT JOIN lineas_telefonicas l
@@ -2145,7 +2394,7 @@ async def listar_agentes_extension_estado_pago(
                         WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'Pendiente de Pago'
                         ELSE 'Al Corriente'
                     END AS estado_pago
-                FROM datos_importados d
+                FROM agentes_operativos d
                 LEFT JOIN agente_linea_asignaciones ala
                     ON ala.agente_id = d.id AND ala.es_activa = 1
                 LEFT JOIN lineas_telefonicas l
@@ -2319,7 +2568,7 @@ async def listar_agentes_estado(
                     WHEN COUNT(DISTINCT l.id) > 0 THEN 'ASIGNADA'
                     ELSE 'SIN_LINEA'
                 END AS linea_estado
-            FROM datos_importados d
+            FROM agentes_operativos d
             LEFT JOIN agente_linea_asignaciones ala
                 ON ala.agente_id = d.id AND ala.es_activa = 1
             LEFT JOIN lineas_telefonicas l
@@ -2430,8 +2679,10 @@ async def listar_agentes_sin_imprimir(
     estado=todos: todos los que tienen QR generado.
     """
     require_capture_role(current_user)
+    # QR en este sistema es estatico por agente (UUID). Algunos agentes historicos
+    # no tienen `qr_code` persistido, pero si pueden exportarse y reexportarse.
     query = db.query(DatoImportado).filter(
-        DatoImportado.qr_code.isnot(None),
+        DatoImportado.uuid.isnot(None),
     )
     if estado == "sin_imprimir":
         query = query.filter(DatoImportado.qr_impreso.is_(False))
@@ -2495,6 +2746,7 @@ async def exportar_qr_agentes_pdf(
     ids_csv: str | None = Query(None, description="IDs de agentes separados por coma"),
     search: str | None = Query(None, description="Filtro parcial por nombre o telefono"),
     layout: str = Query("sheet", pattern="^(sheet|labels|oficio)$"),
+    layout_overrides: str | None = Query(None, description="JSON opcional con ajustes de etiqueta"),
     solo_activos: bool = Query(True),
     marcar_impreso: bool = Query(True, description="Marcar agentes exportados como impresos"),
     current_user: dict = Depends(get_current_user),
@@ -2540,6 +2792,10 @@ async def exportar_qr_agentes_pdf(
             {
                 "id": agente.id,
                 "alias": (extras.get("alias") if isinstance(extras, dict) else None),
+                "ubicacion": (
+                    (extras.get("ubicacion") if isinstance(extras, dict) else None)
+                    or (extras.get("fp") if isinstance(extras, dict) else None)
+                ),
                 "uuid": agente.uuid,
                 "nombre": agente.nombre,
                 "telefono": agente.telefono,
@@ -2551,7 +2807,16 @@ async def exportar_qr_agentes_pdf(
         )
 
     db.commit()
-    pdf_bytes = build_agent_qr_pdf(export_rows, layout=layout)
+    overrides_payload = None
+    if layout_overrides:
+        try:
+            parsed = json.loads(layout_overrides)
+            if isinstance(parsed, dict):
+                overrides_payload = parsed
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="layout_overrides debe ser JSON válido")
+
+    pdf_bytes = build_agent_qr_pdf(export_rows, layout=layout, layout_overrides=overrides_payload)
 
     if marcar_impreso:
         now = _utcnow()

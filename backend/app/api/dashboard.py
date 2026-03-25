@@ -71,8 +71,8 @@ def _build_activity_series(agent_rows: list[dict], import_rows: list[dict]) -> l
 def _fetch_agent_snapshot(db: Session) -> dict:
     """Obtener metricas reales de agentes priorizando la vista sincronizada."""
     candidates = [
-        ("registro_agentes.datos_importados", "registro_agentes"),
-        ("datos_importados", "database_manager"),
+        ("registro_agentes.agentes_operativos", "registro_agentes"),
+        ("agentes_operativos", "database_manager"),
     ]
     since = datetime.now(timezone.utc) - timedelta(days=6)
 
@@ -222,7 +222,7 @@ def _build_operational_alerts(
             {
                 "level": "info",
                 "title": "Sin agentes cargados",
-                "detail": "Aun no hay registros persistidos en datos_importados.",
+                "detail": "Aun no hay registros persistidos en agentes_operativos.",
                 "action_section": "importar",
             }
         )
@@ -330,7 +330,7 @@ async def dashboard_summary(
         text(
             """
             SELECT COUNT(*)
-            FROM datos_importados d
+            FROM agentes_operativos d
             LEFT JOIN agente_linea_asignaciones ala
                 ON ala.agente_id = d.id AND ala.es_activa = 1
             WHERE COALESCE(d.es_activo, 1) = 1

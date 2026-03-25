@@ -102,7 +102,7 @@ def reporte_sin_linea_inicio(db: Session) -> dict:
             text(
                 """
                 SELECT COUNT(*)
-                FROM datos_importados d
+                FROM agentes_operativos d
                 LEFT JOIN agente_linea_asignaciones ala
                     ON ala.agente_id = d.id AND ala.es_activa = 1
                 WHERE COALESCE(d.es_activo, 1) = 1

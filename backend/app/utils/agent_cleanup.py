@@ -15,7 +15,7 @@ def _candidate_test_ids(db: Session) -> list[int]:
         text(
             """
             SELECT d.id
-            FROM datos_importados d
+            FROM agentes_operativos d
             WHERE COALESCE(d.es_activo, 1) = 1
               AND (
                     LOWER(COALESCE(d.nombre, '')) REGEXP :regex_name
@@ -52,7 +52,7 @@ def _candidate_duplicate_ids(db: Session) -> list[int]:
                     LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(datos_adicionales, '$.numero_voip')), '')))
                   ORDER BY id ASC
                 ) AS rn
-              FROM datos_importados
+              FROM agentes_operativos
               WHERE COALESCE(es_activo, 1) = 1
             )
             SELECT r.id
@@ -81,7 +81,7 @@ def _candidate_name_alias_duplicate_ids(db: Session) -> list[int]:
                                         LOWER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(datos_adicionales, '$.alias')), '')))
                                     ORDER BY id ASC
                                 ) AS rn
-                            FROM datos_importados
+                            FROM agentes_operativos
                             WHERE COALESCE(es_activo, 1) = 1
                         )
                         SELECT r.id
@@ -100,7 +100,7 @@ def _candidate_name_alias_duplicate_ids(db: Session) -> list[int]:
 def _active_agents_count(db: Session) -> int:
     return int(
         db.execute(
-            text("SELECT COUNT(*) FROM datos_importados WHERE COALESCE(es_activo, 1) = 1")
+            text("SELECT COUNT(*) FROM agentes_operativos WHERE COALESCE(es_activo, 1) = 1")
         ).scalar()
         or 0
     )
@@ -135,7 +135,7 @@ def cleanup_redundant_agents(
 
     ids_csv = ",".join(str(i) for i in candidate_ids)
     deleted = db.execute(
-        text(f"DELETE FROM datos_importados WHERE id IN ({ids_csv})")
+        text(f"DELETE FROM agentes_operativos WHERE id IN ({ids_csv})")
     ).rowcount or 0
 
     legacy_deleted = 0

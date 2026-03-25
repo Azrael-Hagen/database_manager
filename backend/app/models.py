@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import uuid
 
 Base = declarative_base()
+AGENTES_TABLE_NAME = "agentes_operativos"
 
 _utcnow = lambda: datetime.now(timezone.utc)
 
@@ -44,7 +45,7 @@ class Usuario(Base):
 class DatoImportado(Base):
     """Modelo para datos importados con auditoría."""
     
-    __tablename__ = "datos_importados"
+    __tablename__ = AGENTES_TABLE_NAME
     
     id = Column(Integer, primary_key=True, index=True)
     uuid = Column(String(36), unique=True, default=lambda: str(uuid.uuid4()))
@@ -109,7 +110,7 @@ class PagoSemanal(Base):
     __tablename__ = "pagos_semanales"
 
     id = Column(Integer, primary_key=True, index=True)
-    agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
+    agente_id = Column(Integer, ForeignKey(f"{AGENTES_TABLE_NAME}.id"), nullable=False, index=True)
     telefono = Column(String(20), nullable=False, index=True)
     numero_voip = Column(String(50), nullable=True, index=True)
     semana_inicio = Column(Date, nullable=False, index=True)
@@ -147,7 +148,7 @@ class AlertaPago(Base):
     __tablename__ = "alertas_pago"
 
     id = Column(Integer, primary_key=True, index=True)
-    agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
+    agente_id = Column(Integer, ForeignKey(f"{AGENTES_TABLE_NAME}.id"), nullable=False, index=True)
     semana_inicio = Column(Date, nullable=False, index=True)
     fecha_alerta = Column(DateTime, default=_utcnow, index=True)
     motivo = Column(String(255), default="Pago semanal pendiente")
@@ -188,7 +189,7 @@ class AgenteLineaAsignacion(Base):
     __tablename__ = "agente_linea_asignaciones"
 
     id = Column(Integer, primary_key=True, index=True)
-    agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
+    agente_id = Column(Integer, ForeignKey(f"{AGENTES_TABLE_NAME}.id"), nullable=False, index=True)
     linea_id = Column(Integer, ForeignKey("lineas_telefonicas.id"), nullable=False, index=True)
     es_activa = Column(Boolean, default=True, index=True)
     fecha_asignacion = Column(DateTime, default=_utcnow, index=True)
@@ -227,7 +228,7 @@ class AgenteLadaPreferencia(Base):
     __tablename__ = "agente_lada_preferencias"
 
     id = Column(Integer, primary_key=True, index=True)
-    agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
+    agente_id = Column(Integer, ForeignKey(f"{AGENTES_TABLE_NAME}.id"), nullable=False, index=True)
     lada_id = Column(Integer, ForeignKey("ladas_catalogo.id"), nullable=False, index=True)
     prioridad = Column(Integer, default=1, index=True)
     fecha_creacion = Column(DateTime, default=_utcnow, index=True)
@@ -267,7 +268,7 @@ class ReciboPago(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     pago_id = Column(Integer, ForeignKey("pagos_semanales.id"), nullable=False, unique=True, index=True)
-    agente_id = Column(Integer, ForeignKey("datos_importados.id"), nullable=False, index=True)
+    agente_id = Column(Integer, ForeignKey(f"{AGENTES_TABLE_NAME}.id"), nullable=False, index=True)
     linea_id = Column(Integer, ForeignKey("lineas_telefonicas.id"), index=True)
     linea_numero = Column(String(50), index=True)
     token_recibo = Column(String(80), nullable=False, unique=True, index=True)

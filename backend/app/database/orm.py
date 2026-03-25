@@ -58,6 +58,21 @@ def _index_exists(connection, table_name: str, index_name: str) -> bool:
     )
 
 
+def _table_columns(connection, table_name: str) -> set[str]:
+    rows = connection.execute(
+        text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = DATABASE()
+              AND table_name = :table_name
+            """
+        ),
+        {"table_name": table_name},
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
 def _execute_optional(connection, sql: str, params: dict | None = None, label: str = ""):
     try:
         connection.execute(text(sql), params or {})
@@ -73,6 +88,188 @@ def _safe_identifier(raw: str | None, fallback: str) -> str:
     if not re.match(r"^[0-9A-Za-z_]+$", value):
         return fallback
     return value
+
+
+def _col_or_default(alias: str, col_name: str, available: set[str], default_sql: str = "NULL") -> str:
+    if col_name in available:
+        return f"{alias}.`{col_name}`"
+    return default_sql
+
+
+def _build_vw_agentes_qr_estado_sql(agent_cols: set[str]) -> str:
+    uuid_expr = _col_or_default("d", "uuid", agent_cols)
+    nombre_expr = _col_or_default("d", "nombre", agent_cols, "''")
+    telefono_expr = _col_or_default("d", "telefono", agent_cols)
+    fecha_creacion_expr = _col_or_default("d", "fecha_creacion", agent_cols, "CURRENT_TIMESTAMP")
+    es_activo_expr = f"COALESCE({_col_or_default('d', 'es_activo', agent_cols, '1')}, 1)"
+
+    if "qr_filename" in agent_cols:
+        tiene_qr_expr = "CASE WHEN d.`qr_filename` IS NOT NULL AND d.`qr_filename` <> '' THEN 1 ELSE 0 END"
+    else:
+        tiene_qr_expr = "0"
+
+    return f"""
+        CREATE OR REPLACE VIEW vw_agentes_qr_estado AS
+        SELECT
+            d.`id` AS id,
+            {uuid_expr} AS uuid,
+            {nombre_expr} AS nombre,
+            {telefono_expr} AS telefono,
+            {es_activo_expr} AS es_activo,
+            {tiene_qr_expr} AS tiene_qr,
+            {fecha_creacion_expr} AS fecha_creacion
+        FROM agentes_operativos d
+    """
+
+
+def _build_vw_agentes_extensiones_pago_actual_sql(agent_cols: set[str]) -> str:
+    uuid_expr = _col_or_default("d", "uuid", agent_cols)
+    nombre_expr = _col_or_default("d", "nombre", agent_cols, "''")
+    es_activo_expr = f"COALESCE({_col_or_default('d', 'es_activo', agent_cols, '1')}, 1)"
+    where_es_activo_expr = es_activo_expr
+
+    return f"""
+        CREATE OR REPLACE VIEW vw_agentes_extensiones_pago_actual AS
+        SELECT
+            d.id AS agente_id,
+            {uuid_expr} AS uuid,
+            {nombre_expr} AS nombre,
+            {es_activo_expr} AS es_activo,
+            l.id AS linea_id,
+            l.numero AS extension_numero,
+            l.tipo AS extension_tipo,
+            CASE
+                WHEN ala.id IS NULL OR l.id IS NULL THEN 'SIN_LINEA'
+                ELSE 'ASIGNADA'
+            END AS linea_estado,
+            p.semana_inicio,
+            COALESCE(p.pagado, 0) AS pagado_semana,
+            COALESCE(p.monto, 0) AS monto_semana,
+            p.fecha_pago,
+            CASE
+                WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'DEBE'
+                ELSE 'PAGADO'
+            END AS estado_pago
+        FROM agentes_operativos d
+        LEFT JOIN agente_linea_asignaciones ala
+            ON ala.agente_id = d.id AND ala.es_activa = 1
+        LEFT JOIN lineas_telefonicas l
+            ON l.id = ala.linea_id AND COALESCE(l.es_activa, 1) = 1
+        LEFT JOIN pagos_semanales p
+            ON p.agente_id = d.id
+           AND p.semana_inicio = DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
+        WHERE {where_es_activo_expr} = 1
+    """
+
+
+def _build_vw_agentes_operacion_actual_sql(agent_cols: set[str]) -> str:
+    uuid_expr = _col_or_default("d", "uuid", agent_cols)
+    nombre_expr = _col_or_default("d", "nombre", agent_cols, "''")
+    telefono_expr = _col_or_default("d", "telefono", agent_cols)
+    email_expr = _col_or_default("d", "email", agent_cols)
+    estatus_codigo_expr = _col_or_default("d", "estatus_codigo", agent_cols)
+    es_activo_expr = f"COALESCE({_col_or_default('d', 'es_activo', agent_cols, '1')}, 1)"
+
+    has_datos_adicionales = "datos_adicionales" in agent_cols
+    alias_expr = "JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.alias'))" if has_datos_adicionales else "NULL"
+    ubicacion_expr = "JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.ubicacion'))" if has_datos_adicionales else "NULL"
+    grupo_expr = "JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.grupo'))" if has_datos_adicionales else "NULL"
+    voip_expr = "JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.numero_voip'))" if has_datos_adicionales else "NULL"
+
+    has_estatus_codigo = "estatus_codigo" in agent_cols
+    estatus_nombre_expr = "s.nombre" if has_estatus_codigo else "NULL"
+    estatus_operativo_expr = "COALESCE(s.es_operativo, 1)" if has_estatus_codigo else "1"
+    estatus_join = "LEFT JOIN cat_estatus_agente s ON s.codigo = d.estatus_codigo" if has_estatus_codigo else ""
+
+    return f"""
+        CREATE OR REPLACE VIEW vw_agentes_operacion_actual AS
+        SELECT
+            d.id AS agente_id,
+            {uuid_expr} AS uuid,
+            {nombre_expr} AS nombre,
+            {telefono_expr} AS telefono,
+            {email_expr} AS email,
+            {estatus_codigo_expr} AS estatus_codigo,
+            {estatus_nombre_expr} AS estatus_nombre,
+            {estatus_operativo_expr} AS estatus_operativo,
+            {alias_expr} AS alias,
+            {ubicacion_expr} AS ubicacion,
+            {grupo_expr} AS grupo,
+            {voip_expr} AS numero_voip,
+            l.id AS linea_id,
+            l.numero AS linea_numero,
+            l.tipo AS linea_tipo,
+            CASE
+                WHEN ala.id IS NULL OR l.id IS NULL THEN 'SIN_LINEA'
+                ELSE 'ASIGNADA'
+            END AS linea_estado,
+            p.semana_inicio,
+            COALESCE(p.pagado, 0) AS pagado_semana,
+            COALESCE(p.monto, 0) AS monto_semana,
+            p.fecha_pago,
+            CASE
+                WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'DEBE'
+                ELSE 'PAGADO'
+            END AS estado_pago
+        FROM agentes_operativos d
+        {estatus_join}
+        LEFT JOIN agente_linea_asignaciones ala
+            ON ala.agente_id = d.id AND ala.es_activa = 1
+        LEFT JOIN lineas_telefonicas l
+            ON l.id = ala.linea_id AND COALESCE(l.es_activa, 1) = 1
+        LEFT JOIN pagos_semanales p
+            ON p.agente_id = d.id
+           AND p.semana_inicio = DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
+        WHERE {es_activo_expr} = 1
+    """
+
+
+def _build_vw_pagos_pendientes_sql(agent_cols: set[str]) -> str:
+    nombre_expr = _col_or_default("d", "nombre", agent_cols, "''")
+    return f"""
+        CREATE OR REPLACE VIEW vw_pagos_pendientes AS
+        SELECT
+            p.id,
+            p.agente_id,
+            {nombre_expr} AS nombre,
+            p.telefono,
+            p.numero_voip,
+            p.semana_inicio,
+            p.monto,
+            p.pagado,
+            p.fecha_pago,
+            CASE WHEN a.id IS NULL THEN 0 ELSE 1 END AS alerta_emitida
+        FROM pagos_semanales p
+        LEFT JOIN agentes_operativos d ON d.id = p.agente_id
+        LEFT JOIN alertas_pago a
+            ON a.agente_id = p.agente_id
+           AND a.semana_inicio = p.semana_inicio
+           AND a.atendida = 0
+        WHERE COALESCE(p.pagado, 0) = 0
+    """
+
+
+def get_useful_views_sql_map(connection) -> dict[str, str]:
+    agent_cols = _table_columns(connection, "agentes_operativos")
+    return {
+        "vw_agentes_qr_estado": _build_vw_agentes_qr_estado_sql(agent_cols),
+        "vw_usuarios_roles": """
+            CREATE OR REPLACE VIEW vw_usuarios_roles AS
+            SELECT
+                id,
+                username,
+                email,
+                nombre_completo,
+                rol,
+                es_activo,
+                fecha_creacion,
+                fecha_ultima_sesion
+            FROM usuarios
+        """,
+        "vw_pagos_pendientes": _build_vw_pagos_pendientes_sql(agent_cols),
+        "vw_agentes_extensiones_pago_actual": _build_vw_agentes_extensiones_pago_actual_sql(agent_cols),
+        "vw_agentes_operacion_actual": _build_vw_agentes_operacion_actual_sql(agent_cols),
+    }
 
 
 def init_db():
@@ -115,6 +312,8 @@ def _ensure_core_schema_updates():
             connection.execute(text("CREATE INDEX `ix_usuarios_temporal_expira_en` ON `usuarios` (`temporal_expira_en`)"))
         if not _index_exists(connection, "usuarios", "ix_usuarios_solicitud_permiso_estado"):
             connection.execute(text("CREATE INDEX `ix_usuarios_solicitud_permiso_estado` ON `usuarios` (`solicitud_permiso_estado`)"))
+
+        agent_cols = _table_columns(connection, "agentes_operativos")
 
         connection.execute(
             text(
@@ -163,22 +362,11 @@ def _ensure_core_schema_updates():
             )
         )
 
-        estatus_column_exists = _column_exists(connection, "datos_importados", "estatus_codigo")
-        if not estatus_column_exists:
-            connection.execute(
-                text(
-                    """
-                    ALTER TABLE `datos_importados`
-                    ADD COLUMN `estatus_codigo` VARCHAR(20) NOT NULL DEFAULT 'ACTIVO'
-                    """
-                )
-            )
+        if "estatus_codigo" in agent_cols and not _index_exists(connection, "agentes_operativos", "ix_agentes_operativos_estatus_codigo"):
+            connection.execute(text("CREATE INDEX `ix_agentes_operativos_estatus_codigo` ON `agentes_operativos` (`estatus_codigo`)"))
 
-        if not _index_exists(connection, "datos_importados", "ix_datos_importados_estatus_codigo"):
-            connection.execute(text("CREATE INDEX `ix_datos_importados_estatus_codigo` ON `datos_importados` (`estatus_codigo`)"))
-
-        if not _index_exists(connection, "datos_importados", "ix_datos_importados_activo_nombre"):
-            connection.execute(text("CREATE INDEX `ix_datos_importados_activo_nombre` ON `datos_importados` (`es_activo`, `nombre`)"))
+        if "es_activo" in agent_cols and "nombre" in agent_cols and not _index_exists(connection, "agentes_operativos", "ix_agentes_operativos_activo_nombre"):
+            connection.execute(text("CREATE INDEX `ix_agentes_operativos_activo_nombre` ON `agentes_operativos` (`es_activo`, `nombre`)"))
 
         if not _index_exists(connection, "agente_linea_asignaciones", "ix_agente_linea_asignaciones_agente_activa"):
             connection.execute(
@@ -235,23 +423,29 @@ def _ensure_core_schema_updates():
                 )
             )
 
-        if not _column_exists(connection, "datos_importados", "qr_impreso"):
+        if "qr_impreso" in agent_cols and not _index_exists(connection, "agentes_operativos", "ix_agentes_operativos_qr_impreso"):
             connection.execute(
-                text("ALTER TABLE `datos_importados` ADD COLUMN `qr_impreso` TINYINT(1) NOT NULL DEFAULT 0")
-            )
-        if not _column_exists(connection, "datos_importados", "qr_impreso_at"):
-            connection.execute(
-                text("ALTER TABLE `datos_importados` ADD COLUMN `qr_impreso_at` DATETIME NULL")
-            )
-        if not _index_exists(connection, "datos_importados", "ix_datos_importados_qr_impreso"):
-            connection.execute(
-                text("CREATE INDEX `ix_datos_importados_qr_impreso` ON `datos_importados` (`qr_impreso`)")
+                text("CREATE INDEX `ix_agentes_operativos_qr_impreso` ON `agentes_operativos` (`qr_impreso`)")
             )
 
         if not _index_exists(connection, "pagos_semanales", "ix_pagos_semanales_agente_semana_pagado"):
             connection.execute(
                 text(
                     "CREATE INDEX `ix_pagos_semanales_agente_semana_pagado` ON `pagos_semanales` (`agente_id`, `semana_inicio`, `pagado`)"
+                )
+            )
+
+        if not _index_exists(connection, "pagos_semanales", "ix_pagos_semanales_fecha_pago_monto"):
+            connection.execute(
+                text(
+                    "CREATE INDEX `ix_pagos_semanales_fecha_pago_monto` ON `pagos_semanales` (`fecha_pago`, `monto`)"
+                )
+            )
+
+        if not _index_exists(connection, "pagos_semanales", "ix_pagos_semanales_semana_monto"):
+            connection.execute(
+                text(
+                    "CREATE INDEX `ix_pagos_semanales_semana_monto` ON `pagos_semanales` (`semana_inicio`, `monto`)"
                 )
             )
 
@@ -301,9 +495,39 @@ def _ensure_core_schema_updates():
                     KEY `ix_agente_eventos_operativos_agente_fecha` (`agente_id`, `fecha_evento`),
                     KEY `ix_agente_eventos_operativos_evento_fecha` (`evento`, `fecha_evento`),
                     CONSTRAINT `fk_agente_eventos_operativos_agente`
-                        FOREIGN KEY (`agente_id`) REFERENCES `datos_importados` (`id`)
+                        FOREIGN KEY (`agente_id`) REFERENCES `agentes_operativos` (`id`)
                         ON DELETE CASCADE,
                     CONSTRAINT `fk_agente_eventos_operativos_usuario`
+                        FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`)
+                        ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+        )
+
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS `cobros_movimientos` (
+                    `id` BIGINT NOT NULL AUTO_INCREMENT,
+                    `agente_id` INT NOT NULL,
+                    `semana_inicio` DATE NULL,
+                    `tipo_movimiento` VARCHAR(30) NOT NULL,
+                    `monto` DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    `referencia_pago_id` INT NULL,
+                    `usuario_id` INT NULL,
+                    `payload_json` JSON NULL,
+                    `creado_en` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    KEY `ix_cobros_movimientos_agente_semana` (`agente_id`, `semana_inicio`),
+                    KEY `ix_cobros_movimientos_tipo_fecha` (`tipo_movimiento`, `creado_en`),
+                    CONSTRAINT `fk_cobros_movimientos_agente`
+                        FOREIGN KEY (`agente_id`) REFERENCES `agentes_operativos` (`id`)
+                        ON DELETE CASCADE,
+                    CONSTRAINT `fk_cobros_movimientos_pago`
+                        FOREIGN KEY (`referencia_pago_id`) REFERENCES `pagos_semanales` (`id`)
+                        ON DELETE SET NULL,
+                    CONSTRAINT `fk_cobros_movimientos_usuario`
                         FOREIGN KEY (`usuario_id`) REFERENCES `usuarios` (`id`)
                         ON DELETE SET NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -325,121 +549,8 @@ def _ensure_core_schema_updates():
             {"admin_role": ROLE_ADMIN, "viewer_role": ROLE_VIEWER},
         )
 
-        connection.execute(
-            text(
-                """
-                CREATE OR REPLACE VIEW vw_agentes_qr_estado AS
-                SELECT
-                    id,
-                    uuid,
-                    nombre,
-                    telefono,
-                    COALESCE(es_activo, 1) AS es_activo,
-                    CASE WHEN qr_filename IS NOT NULL AND qr_filename <> '' THEN 1 ELSE 0 END AS tiene_qr,
-                    fecha_creacion
-                FROM datos_importados
-                """
-            )
-        )
-        connection.execute(
-            text(
-                """
-                CREATE OR REPLACE VIEW vw_usuarios_roles AS
-                SELECT
-                    id,
-                    username,
-                    email,
-                    nombre_completo,
-                    rol,
-                    es_activo,
-                    fecha_creacion,
-                    fecha_ultima_sesion
-                FROM usuarios
-                """
-            )
-        )
-        connection.execute(
-            text(
-                """
-                CREATE OR REPLACE VIEW vw_agentes_extensiones_pago_actual AS
-                SELECT
-                    d.id AS agente_id,
-                    d.uuid,
-                    d.nombre,
-                    COALESCE(d.es_activo, 1) AS es_activo,
-                    l.id AS linea_id,
-                    l.numero AS extension_numero,
-                    l.tipo AS extension_tipo,
-                    CASE
-                        WHEN ala.id IS NULL OR l.id IS NULL THEN 'SIN_LINEA'
-                        ELSE 'ASIGNADA'
-                    END AS linea_estado,
-                    p.semana_inicio,
-                    COALESCE(p.pagado, 0) AS pagado_semana,
-                    COALESCE(p.monto, 0) AS monto_semana,
-                    p.fecha_pago,
-                    CASE
-                        WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'DEBE'
-                        ELSE 'PAGADO'
-                    END AS estado_pago
-                FROM datos_importados d
-                LEFT JOIN agente_linea_asignaciones ala
-                    ON ala.agente_id = d.id AND ala.es_activa = 1
-                LEFT JOIN lineas_telefonicas l
-                    ON l.id = ala.linea_id AND COALESCE(l.es_activa, 1) = 1
-                LEFT JOIN pagos_semanales p
-                    ON p.agente_id = d.id
-                   AND p.semana_inicio = DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
-                WHERE COALESCE(d.es_activo, 1) = 1
-                """
-            )
-        )
-
-        connection.execute(
-            text(
-                """
-                CREATE OR REPLACE VIEW vw_agentes_operacion_actual AS
-                SELECT
-                    d.id AS agente_id,
-                    d.uuid,
-                    d.nombre,
-                    d.telefono,
-                    d.email,
-                    d.estatus_codigo,
-                    s.nombre AS estatus_nombre,
-                    COALESCE(s.es_operativo, 1) AS estatus_operativo,
-                    JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.alias')) AS alias,
-                    JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.ubicacion')) AS ubicacion,
-                    JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.grupo')) AS grupo,
-                    JSON_UNQUOTE(JSON_EXTRACT(d.datos_adicionales, '$.numero_voip')) AS numero_voip,
-                    l.id AS linea_id,
-                    l.numero AS linea_numero,
-                    l.tipo AS linea_tipo,
-                    CASE
-                        WHEN ala.id IS NULL OR l.id IS NULL THEN 'SIN_LINEA'
-                        ELSE 'ASIGNADA'
-                    END AS linea_estado,
-                    p.semana_inicio,
-                    COALESCE(p.pagado, 0) AS pagado_semana,
-                    COALESCE(p.monto, 0) AS monto_semana,
-                    p.fecha_pago,
-                    CASE
-                        WHEN p.id IS NULL OR COALESCE(p.pagado, 0) = 0 THEN 'DEBE'
-                        ELSE 'PAGADO'
-                    END AS estado_pago
-                FROM datos_importados d
-                LEFT JOIN cat_estatus_agente s ON s.codigo = d.estatus_codigo
-                LEFT JOIN agente_linea_asignaciones ala
-                    ON ala.agente_id = d.id AND ala.es_activa = 1
-                LEFT JOIN lineas_telefonicas l
-                    ON l.id = ala.linea_id AND COALESCE(l.es_activa, 1) = 1
-                LEFT JOIN pagos_semanales p
-                    ON p.agente_id = d.id
-                   AND p.semana_inicio = DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
-                WHERE COALESCE(d.es_activo, 1) = 1
-                """
-            )
-        )
+        for _name, _sql in get_useful_views_sql_map(connection).items():
+            connection.execute(text(_sql))
 
         _execute_optional(
             connection,
@@ -458,7 +569,7 @@ def _ensure_core_schema_updates():
                     THEN 'DESALINEADO'
                     ELSE 'EN_SYNC'
                 END AS estado_sync
-            FROM datos_importados d
+            FROM agentes_operativos d
             LEFT JOIN registro_agentes.agentes a ON a.ID = d.id
             WHERE COALESCE(d.es_activo, 1) = 1
             """,

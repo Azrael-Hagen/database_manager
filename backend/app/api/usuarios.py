@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Request
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.database.orm import get_db
 from app.database.repositorios import RepositorioUsuario, RepositorioAuditoria
@@ -24,9 +25,10 @@ from app.security import (
     require_server_machine_request,
     ROLE_ADMIN,
     ROLE_CAPTURE,
+    ROLE_VIEWER,
     require_super_admin_role,
 )
-from app.models import Usuario as UsuarioModel, TempUsuarioHistorial
+from app.models import Usuario as UsuarioModel, TempUsuarioHistorial, DatoImportado
 import logging
 import json
 
@@ -37,15 +39,28 @@ TEMP_USER_PREFIXES = ("tmp_", "temp_", "test_", "demo_")
 TEMP_USER_MAX_DAYS = 10
 
 
+def _normalize_lookup_text(value: str | None) -> str:
+    return str(value or "").strip().lower()
+
+
+def _resolve_requested_role(raw_role: str | None) -> str:
+    role = _normalize_lookup_text(raw_role)
+    if role == ROLE_ADMIN:
+        return ROLE_ADMIN
+    if role == ROLE_CAPTURE:
+        return ROLE_CAPTURE
+    return ROLE_VIEWER
+
+
 ROLE_CAPABILITIES = [
     {
         "role": "viewer",
         "label": "Consulta",
-        "description": "Solo lectura operativa y seguimiento de alertas.",
+        "description": "Portal limitado de autoservicio: solo perfil propio y adeudo asociado.",
         "permissions": [
-            "Ver dashboard",
-            "Consultar datos",
-            "Leer alertas y marcarlas como leidas",
+            "Consultar coincidencias propias por email o nombre",
+            "Ver adeudo y saldo acumulado propios",
+            "Solicitar pase a cuenta normal limitada",
         ],
     },
     {
@@ -187,6 +202,77 @@ async def listar_capacidades_roles(
     }
 
 
+@router.get("/self-service/resumen")
+async def obtener_resumen_autoservicio(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Resumen limitado del usuario autenticado: solo coincidencias propias y adeudo."""
+    repo = RepositorioUsuario(db)
+    usuario = repo.obtener_por_id(int(current_user.get("id") or 0)) or repo.obtener_por_username(current_user.get("username"))
+    if not usuario:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado")
+
+    from app.api.qr import resumen_cobranza_agente, _extract_voip
+
+    email = _normalize_lookup_text(usuario.email)
+    full_name = _normalize_lookup_text(usuario.nombre_completo)
+    username = _normalize_lookup_text(usuario.username)
+
+    filters = []
+    if email:
+        filters.append(func.lower(func.trim(DatoImportado.email)) == email)
+    if full_name:
+        filters.append(func.lower(func.trim(DatoImportado.nombre)) == full_name)
+    if username:
+        filters.append(func.lower(func.trim(DatoImportado.nombre)) == username)
+
+    agentes = []
+    if filters:
+        agentes = (
+            db.query(DatoImportado)
+            .filter(DatoImportado.es_activo.is_(True))
+            .filter(or_(*filters))
+            .order_by(DatoImportado.id.asc())
+            .all()
+        )
+
+    serialized_agents = []
+    for agente in agentes:
+        resumen = resumen_cobranza_agente(db, agente, None)
+        serialized_agents.append(
+            {
+                "id": agente.id,
+                "uuid": agente.uuid,
+                "nombre": agente.nombre,
+                "email": agente.email,
+                "telefono": agente.telefono,
+                "numero_voip": _extract_voip(agente),
+                "semana_inicio": resumen.get("semana_inicio").isoformat() if resumen.get("semana_inicio") else None,
+                "deuda_total": float(resumen.get("deuda_total") or 0),
+                "saldo_acumulado": float(resumen.get("saldo_acumulado") or 0),
+                "total_abonado": float(resumen.get("total_abonado") or 0),
+                "lineas_activas": int(resumen.get("lineas_activas") or 0),
+                "semanas_pendientes": int(resumen.get("semanas_pendientes") or 0),
+            }
+        )
+
+    return {
+        "status": "success",
+        "usuario": {
+            "id": usuario.id,
+            "username": usuario.username,
+            "email": usuario.email,
+            "nombre_completo": usuario.nombre_completo,
+            "rol": normalize_role(usuario.rol, usuario.es_admin),
+            "es_temporal": bool(usuario.es_temporal),
+            "solicitud_permiso_estado": usuario.solicitud_permiso_estado,
+            "solicitud_permiso_rol": usuario.solicitud_permiso_rol,
+        },
+        "agentes": serialized_agents,
+    }
+
+
 @router.post("/temporales", response_model=Usuario)
 async def crear_usuario_temporal(
     payload: UsuarioTemporalCrear,
@@ -294,7 +380,7 @@ async def solicitar_escalamiento_permisos(
     if not usuario.es_temporal:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Solo aplica para usuarios temporales")
 
-    rol_solicitado = ROLE_ADMIN if payload.rol_solicitado == ROLE_ADMIN else ROLE_CAPTURE
+    rol_solicitado = _resolve_requested_role(payload.rol_solicitado)
     usuario_actualizado = repo.actualizar_usuario(
         user_id,
         {
@@ -374,7 +460,7 @@ async def resolver_solicitud_permisos(
     if (usuario.solicitud_permiso_estado or "none") != "pending":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No hay solicitud pendiente para este usuario")
 
-    approved_role = ROLE_ADMIN if payload.rol_aprobado == ROLE_ADMIN else ROLE_CAPTURE
+    approved_role = _resolve_requested_role(payload.rol_aprobado)
     if payload.aprobar:
         updates = {
             "rol": approved_role,

@@ -28,6 +28,10 @@ let currentServerAccessNoPortUrl = '';
 let brandingManageEnabled = false;
 let currentAgentManagementRows = [];
 let currentEditingAgentId = null;
+let gestionAgenteSearchTimer = null;
+let gestionAgenteCacheKey = '';
+let gestionAgenteCacheRows = [];
+let gestionAgenteCacheAtMs = 0;
 let currentBackupDir = '';
 let pendingAltaAgentId = null;
 let currentAltasAgents = [];
@@ -46,6 +50,31 @@ let lastAlertNotificationStamp = null;
 let alertasCache = [];
 let alertasCacheStampMs = 0;
 let rolesCapabilitiesCache = [];
+let sessionCloseInProgress = false;
+let inactivityTimer = null;
+let inactivityWarningTimer = null;
+let inactivityHeartbeatInterval = null;
+
+// Detectar si es mobile: viewport <= 768px O user agent móvil
+const IS_MOBILE_DEVICE = () => {
+    const ua = navigator.userAgent.toLowerCase();
+    const isMobileUA = /(android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini)/i.test(ua);
+    const isSmallViewport = window.innerWidth <= 768;
+    return isMobileUA || isSmallViewport;
+};
+
+// Timeout: 4 horas en mobile, 30 min en desktop
+// Mobile necesita más tiempo porque usuarios bloquean pantalla, cambian apps, etc.
+const INACTIVITY_TIMEOUT_MS = (() => {
+    const stored = localStorage.getItem('sessionInactivityMs');
+    if (stored) return Number(stored);
+    return IS_MOBILE_DEVICE() ? (4 * 60 * 60 * 1000) : (30 * 60 * 1000); // 4h mobile, 30m desktop
+})();
+
+// Segundos antes de expiración para mostrar aviso
+const INACTIVITY_WARNING_BEFORE_CLOSE_MS = 5 * 60 * 1000; // 5 min antes del cierre
+
+const INACTIVITY_EVENTS = ['click', 'keydown', 'mousedown', 'touchstart', 'scroll'];
 const DEFAULT_AGENT_DATABASE = 'database_manager';
 const BRANDING_DEFAULTS = {
     appName: 'Database Manager',
@@ -116,6 +145,14 @@ function mondayISO(today = new Date()) {
     return `${yyyy}-${mm}-${dd}`;
 }
 
+function todayISO(today = new Date()) {
+    const d = new Date(today);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+
 function setDefaultWeeklyDates() {
     const week = mondayISO();
     ['qrSemana', 'qrScanSemana', 'pagoSemana', 'reporteSemanaInput', 'qrCtxSemana'].forEach(id => {
@@ -124,6 +161,11 @@ function setDefaultWeeklyDates() {
             input.value = week;
         }
     });
+
+    const reportDate = document.getElementById('reporteCobroFechaInput');
+    if (reportDate && !reportDate.value) {
+        reportDate.value = todayISO();
+    }
 }
 
 async function fetchJson(url, options = {}) {
@@ -144,6 +186,32 @@ async function fetchJson(url, options = {}) {
         } catch (_) {
             // ignore JSON parse failures
         }
+
+        const normalizedDetail = String(detail || '').toLowerCase();
+        const mustCloseSession = response.status === 401 || (
+            response.status === 403 && [
+                'token inválido',
+                'token invalido',
+                'token expirado',
+                'sesión expirada',
+                'sesion expirada',
+                'sesión inválida',
+                'sesion invalida',
+                'usuario inactivo',
+                'not authenticated',
+                'invalid token',
+                'expired token',
+            ].some(fragment => normalizedDetail.includes(fragment))
+        );
+
+        if (mustCloseSession && authToken) {
+            forceSessionClose('token_invalid', {
+                notify: true,
+                reload: true,
+                message: 'Tu sesión expiró o ya no es válida. Se recargará la página para volver a iniciar sesión.'
+            });
+        }
+
         throw new Error(detail);
     }
 
@@ -251,6 +319,10 @@ function canSuperAdmin() {
     return getCurrentRole() === 'super_admin' || currentUser?.es_super_admin === true;
 }
 
+function isLimitedViewer() {
+    return getCurrentRole() === 'viewer';
+}
+
 function isMobileViewport() {
     return window.matchMedia('(max-width: 768px)').matches;
 }
@@ -261,7 +333,7 @@ function canAccessSection(section) {
     if (role === 'capture') {
         return ['dashboard', 'datos', 'importar', 'exportar', 'altasAgentes', 'lineas', 'estadoAgentes', 'alertas'].includes(section);
     }
-    return ['dashboard', 'datos', 'alertas'].includes(section);
+    return ['miCuenta'].includes(section);
 }
 
 function applyRoleBasedUI() {
@@ -269,15 +341,16 @@ function applyRoleBasedUI() {
     const roleLabel = role === 'super_admin' ? 'Super Admin'
         : role === 'admin' ? 'Administrador'
         : role === 'capture' ? 'Altas'
-        : 'Consulta';
+        : (currentUser?.es_temporal ? 'Consulta temporal' : 'Consulta limitada');
     const userNameEl = document.getElementById('userName');
     if (userNameEl) {
         userNameEl.textContent = `${currentUser?.username || 'Usuario'} · ${roleLabel}`;
     }
 
     const menuRules = {
-        dashboard: true,
-        datos: true,
+        miCuenta: isLimitedViewer(),
+        dashboard: !isLimitedViewer(),
+        datos: !isLimitedViewer(),
         databases: canAdmin(),
         importar: canCapture(),
         exportar: canCapture(),
@@ -290,7 +363,7 @@ function applyRoleBasedUI() {
         auditoria: canAdmin(),
         papelera: canSuperAdmin(),
         estadoAgentes: canCapture(),
-        alertas: true,
+        alertas: !isLimitedViewer(),
         };
     Object.entries(menuRules).forEach(([section, visible]) => {
         const item = document.querySelector(`.menu-item[onclick*="'${section}'"]`);
@@ -305,6 +378,12 @@ function applyRoleBasedUI() {
     if (maintenancePanel) maintenancePanel.style.display = canAdmin() ? 'block' : 'none';
     const deudaManualPanel = document.getElementById('deudaManualPanel');
     if (deudaManualPanel) deudaManualPanel.style.display = canAdmin() ? 'block' : 'none';
+    const serverAccessWrap = document.getElementById('serverAccessWrap');
+    if (serverAccessWrap) serverAccessWrap.style.display = isLimitedViewer() ? 'none' : '';
+    const serverAccessHint = document.getElementById('serverAccessHint');
+    if (serverAccessHint) serverAccessHint.style.display = isLimitedViewer() ? 'none' : '';
+    const cameraSecurityHint = document.getElementById('cameraSecurityHint');
+    if (cameraSecurityHint) cameraSecurityHint.style.display = isLimitedViewer() ? 'none' : '';
     // Papelera panel — only super_admin
     const papeleraSection = document.getElementById('papeleraSection');
     if (papeleraSection) papeleraSection.style.display = canSuperAdmin() ? '' : 'none';
@@ -614,6 +693,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('app:session-invalid', (event) => {
+        const reason = String(event?.detail?.reason || 'token_invalid');
+        if (!authToken) return;
+        forceSessionClose(reason, {
+            notify: true,
+            reload: true,
+            message: 'La sesión dejó de ser válida. Se cerrará automáticamente y se recargará la página.'
+        });
+    });
     window.addEventListener('scroll', updateScrollTopButton, { passive: true });
     window.addEventListener('resize', () => {
         if (!isMobileViewport()) {
@@ -732,7 +820,7 @@ async function validarSesionActiva() {
 
 // === AUTENTICACIÓN ===
 function showLogin() {
-    const ids = ['loginSection', 'registerSection', 'dashboardSection', 'datosSection', 'databasesSection', 'importarSection', 'exportarSection', 'altasAgentesSection', 'lineasSection', 'cambiosBajasSection', 'qrSection', 'usuariosSection', 'auditoriaSection', 'estadoAgentesSection', 'alertasSection'];
+    const ids = ['loginSection', 'registerSection', 'miCuentaSection', 'dashboardSection', 'datosSection', 'databasesSection', 'importarSection', 'exportarSection', 'altasAgentesSection', 'lineasSection', 'cambiosBajasSection', 'qrSection', 'usuariosSection', 'auditoriaSection', 'estadoAgentesSection', 'alertasSection'];
     ids.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = id === 'loginSection' ? 'block' : 'none';
@@ -746,6 +834,7 @@ function showLogin() {
     if (footer) footer.style.display = 'none';
     toggleSidebar(false);
     stopRealtimeUpdates();
+    stopInactivityTracking();
 }
 
 function showRegister() {
@@ -761,13 +850,18 @@ function showApp() {
     document.querySelector('footer').style.display = 'block';
     toggleSidebar(false);
     applyRoleBasedUI();
-    loadServerVersionInfo();
-    cargarAccesoServidorLocal();
-    cargarPermisosBrandingAdmin();
-    syncRealtimeControls();
-    loadSection('dashboard');
-    startRealtimeUpdates();
-    refreshAlertBadgeAndNotify(false);
+    if (!isLimitedViewer()) {
+        loadServerVersionInfo();
+        cargarAccesoServidorLocal();
+        cargarPermisosBrandingAdmin();
+        syncRealtimeControls();
+        startRealtimeUpdates();
+        refreshAlertBadgeAndNotify(false);
+    } else {
+        stopRealtimeUpdates();
+    }
+    loadSection(isLimitedViewer() ? 'miCuenta' : 'dashboard');
+    startInactivityTracking();
     setTimeout(() => {
         applyQrDeepLinkIfPresent().catch((err) => console.warn('Deep link QR no aplicado:', err?.message || err));
     }, 120);
@@ -788,10 +882,13 @@ async function login(e) {
         apiClient.setToken(authToken);
         currentUser = data.usuario;
 
+        localStorage.setItem('authToken', authToken);
         localStorage.setItem('currentUser', JSON.stringify(currentUser));
 
         showApp();
-        loadDashboardData();
+        if (!isLimitedViewer()) {
+            loadDashboardData();
+        }
     } catch (error) {
         alert('Error: ' + error.message);
     }
@@ -803,20 +900,22 @@ async function registrar(e) {
     const email = document.getElementById('regEmail').value;
     const fullName = document.getElementById('regFullName').value;
     const password = document.getElementById('regPassword').value;
+    const mode = document.getElementById('regAccountMode')?.value || 'normal';
 
     try {
-        await fetchJson(`${API_URL}/auth/registrar`, {
+        await fetchJson(`${API_URL}/auth/${mode === 'temporal' ? 'registrar-temporal' : 'registrar'}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 username,
                 email,
                 nombre_completo: fullName,
-                password
+                password,
+                dias_vigencia: 10,
             })
         });
 
-        alert('Registro exitoso. Ahora inicia sesión.');
+        alert(mode === 'temporal' ? 'Registro temporal exitoso. Ahora inicia sesión.' : 'Registro exitoso. Ahora inicia sesión.');
         document.getElementById('registerSection').style.display = 'none';
         document.getElementById('loginSection').style.display = 'block';
     } catch (error) {
@@ -832,7 +931,300 @@ function logout() {
     currentServerAccessUrl = '';
     brandingManageEnabled = false;
     stopRealtimeUpdates();
+    stopInactivityTracking();
+    
+    // Cerrar modal de aviso de inactividad si existe
+    const warningModal = document.getElementById('inactivityWarningModal');
+    if (warningModal) warningModal.remove();
+    
     showLogin();
+}
+
+async function cargarResumenAutoservicio() {
+    const container = document.getElementById('selfServiceSummaryContainer');
+    const requestContainer = document.getElementById('selfServiceRequestContainer');
+    if (!container) return;
+
+    container.innerHTML = '<p class="hint">Cargando coincidencias reales de tu cuenta...</p>';
+    if (requestContainer) requestContainer.innerHTML = '';
+
+    try {
+        const result = await apiClient.getSelfServiceResumen();
+        const usuario = result?.usuario || {};
+        const agentes = Array.isArray(result?.agentes) ? result.agentes : [];
+
+        let html = `
+            <div class="card" style="padding:14px;border:1px solid #d8e6f4;border-radius:12px;background:#f9fcff;">
+                <strong>Usuario:</strong> ${escapeHtml(usuario.nombre_completo || usuario.username || 'Usuario')}<br>
+                <strong>Email:</strong> ${escapeHtml(usuario.email || '-')}<br>
+                <strong>Tipo de cuenta:</strong> ${usuario.es_temporal ? 'Temporal limitada' : 'Normal limitada'}
+            </div>
+        `;
+
+        if (!agentes.length) {
+            html += '<p class="hint" style="margin-top:10px;">No se encontró una coincidencia activa por email o nombre en la base. Si tu registro existe con otro dato, un administrador deberá vincularlo corrigiendo tu información.</p>';
+        } else {
+            html += '<table class="data-table" style="margin-top:10px;"><thead><tr><th>ID</th><th>Nombre</th><th>Email</th><th>Teléfono</th><th>VoIP</th><th>Deuda total</th><th>Saldo acumulado</th><th>Semanas pendientes</th></tr></thead><tbody>';
+            agentes.forEach((agente) => {
+                html += `
+                    <tr>
+                        <td>${agente.id}</td>
+                        <td>${escapeHtml(agente.nombre || '-')}</td>
+                        <td>${escapeHtml(agente.email || '-')}</td>
+                        <td>${escapeHtml(agente.telefono || '-')}</td>
+                        <td>${escapeHtml(agente.numero_voip || '-')}</td>
+                        <td>$${Number(agente.deuda_total || 0).toFixed(2)} MXN</td>
+                        <td>$${Number(agente.saldo_acumulado || 0).toFixed(2)} MXN</td>
+                        <td>${Number(agente.semanas_pendientes || 0)}</td>
+                    </tr>
+                `;
+            });
+            html += '</tbody></table>';
+        }
+
+        container.innerHTML = html;
+
+        if (requestContainer && usuario.es_temporal) {
+            const requestState = String(usuario.solicitud_permiso_estado || 'none').toLowerCase();
+            if (requestState === 'pending') {
+                requestContainer.innerHTML = '<p class="hint">Ya existe una solicitud pendiente para convertir tu cuenta a usuario normal limitado.</p>';
+            } else {
+                requestContainer.innerHTML = `
+                    <div class="card" style="padding:14px;border:1px solid #d8e6f4;border-radius:12px;background:#fff;">
+                        <h3 style="margin-bottom:8px;">Solicitar Cuenta Normal Limitada</h3>
+                        <p class="hint">Si ya no necesitas acceso temporal, puedes pedir que tu cuenta quede como usuario normal limitado conservando solo vista de autoservicio.</p>
+                        <button type="button" class="btn" onclick="solicitarCuentaNormalLimitada()">Solicitar cambio</button>
+                    </div>
+                `;
+            }
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        container.innerHTML = `<p style="color:#b00020;">No fue posible cargar tu consulta limitada: ${escapeHtml(error.message || 'Error desconocido')}</p>`;
+    }
+}
+
+async function solicitarCuentaNormalLimitada() {
+    if (!currentUser?.id) {
+        alert('No se pudo identificar tu usuario actual.');
+        return;
+    }
+    const motivo = await showAppPrompt('Describe brevemente por qué deseas conservar la cuenta como usuario normal limitado:', {
+        title: 'Solicitar cuenta normal limitada',
+        placeholder: 'Motivo opcional',
+        acceptText: 'Solicitar',
+    }) || '';
+    try {
+        await apiClient.solicitarPermisoTemporal(currentUser.id, { rol_solicitado: 'viewer', motivo });
+        alert('Solicitud enviada. Un administrador deberá aprobarla.');
+        await cargarResumenAutoservicio();
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Error enviando solicitud: ' + error.message);
+    }
+}
+
+function startInactivityTracking() {
+    stopInactivityTracking();
+    
+    // En mobile, usar heartbeat cada 2 minutos para mantener sesión activa
+    // Sin esto, si pantalla se apaga, se cuenta como inactividad
+    if (IS_MOBILE_DEVICE()) {
+        inactivityHeartbeatInterval = setInterval(() => {
+            if (authToken && !sessionCloseInProgress) {
+                resetInactivityTimer();
+            }
+        }, 2 * 60 * 1000); // 2 minutos
+    }
+    
+    // Eventos de usuario normales
+    INACTIVITY_EVENTS.forEach((eventName) => {
+        document.addEventListener(eventName, resetInactivityTimer, { passive: true });
+    });
+    
+    // Ignorar cambios de visibilidad: si el usuario minimiza/bloquea pantalla
+    // no cuenta como inactividad
+    document.addEventListener('visibilitychange', onVisibilityChange, { passive: true });
+    
+    resetInactivityTimer();
+}
+
+function stopInactivityTracking() {
+    if (inactivityTimer) {
+        clearTimeout(inactivityTimer);
+        inactivityTimer = null;
+    }
+    if (inactivityWarningTimer) {
+        clearTimeout(inactivityWarningTimer);
+        inactivityWarningTimer = null;
+    }
+    if (inactivityHeartbeatInterval) {
+        clearInterval(inactivityHeartbeatInterval);
+        inactivityHeartbeatInterval = null;
+    }
+    INACTIVITY_EVENTS.forEach((eventName) => {
+        document.removeEventListener(eventName, resetInactivityTimer, { passive: true });
+    });
+    document.removeEventListener('visibilitychange', onVisibilityChange, { passive: true });
+}
+
+// Cuando el tab se oculta/muestra, resetear inactividad
+// Esto evita logout al cambiar de app en mobile
+function onVisibilityChange() {
+    if (!document.hidden && authToken && !sessionCloseInProgress) {
+        resetInactivityTimer();
+    }
+}
+
+function resetInactivityTimer() {
+    if (!authToken || sessionCloseInProgress) return;
+    
+    // Limpiar timers anteriores
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    if (inactivityWarningTimer) clearTimeout(inactivityWarningTimer);
+    
+    // Aviso 5 minutos antes de expirar
+    inactivityWarningTimer = setTimeout(() => {
+        if (!authToken || sessionCloseInProgress) return;
+        showInactivityWarning();
+    }, INACTIVITY_TIMEOUT_MS - INACTIVITY_WARNING_BEFORE_CLOSE_MS);
+    
+    // Cierre final
+    inactivityTimer = setTimeout(() => {
+        if (!authToken || sessionCloseInProgress) return;
+        forceSessionClose('inactivity_timeout', {
+            notify: true,
+            reload: false,
+            message: 'La sesión se cerró por inactividad prolongada.'
+        });
+    }, INACTIVITY_TIMEOUT_MS);
+}
+
+// Mostrar aviso de expiración con opción de extender
+function showInactivityWarning() {
+    const timeRemainingMin = INACTIVITY_WARNING_BEFORE_CLOSE_MS / 60 / 1000;
+    
+    // Crear modal de aviso
+    const modal = document.createElement('div');
+    modal.id = 'inactivityWarningModal';
+    modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+    `;
+    
+    modal.innerHTML = `
+        <div style="
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 400px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            text-align: center;
+        ">
+            <h2 style="margin: 0 0 15px 0; color: #ff9800;">⏰ Sesión Expirando</h2>
+            <p style="margin: 0 0 20px 0; color: #666;">
+                Por inactividad, tu sesión cerrará en <strong>${Math.ceil(timeRemainingMin)} minutos</strong>.
+            </p>
+            <p style="margin: 0 0 25px 0; color: #999; font-size: 13px;">
+                Haz clic en "Extender sesión" para continuar trabajando.
+            </p>
+            <div style="display: flex; gap: 10px; justify-content: center;">
+                <button onclick="extendSession()" style="
+                    padding: 10px 20px;
+                    background: #4CAF50;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 14px;
+                    font-weight: bold;
+                ">
+                    ✓ Extender sesión
+                </button>
+                <button onclick="closeInactivityWarning(true)" style="
+                    padding: 10px 20px;
+                    background: #999;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 14px;
+                ">
+                    Cerrar sesión
+                </button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+}
+
+function closeInactivityWarning(forceClose = false) {
+    const modal = document.getElementById('inactivityWarningModal');
+    if (modal) modal.remove();
+    
+    if (forceClose) {
+        forceSessionClose('inactivity_timeout', {
+            notify: false,
+            reload: false
+        });
+    }
+}
+
+// Extender la sesión: resetear timers
+function extendSession() {
+    closeInactivityWarning(false);
+    resetInactivityTimer();
+    
+    // Feedback visual
+    const msg = document.createElement('div');
+    msg.textContent = '✓ Sesión extendida';
+    msg.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #4CAF50;
+        color: white;
+        padding: 12px 20px;
+        border-radius: 4px;
+        font-size: 13px;
+        zIndex: 9999;
+    `;
+    document.body.appendChild(msg);
+    setTimeout(() => msg.remove(), 2000);
+}
+
+function forceSessionClose(reason, { notify = true, reload = false, message = '' } = {}) {
+    if (sessionCloseInProgress) return;
+    sessionCloseInProgress = true;
+
+    const finalMessage = message || (reason === 'inactivity_timeout'
+        ? 'La sesión se cerró por inactividad.'
+        : 'La sesión expiró o ya no es válida.');
+
+    if (notify) {
+        showAppAlert(finalMessage, { tone: 'warning', title: 'Sesión cerrada' });
+    }
+
+    logout();
+
+    if (reload) {
+        setTimeout(() => {
+            window.location.reload();
+        }, 250);
+    }
+
+    setTimeout(() => {
+        sessionCloseInProgress = false;
+    }, 1200);
 }
 
 async function cargarPermisosBrandingAdmin() {
@@ -1146,6 +1538,8 @@ function loadSection(section, eventRef = null) {
         closeAltasTour();
     }
     // Ocultar todas las secciones
+    const _miCuentaEl = document.getElementById('miCuentaSection');
+    if (_miCuentaEl) _miCuentaEl.style.display = 'none';
     document.getElementById('dashboardSection').style.display = 'none';
     document.getElementById('datosSection').style.display = 'none';
     document.getElementById('databasesSection').style.display = 'none';
@@ -1169,6 +1563,10 @@ function loadSection(section, eventRef = null) {
     document.querySelectorAll('.menu-item').forEach(item => item.classList.remove('active'));
 
     switch (section) {
+        case 'miCuenta':
+            document.getElementById('miCuentaSection').style.display = 'block';
+            cargarResumenAutoservicio();
+            break;
         case 'dashboard':
             document.getElementById('dashboardSection').style.display = 'block';
             loadDashboardData();
@@ -2158,9 +2556,95 @@ async function descargarQrAgente(agenteId) {
 
 // In-memory agent list for the export tab
 let _qrExportAgentes = [];
+const QR_LABEL_EDITOR_STORAGE_KEY = 'qrLabelEditorSettings';
+
+function qrLabelEditorGetDefaults(layout) {
+    const map = {
+        sheet: { qr_size: 62, border_gap: 1.0, cell_h: 84.0, pad_bottom: 2.0, draw_border: true },
+        labels: { qr_size: 50, border_gap: 0.8, cell_h: 69.0, pad_bottom: 1.5, draw_border: true },
+        oficio: { qr_size: 86, border_gap: 1.0, cell_h: 101.5, pad_bottom: 2.0, draw_border: true },
+    };
+    return map[layout] || map.oficio;
+}
+
+function qrLabelEditorCurrentLayout() {
+    return document.getElementById('qrExportLayout')?.value || 'sheet';
+}
+
+function qrLabelEditorRead() {
+    const layout = qrLabelEditorCurrentLayout();
+    const d = qrLabelEditorGetDefaults(layout);
+    const readNum = (id, fallback) => {
+        const n = Number(document.getElementById(id)?.value);
+        return Number.isFinite(n) ? n : fallback;
+    };
+    return {
+        qr_size: readNum('qrLabelEditQrSize', d.qr_size),
+        border_gap: readNum('qrLabelEditBorderGap', d.border_gap),
+        cell_h: readNum('qrLabelEditCellH', d.cell_h),
+        pad_bottom: readNum('qrLabelEditPadBottom', d.pad_bottom),
+        draw_border: document.getElementById('qrLabelEditDrawBorder')?.checked !== false,
+    };
+}
+
+function qrLabelEditorApply(settings) {
+    if (!settings || typeof settings !== 'object') return;
+    const setVal = (id, value) => {
+        const el = document.getElementById(id);
+        if (el && value !== undefined && value !== null) el.value = String(value);
+    };
+    setVal('qrLabelEditQrSize', settings.qr_size);
+    setVal('qrLabelEditBorderGap', settings.border_gap);
+    setVal('qrLabelEditCellH', settings.cell_h);
+    setVal('qrLabelEditPadBottom', settings.pad_bottom);
+    const borderEl = document.getElementById('qrLabelEditDrawBorder');
+    if (borderEl && settings.draw_border !== undefined) borderEl.checked = Boolean(settings.draw_border);
+}
+
+function qrLabelEditorLoad() {
+    const layout = qrLabelEditorCurrentLayout();
+    let parsed = {};
+    try {
+        parsed = JSON.parse(localStorage.getItem(QR_LABEL_EDITOR_STORAGE_KEY) || '{}') || {};
+    } catch (_) {
+        parsed = {};
+    }
+    const defaults = qrLabelEditorGetDefaults(layout);
+    qrLabelEditorApply({ ...defaults, ...(parsed[layout] || {}) });
+}
+
+function qrLabelEditorGuardar() {
+    const layout = qrLabelEditorCurrentLayout();
+    const settings = qrLabelEditorRead();
+    let parsed = {};
+    try {
+        parsed = JSON.parse(localStorage.getItem(QR_LABEL_EDITOR_STORAGE_KEY) || '{}') || {};
+    } catch (_) {
+        parsed = {};
+    }
+    parsed[layout] = settings;
+    localStorage.setItem(QR_LABEL_EDITOR_STORAGE_KEY, JSON.stringify(parsed));
+    showAppAlert('Ajustes de etiqueta guardados.', { tone: 'success', title: 'Editor QR' });
+}
+
+function qrLabelEditorRestaurar() {
+    const layout = qrLabelEditorCurrentLayout();
+    const defaults = qrLabelEditorGetDefaults(layout);
+    qrLabelEditorApply(defaults);
+    let parsed = {};
+    try {
+        parsed = JSON.parse(localStorage.getItem(QR_LABEL_EDITOR_STORAGE_KEY) || '{}') || {};
+    } catch (_) {
+        parsed = {};
+    }
+    delete parsed[layout];
+    localStorage.setItem(QR_LABEL_EDITOR_STORAGE_KEY, JSON.stringify(parsed));
+    showAppAlert('Ajustes restablecidos para este layout.', { tone: 'info', title: 'Editor QR' });
+}
 
 async function qrExportCargarAgentes() {
     const listEl = document.getElementById('qrExportListaAgentes');
+    const resultEl = document.getElementById('qrExportResult');
     if (!listEl) return;
     listEl.innerHTML = '<p class="hint" style="padding:12px;">Cargando agentes...</p>';
     try {
@@ -2175,6 +2659,13 @@ async function qrExportCargarAgentes() {
             estatus: a.estatus_codigo || 'ACTIVO',
             qr_impreso: !!a.qr_impreso,
         }));
+
+        const total = _qrExportAgentes.length;
+        const impresos = _qrExportAgentes.filter(a => a.qr_impreso).length;
+        const pendientes = total - impresos;
+        if (resultEl) {
+            resultEl.innerHTML = `<p class="hint">Total: <strong>${total}</strong> agente(s) · Pendientes: <strong>${pendientes}</strong> · Impresos: <strong>${impresos}</strong></p>`;
+        }
 
         qrExportRenderizarLista();
         await qrExportActualizarBannerSinImprimir();
@@ -2283,6 +2774,7 @@ async function exportarQRLoteSeleccionados() {
     const result = document.getElementById('qrExportResult');
     const layout = document.getElementById('qrExportLayout')?.value || 'sheet';
     const marcarImpreso = document.getElementById('qrExportMarcarImpreso')?.checked !== false;
+    const layoutOverrides = qrLabelEditorRead();
 
     if (!ids.length) {
         showAppAlert('Selecciona al menos un agente para exportar.', { tone: 'warning', title: 'Sin selección' });
@@ -2291,7 +2783,7 @@ async function exportarQRLoteSeleccionados() {
     if (result) result.innerHTML = '<p class="hint">Generando PDF...</p>';
     try {
         const idsCsv = ids.join(',');
-        const blob = await apiClient.exportQrAgentesPdf({ idsCsv, layout, soloActivos: false, marcarImpreso });
+        const blob = await apiClient.exportQrAgentesPdf({ idsCsv, layout, soloActivos: false, marcarImpreso, layoutOverrides });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
@@ -2355,6 +2847,14 @@ async function qrExportActualizarBannerSinImprimir() {
     }
 }
 
+document.addEventListener('DOMContentLoaded', () => {
+    const layoutSel = document.getElementById('qrExportLayout');
+    if (layoutSel) {
+        layoutSel.addEventListener('change', () => qrLabelEditorLoad());
+        qrLabelEditorLoad();
+    }
+});
+
 async function verificarQRSinImprimir() {
     // Called on qr section load — show a nav-level badge if there are unprinted QRs
     if (!authToken) return;
@@ -2388,10 +2888,26 @@ async function loadServerVersionInfo() {
 
 function _renderCameraSelector(cameras, preferredDeviceId = '') {
     qrAvailableCameras = Array.isArray(cameras) ? cameras : [];
-    const rear = qrAvailableCameras.find(c => /back|rear|trasera|environment/i.test(c.label || ''));
-    const ordered = rear
-        ? [rear, ...qrAvailableCameras.filter(c => c.deviceId !== rear.deviceId)]
-        : qrAvailableCameras;
+
+    const isRearLabel = (label) => /back|rear|trasera|environment|world/i.test(String(label || ''));
+    const isFrontLabel = (label) => /front|frontal|selfie|user/i.test(String(label || ''));
+
+    // Ordenar para priorizar trasera: rear -> sin etiqueta (en mobile suelen venir vacías) -> frontal.
+    const ordered = [...qrAvailableCameras].sort((a, b) => {
+        const la = String(a?.label || '');
+        const lb = String(b?.label || '');
+
+        const rank = (label) => {
+            if (isRearLabel(label)) return 0;
+            if (isFrontLabel(label)) return 2;
+            return IS_MOBILE_DEVICE() ? 1 : 0;
+        };
+
+        return rank(la) - rank(lb);
+    });
+
+    const rear = ordered.find(c => isRearLabel(c.label));
+    const nonFront = ordered.find(c => !isFrontLabel(c.label));
 
     ['qrCameraSelect', 'qrScanCameraSelect'].forEach(selectId => {
         const select = document.getElementById(selectId);
@@ -2406,7 +2922,11 @@ function _renderCameraSelector(cameras, preferredDeviceId = '') {
             .map(c => `<option value="${c.deviceId}">${(c.label || c.deviceId).replace(/</g, '&lt;')}</option>`)
             .join('');
 
-        const preferred = preferredDeviceId || qrCurrentCameraId || rear?.deviceId || ordered[0].deviceId;
+        const preferred = preferredDeviceId
+            || qrCurrentCameraId
+            || rear?.deviceId
+            || nonFront?.deviceId
+            || ordered[0].deviceId;
         select.value = ordered.some(c => c.deviceId === preferred) ? preferred : ordered[0].deviceId;
         qrCurrentCameraId = select.value;
     });
@@ -2583,13 +3103,34 @@ async function iniciarEscanerQR() {
 
     _renderCameraSelector(cameras);
 
-    // Preferir cámara trasera por etiqueta
-    const rearCamera = cameras.find(c => /back|rear|trasera|environment/i.test(c.label));
-    const candidateIds = rearCamera
-        ? [rearCamera.deviceId, ...cameras.filter(c => c !== rearCamera).map(c => c.deviceId)]
-        : cameras.map(c => c.deviceId);
+    const isRearLabel = (label) => /back|rear|trasera|environment|world/i.test(String(label || ''));
+    const isFrontLabel = (label) => /front|frontal|selfie|user/i.test(String(label || ''));
+    const orderedCameras = [...cameras].sort((a, b) => {
+        const rank = (label) => {
+            if (isRearLabel(label)) return 0;
+            if (isFrontLabel(label)) return 2;
+            return IS_MOBILE_DEVICE() ? 1 : 0;
+        };
+        return rank(a?.label) - rank(b?.label);
+    });
 
-    // Fallbacks por constraint (funcionan en desktop sin facingMode real)
+    const rearCamera = orderedCameras.find(c => isRearLabel(c.label));
+    const nonFrontCamera = orderedCameras.find(c => !isFrontLabel(c.label));
+    const candidateIds = [
+        rearCamera?.deviceId,
+        nonFrontCamera?.deviceId,
+        ...orderedCameras.map(c => c.deviceId),
+    ].filter(Boolean).filter((v, i, arr) => arr.indexOf(v) === i);
+
+    // En móvil, probar primero `environment`; muchos equipos no etiquetan cámaras correctamente.
+    const constraintPrimary = IS_MOBILE_DEVICE()
+        ? [
+            { facingMode: { exact: 'environment' } },
+            { facingMode: { ideal: 'environment' } },
+        ]
+        : [];
+
+    // Fallbacks universales.
     const constraintFallbacks = [
         { facingMode: { ideal: 'environment' } },
         { facingMode: 'user' },
@@ -2597,6 +3138,7 @@ async function iniciarEscanerQR() {
     ];
 
     const attempts = [
+        ...constraintPrimary.map(c => () => tryStart(c)),
         ...candidateIds.map(id => () => tryStart({ deviceId: { exact: id } })),
         ...constraintFallbacks.map(c => () => tryStart(c)),
     ];
@@ -3111,11 +3653,29 @@ function renderGestionAgentes(agentes) {
     container.innerHTML = html;
 }
 
-async function cargarAgentesGestion(showErrors = true) {
+function programarBusquedaAgentesGestion() {
+    if (gestionAgenteSearchTimer) clearTimeout(gestionAgenteSearchTimer);
+    gestionAgenteSearchTimer = setTimeout(() => {
+        cargarAgentesGestion(false);
+    }, 280);
+}
+
+async function cargarAgentesGestion(showErrors = true, forceRefresh = false) {
     try {
         const search = document.getElementById('gestionAgenteSearch')?.value.trim() || '';
-        const res = await apiClient.getAgentesQR(search);
+        const cacheKey = search.toLowerCase();
+        const now = Date.now();
+        if (!forceRefresh && cacheKey === gestionAgenteCacheKey && (now - gestionAgenteCacheAtMs) < 8000) {
+            currentAgentManagementRows = dedupeAgentesPorNombreAlias(gestionAgenteCacheRows);
+            renderGestionAgentes(currentAgentManagementRows);
+            return;
+        }
+
+        const res = await apiClient.getAgentesQR(search, 300);
         const filtered = (res.data || []).filter(a => a.es_activo !== false);
+        gestionAgenteCacheKey = cacheKey;
+        gestionAgenteCacheRows = filtered;
+        gestionAgenteCacheAtMs = now;
         currentAgentManagementRows = dedupeAgentesPorNombreAlias(filtered);
         renderGestionAgentes(currentAgentManagementRows);
     } catch (error) {
@@ -3192,7 +3752,7 @@ async function guardarCambiosAgente(e) {
         await apiClient.actualizarDato(agenteId, payload);
         alert('Agente actualizado correctamente.');
         resetGestionAgentePanel();
-        await cargarAgentesGestion(false);
+        await cargarAgentesGestion(false, true);
         await cargarLineasYAgentes();
     } catch (error) {
         console.error('Error:', error);
@@ -3215,7 +3775,7 @@ async function liberarLineasAgente(agenteId) {
             await apiClient.liberarLinea(line.id, agenteId);
         }
         alert('Líneas liberadas correctamente.');
-        await cargarAgentesGestion(false);
+        await cargarAgentesGestion(false, true);
         await cargarLineasYAgentes();
     } catch (error) {
         console.error('Error:', error);
@@ -3235,11 +3795,47 @@ async function darBajaAgente(agenteId) {
         if (currentEditingAgentId === Number(agenteId)) {
             resetGestionAgentePanel();
         }
-        await cargarAgentesGestion(false);
+        await cargarAgentesGestion(false, true);
         await cargarLineasYAgentes();
     } catch (error) {
         console.error('Error:', error);
         alert('Error dando de baja al agente: ' + error.message);
+    }
+}
+
+async function abrirControlManualDeudaDesdePago() {
+    if (!canAdmin()) {
+        showAppAlert('Solo administradores pueden ajustar saldo manualmente.', { tone: 'warning', title: 'Acceso restringido' });
+        return;
+    }
+
+    const agenteId = Number(
+        document.getElementById('pagoAgenteId')?.value ||
+        document.getElementById('qrAgenteId')?.value ||
+        document.getElementById('qrCtxAgenteId')?.value ||
+        0
+    );
+    const semana =
+        document.getElementById('pagoSemana')?.value ||
+        document.getElementById('qrSemana')?.value ||
+        document.getElementById('qrCtxSemana')?.value ||
+        mondayISO();
+
+    if (typeof qrSetTab === 'function') qrSetTab('config');
+
+    const semanaInput = document.getElementById('deudaManualSemana');
+    if (agenteId > 0) _setDeudaManualAgente(agenteId);
+    if (semanaInput) semanaInput.value = String(semana);
+
+    const panel = document.getElementById('deudaManualPanel');
+    if (panel) {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    if (agenteId > 0) {
+        await consultarDeudaManualAgente(false);
+    } else {
+        showAppAlert('Captura primero un ID de agente en Pago o Estado para precargar el ajuste.', { tone: 'info', title: 'Ajuste manual de deuda' });
     }
 }
 
@@ -3911,8 +4507,7 @@ async function registrarPagoSemanal(e) {
         };
         renderReciboPago(lastReceiptData);
         alert('Pago semanal guardado correctamente.');
-        const deudaManualAgenteId = document.getElementById('deudaManualAgenteId');
-        if (deudaManualAgenteId) deudaManualAgenteId.value = String(payload.agente_id || '');
+        _setDeudaManualAgente(payload.agente_id || '', lastReceiptData?.nombre || '');
         if (document.getElementById('qrAgenteId').value === String(payload.agente_id)) {
             await verificarAgenteQR();
         }
@@ -3981,15 +4576,28 @@ async function consultarResumenPagoActual(showAlerts = true) {
             </div>
         `;
 
-        const deudaManualAgenteId = document.getElementById('deudaManualAgenteId');
         const deudaManualSemana = document.getElementById('deudaManualSemana');
-        if (deudaManualAgenteId) deudaManualAgenteId.value = String(agenteId);
+        _setDeudaManualAgente(agenteId);
         if (deudaManualSemana && data.semana_inicio) deudaManualSemana.value = String(data.semana_inicio);
     } catch (error) {
         console.error('Error:', error);
         container.innerHTML = '<p style="color:#b00020;">No fue posible obtener el resumen de pagos.</p>';
         if (showAlerts) alert('Error consultando resumen de pagos: ' + error.message);
     }
+}
+
+/**
+ * Sets both the hidden ID field and the visible search display for the
+ * "Control Manual de Deuda" agent picker.
+ * @param {number|string} id      — numeric agent ID
+ * @param {string}        [name]  — display name; defaults to "ID: {id}"
+ */
+function _setDeudaManualAgente(id, name) {
+    const hiddenId = document.getElementById('deudaManualAgenteId');
+    const searchEl = document.getElementById('deudaManualAgenteSearch');
+    const displayName = name || `ID: ${id}`;
+    if (hiddenId) hiddenId.value = String(id || '');
+    if (searchEl) searchEl.value = displayName;
 }
 
 function renderDeudaManualResultado(data, label = 'Consulta') {
@@ -4235,6 +4843,8 @@ async function cargarReporteSemanal() {
             </div>
         `;
 
+        await cargarTotalesCobranzaReporte(false);
+
         const filas = reporte.data || [];
         currentWeeklyReportRows = filas;
         if (filas.length === 0) {
@@ -4268,6 +4878,46 @@ async function cargarReporteSemanal() {
     } catch (error) {
         console.error('Error:', error);
         alert('Error cargando reporte semanal: ' + error.message);
+    }
+}
+
+async function cargarTotalesCobranzaReporte(showAlerts = true) {
+    const container = document.getElementById('reporteCobranzaTotales');
+    if (!container) return;
+
+    const fecha = document.getElementById('reporteCobroFechaInput')?.value || todayISO();
+    const semana = document.getElementById('reporteSemanaInput')?.value || mondayISO();
+
+    try {
+        const res = await apiClient.getTotalesCobranza(fecha, semana);
+        const data = res?.data || {};
+        const serie = Array.isArray(data.serie_diaria_semana) ? data.serie_diaria_semana : [];
+        const serieHtml = serie.map((row) => (
+            `<tr><td>${row.fecha || '-'}</td><td>${Number(row.pagos || 0)}</td><td>$${Number(row.monto || 0).toFixed(2)} MXN</td></tr>`
+        )).join('');
+
+        container.innerHTML = `
+            <div class="card" style="padding:12px;border:1px solid #d8d8d8;border-radius:8px;">
+                <strong>Cobranza del día (${data.fecha || fecha}):</strong> $${Number(data.total_pagado_dia || 0).toFixed(2)} MXN<br>
+                <strong>Pagos del día:</strong> ${Number(data.pagos_registrados_dia || 0)} |
+                <strong>Agentes cobrados:</strong> ${Number(data.agentes_cobrados_dia || 0)}<br>
+                <strong>Acumulado semanal (${data.semana_inicio || semana} a ${data.semana_fin || '-'}):</strong> $${Number(data.total_pagado_semana || 0).toFixed(2)} MXN<br>
+                <strong>Pagos semana:</strong> ${Number(data.pagos_registrados_semana || 0)} |
+                <strong>Agentes cobrados semana:</strong> ${Number(data.agentes_cobrados_semana || 0)}
+            </div>
+            <div class="table-responsive" style="margin-top:10px;">
+                <table class="data-table">
+                    <thead><tr><th>Fecha</th><th>Pagos</th><th>Total</th></tr></thead>
+                    <tbody>${serieHtml || '<tr><td colspan="3">Sin pagos en la semana seleccionada</td></tr>'}</tbody>
+                </table>
+            </div>
+        `;
+    } catch (error) {
+        console.error('Error:', error);
+        container.innerHTML = '<p style="color:#b00020;">No fue posible cargar los totales de cobranza.</p>';
+        if (showAlerts) {
+            alert('Error cargando totales de cobranza: ' + error.message);
+        }
     }
 }
 
@@ -5329,7 +5979,8 @@ function mostrarUsuarios(usuarios) {
             ? `<button onclick="renovarUsuarioTemporal(${user.id}, 10)" class="btn btn-small btn-secondary">Renovar 10d</button>`
             : '';
         const requestButtons = user.es_temporal
-            ? `<button onclick="solicitarPermisosTemporal(${user.id}, 'capture')" class="btn btn-small btn-secondary">Solicitar capture</button>
+                ? `<button onclick="solicitarPermisosTemporal(${user.id}, 'viewer')" class="btn btn-small btn-secondary">Solicitar normal limitado</button>
+                    <button onclick="solicitarPermisosTemporal(${user.id}, 'capture')" class="btn btn-small btn-secondary">Solicitar capture</button>
                <button onclick="solicitarPermisosTemporal(${user.id}, 'admin')" class="btn btn-small btn-secondary">Solicitar admin</button>`
             : '';
         html += `
@@ -5519,6 +6170,7 @@ async function cargarSolicitudesPermisosTemporales(showErrors = true) {
                 <td>${escapeHtml(item.motivo || '')}</td>
                 <td>${formatDateTimeSafe(item.solicitado_en)}</td>
                 <td>
+                    <button type="button" class="btn btn-small" onclick="resolverSolicitudPermisoTemporal(${item.id}, true, 'viewer')">Aprobar consulta</button>
                     <button type="button" class="btn btn-small" onclick="resolverSolicitudPermisoTemporal(${item.id}, true, 'capture')">Aprobar capture</button>
                     <button type="button" class="btn btn-small btn-secondary" onclick="resolverSolicitudPermisoTemporal(${item.id}, true, 'admin')">Aprobar admin</button>
                     <button type="button" class="btn btn-small btn-danger" onclick="resolverSolicitudPermisoTemporal(${item.id}, false, 'capture')">Rechazar</button>

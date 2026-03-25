@@ -13,6 +13,38 @@ class APIClient {
         return this.token || localStorage.getItem('authToken');
     }
 
+    _shouldInvalidateSession(status, detail = '') {
+        if (status === 401) return true;
+        if (status !== 403) return false;
+
+        const text = String(detail || '').toLowerCase();
+        // 403 puede ser un permiso funcional (no debe cerrar sesión).
+        // Solo invalidamos sesión si el mensaje apunta a token/sesión inválida.
+        return [
+            'token inválido',
+            'token invalido',
+            'token expirado',
+            'sesión expirada',
+            'sesion expirada',
+            'sesión inválida',
+            'sesion invalida',
+            'usuario inactivo',
+            'not authenticated',
+            'invalid token',
+            'expired token',
+        ].some(fragment => text.includes(fragment));
+    }
+
+    _emitSessionInvalid(reason = 'token_invalid') {
+        try {
+            window.dispatchEvent(new CustomEvent('app:session-invalid', {
+                detail: { reason }
+            }));
+        } catch (_) {
+            // noop
+        }
+    }
+
     /**
      * Realizar solicitud HTTP
      */
@@ -45,6 +77,9 @@ class APIClient {
                     detail = payload.detail || payload.mensaje || detail;
                 } catch (_) {
                     // ignore JSON parse errors
+                }
+                if (this._shouldInvalidateSession(response.status, detail)) {
+                    this._emitSessionInvalid('api_request_unauthorized');
                 }
                 throw new Error(detail);
             }
@@ -92,6 +127,9 @@ class APIClient {
                 } catch (_) {
                     // ignore JSON parse errors
                 }
+                if (this._shouldInvalidateSession(response.status, detail)) {
+                    this._emitSessionInvalid('api_upload_unauthorized');
+                }
                 throw new Error(detail);
             }
 
@@ -112,6 +150,16 @@ class APIClient {
         });
     }
 
+    async registrarTemporal(username, email, password, nombreCompleto = '', diasVigencia = 10) {
+        return this.request('POST', '/auth/registrar-temporal', {
+            username,
+            email,
+            password,
+            nombre_completo: nombreCompleto,
+            dias_vigencia: diasVigencia,
+        });
+    }
+
     async login(username, password) {
         return this.request('POST', '/auth/login', {
             username,
@@ -121,6 +169,10 @@ class APIClient {
 
     async getMe() {
         return this.request('GET', '/auth/me');
+    }
+
+    async getSelfServiceResumen() {
+        return this.request('GET', '/usuarios/self-service/resumen');
     }
 
     setToken(token) {
@@ -223,6 +275,14 @@ class APIClient {
         return this.request('GET', `/qr/pagos/resumen/${agenteId}${qs}`);
     }
 
+    async getTotalesCobranza(fecha = '', semana = '') {
+        const params = new URLSearchParams();
+        if (fecha) params.append('fecha', fecha);
+        if (semana) params.append('semana', semana);
+        const qs = params.toString() ? `?${params.toString()}` : '';
+        return this.request('GET', `/qr/pagos/totales${qs}`);
+    }
+
     async getDeudaManualAgente(agenteId, semana = '') {
         const qs = semana ? `?semana=${encodeURIComponent(semana)}` : '';
         return this.request('GET', `/qr/agentes/${agenteId}/deuda-manual${qs}`);
@@ -297,11 +357,14 @@ class APIClient {
         return this.request('GET', `/qr/agente/${agenteId}/qr`);
     }
 
-    async exportQrAgentesPdf({ idsCsv = '', search = '', layout = 'sheet', soloActivos = true, marcarImpreso = true } = {}) {
+    async exportQrAgentesPdf({ idsCsv = '', search = '', layout = 'sheet', soloActivos = true, marcarImpreso = true, layoutOverrides = null } = {}) {
         const params = new URLSearchParams();
         if (idsCsv) params.append('ids_csv', idsCsv);
         if (search) params.append('search', search);
         if (layout) params.append('layout', layout);
+        if (layoutOverrides && typeof layoutOverrides === 'object') {
+            params.append('layout_overrides', JSON.stringify(layoutOverrides));
+        }
         params.append('solo_activos', String(soloActivos));
         params.append('marcar_impreso', String(marcarImpreso));
 
@@ -318,6 +381,9 @@ class APIClient {
                 const payload = await response.json();
                 detail = payload.detail || payload.mensaje || detail;
             } catch (_) {}
+            if (this._shouldInvalidateSession(response.status, detail)) {
+                this._emitSessionInvalid('api_blob_unauthorized');
+            }
             throw new Error(detail);
         }
         return response.blob();
@@ -345,6 +411,9 @@ class APIClient {
                 const payload = await response.json();
                 detail = payload.detail || detail;
             } catch (_) {}
+            if (this._shouldInvalidateSession(response.status, detail)) {
+                this._emitSessionInvalid('api_blob_unauthorized');
+            }
             throw new Error(detail);
         }
         return response.blob();
@@ -369,8 +438,13 @@ class APIClient {
         return this.request('GET', `/qr/alertas?${params.toString()}`);
     }
 
-    async getAgentesQR(search = '') {
-        const suffix = search ? `?search=${encodeURIComponent(search)}` : '';
+    async getAgentesQR(search = '', limit = 500) {
+        const params = new URLSearchParams();
+        if (search) params.append('search', search);
+        if (Number.isFinite(Number(limit)) && Number(limit) > 0) {
+            params.append('limit', String(Number(limit)));
+        }
+        const suffix = params.toString() ? `?${params.toString()}` : '';
         return this.request('GET', `/qr/agentes${suffix}`);
     }
 
@@ -507,6 +581,9 @@ class APIClient {
                 const payload = await response.json();
                 detail = payload.detail || detail;
             } catch (_) {}
+            if (this._shouldInvalidateSession(response.status, detail)) {
+                this._emitSessionInvalid('api_form_unauthorized');
+            }
             throw new Error(detail);
         }
         return response.json();
@@ -635,6 +712,9 @@ class APIClient {
                 const payload = await response.json();
                 detail = payload.detail || payload.mensaje || detail;
             } catch (_) {}
+            if (this._shouldInvalidateSession(response.status, detail)) {
+                this._emitSessionInvalid('api_upload_unauthorized');
+            }
             throw new Error(detail);
         }
         return response.json();

@@ -35,7 +35,7 @@ router = APIRouter(prefix="/api/smart-export", tags=["Exportación Inteligente"]
 
 ALLOWED_TABLES_ANY_USER: frozenset[str] = frozenset(
     {
-        "datos_importados",
+        "agentes_operativos",
         "lineas_telefonicas",
         "pagos_semanales",
         "agente_linea_asignaciones",
