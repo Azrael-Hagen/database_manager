@@ -310,6 +310,11 @@ class PagoSemanalAdminActualizar(BaseModel):
     observaciones: Optional[str] = Field(None, max_length=500)
 
 
+class PagoSemanalRevertir(BaseModel):
+    """Solicitud de reversa administrativa de pago semanal."""
+    motivo: Optional[str] = Field(None, max_length=500)
+
+
 class PagoSemanalRespuesta(BaseModel):
     """Respuesta de pago semanal."""
     id: int

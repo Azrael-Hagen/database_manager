@@ -286,6 +286,30 @@ class ReciboPago(Base):
         return f"<ReciboPago pago={self.pago_id} token={self.token_recibo}>"
 
 
+class CobranzaSemanalSnapshot(Base):
+    """Snapshot auditable del balance global semanal de cobranza."""
+
+    __tablename__ = "cobranza_semanal_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    semana_inicio = Column(Date, nullable=False, index=True)
+    total_agentes = Column(Integer, nullable=False, default=0)
+    total_pagados = Column(Integer, nullable=False, default=0)
+    total_pendientes = Column(Integer, nullable=False, default=0)
+    deuda_total_global = Column(Numeric(12, 2), nullable=False, default=0)
+    total_abonado_global = Column(Numeric(12, 2), nullable=False, default=0)
+    saldo_global = Column(Numeric(12, 2), nullable=False, default=0)
+    monto_semana_reportado = Column(Numeric(12, 2), nullable=False, default=0)
+    monto_semana_ledger = Column(Numeric(12, 2), nullable=False, default=0)
+    discrepancia_semana = Column(Numeric(12, 2), nullable=False, default=0)
+    discrepancia_saldo = Column(Numeric(12, 2), nullable=False, default=0)
+    discrepancias_json = Column(Text)
+    generado_en = Column(DateTime, default=_utcnow, index=True)
+
+    def __repr__(self):
+        return f"<CobranzaSemanalSnapshot semana={self.semana_inicio} saldo={self.saldo_global}>"
+
+
 class ImportLog(Base):
     """Log de importaciones con auditoría completa."""
     

@@ -285,6 +285,50 @@ function renderCameraSecurityHint() {
     hintEl.title = 'Los navegadores bloquean camara en origenes HTTP no seguros';
 }
 
+function isNativePhantomScannerAvailable() {
+    return !!(window.PhantomAndroid && typeof window.PhantomAndroid.startNativeQrScan === 'function');
+}
+
+function renderNativeQrControls() {
+    const nativeButton = document.getElementById('nativeQrScanBtn');
+    const nativeHint = document.getElementById('nativeQrScanHint');
+    const available = isNativePhantomScannerAvailable();
+
+    if (nativeButton) nativeButton.style.display = available ? '' : 'none';
+    if (nativeHint) nativeHint.style.display = available ? 'block' : 'none';
+}
+
+function triggerNativeQrScan() {
+    if (!isNativePhantomScannerAvailable()) {
+        showAppAlert('El escaneo nativo solo está disponible dentro de la Phantom App instalada.', {
+            title: 'Escaneo nativo no disponible',
+            tone: 'warning',
+        });
+        return;
+    }
+    window.PhantomAndroid.startNativeQrScan();
+}
+
+async function consumePendingNativeQrScan() {
+    const pendingCode = String(window.__phantomNativeLastScan || '').trim();
+    if (!pendingCode) return;
+    window.__phantomNativeLastScan = '';
+    try {
+        await manejarQRLeido(pendingCode);
+    } catch (error) {
+        console.error('Error procesando escaneo nativo pendiente:', error);
+    }
+}
+
+window.addEventListener('phantom-native-qr-scan', (event) => {
+    const decodedText = String(event?.detail?.code || '').trim();
+    if (!decodedText) return;
+    window.__phantomNativeLastScan = '';
+    Promise.resolve(manejarQRLeido(decodedText)).catch((error) => {
+        console.error('Error procesando escaneo nativo:', error);
+    });
+});
+
 function updateScrollTopButton() {
     const btn = document.getElementById('scrollTopBtn');
     if (!btn) return;
@@ -712,6 +756,8 @@ document.addEventListener('DOMContentLoaded', () => {
     setDefaultWeeklyDates();
     loadBrandingConfig();
     renderCameraSecurityHint();
+    renderNativeQrControls();
+    consumePendingNativeQrScan();
 });
 
 async function loadBrandingConfig() {
@@ -1602,6 +1648,7 @@ function loadSection(section, eventRef = null) {
         case 'qrScan':
             document.getElementById('qrScanSection').style.display = 'block';
             setDefaultWeeklyDates();
+            renderNativeQrControls();
             setTimeout(() => {
                 cargarCamarasDisponibles(true).catch(() => {});
             }, 120);
@@ -1862,10 +1909,33 @@ async function loadDashboardData(showErrors = true) {
         if (activityChart) {
             activityChart.innerHTML = renderActivityChart(activitySeries);
         }
+
+        cargarInfoAppMovil();
     } catch (error) {
         if (showErrors) {
             console.error('Error:', error);
         }
+    }
+}
+
+async function cargarInfoAppMovil() {
+    const infoEl = document.getElementById('phantomAppInfo');
+    const btnEl = document.getElementById('phantomAppDownloadBtn');
+    if (!infoEl || !btnEl) return;
+    try {
+        const res = await fetch('/api/download/phantom-app/info');
+        if (!res.ok) throw new Error('no disponible');
+        const data = await res.json();
+        if (data.disponible) {
+            infoEl.textContent = `Disponible · ${data.tamanio_mb} MB`;
+            btnEl.style.display = '';
+        } else {
+            infoEl.textContent = 'La app no está disponible en este servidor.';
+            btnEl.style.display = 'none';
+        }
+    } catch (_) {
+        infoEl.textContent = 'No se pudo verificar la disponibilidad.';
+        btnEl.style.display = 'none';
     }
 }
 
@@ -2390,6 +2460,115 @@ function getDueDateSaturday(weekIso) {
     return monday;
 }
 
+function showQuickAbonoModal({ montoSugerido = 0, saldo = 0, cuota = 0 } = {}) {
+    return new Promise((resolve) => {
+        const suggested = Number(montoSugerido || 0);
+        const saldoActual = Number(saldo || 0);
+        const cuotaActual = Number(cuota || 0);
+
+        const backdrop = document.createElement('div');
+        backdrop.className = 'app-alert-backdrop visible';
+        backdrop.innerHTML = `
+            <div class="app-alert-modal info qr-abono-modal" role="alertdialog" aria-modal="true">
+                <div class="app-alert-header">
+                    <div class="app-alert-badge">Abono</div>
+                    <button type="button" class="app-alert-close" aria-label="Cerrar">×</button>
+                </div>
+                <h3 class="app-alert-title">Registrar Abono Parcial</h3>
+                <div class="app-alert-message"><p>Captura el monto del abono para esta semana.</p></div>
+                <div class="qr-abono-kpis">
+                    <div class="qr-abono-kpi"><span>Sugerido</span><strong>$${suggested.toFixed(2)} MXN</strong></div>
+                    <div class="qr-abono-kpi"><span>Saldo actual</span><strong>$${saldoActual.toFixed(2)} MXN</strong></div>
+                    <div class="qr-abono-kpi"><span>Cuota semana</span><strong>$${cuotaActual.toFixed(2)} MXN</strong></div>
+                </div>
+                <div class="app-prompt-input-wrap">
+                    <label for="qrAbonoMontoInput" class="hint" style="display:block;margin-bottom:6px;">Monto a registrar</label>
+                    <input id="qrAbonoMontoInput" type="number" class="app-prompt-input qr-abono-input"
+                           placeholder="0.00" step="0.01" min="0" value="${suggested.toFixed(2)}" inputmode="decimal" autocomplete="off" />
+                </div>
+                <div class="qr-abono-feedback" id="qrAbonoFeedback"></div>
+                <div class="qr-abono-presets">
+                    <button type="button" class="btn btn-secondary" data-preset="cuota">Usar cuota</button>
+                    <button type="button" class="btn btn-secondary" data-preset="saldo">Usar saldo</button>
+                    <button type="button" class="btn btn-secondary" data-preset="sugerido">Sugerido</button>
+                </div>
+                <div class="app-alert-actions app-confirm-actions qr-abono-actions">
+                    <button type="button" class="btn btn-secondary" data-result="cancel">Cancelar</button>
+                    <button type="button" class="btn" data-result="accept">Registrar</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(backdrop);
+
+        const input = backdrop.querySelector('#qrAbonoMontoInput');
+        const feedback = backdrop.querySelector('#qrAbonoFeedback');
+        const acceptBtn = backdrop.querySelector('[data-result="accept"]');
+        const EPS = 0.009;
+
+        const validateAmount = () => {
+            const raw = String(input?.value ?? '').trim();
+            const amount = Number(raw);
+            let error = '';
+
+            if (!Number.isFinite(amount)) {
+                error = 'Ingresa un monto válido.';
+            } else if (amount <= 0) {
+                error = 'El abono debe ser mayor a 0.';
+            } else if (saldoActual > EPS && amount > (saldoActual + EPS)) {
+                error = `El abono excede el saldo acumulado ($${saldoActual.toFixed(2)} MXN).`;
+            }
+
+            if (feedback) {
+                if (error) {
+                    feedback.textContent = error;
+                    feedback.className = 'qr-abono-feedback error';
+                } else {
+                    feedback.textContent = 'Monto válido para registrar.';
+                    feedback.className = 'qr-abono-feedback success';
+                }
+            }
+            if (acceptBtn) {
+                acceptBtn.disabled = Boolean(error);
+            }
+
+            return { amount, error };
+        };
+
+        const closeAndResolve = (value) => {
+            document.removeEventListener('keydown', keyHandler);
+            backdrop.remove();
+            resolve(value);
+        };
+
+        const keyHandler = (e) => {
+            if (e.key === 'Escape') closeAndResolve(null);
+            if (e.key === 'Enter') {
+                const result = validateAmount();
+                if (!result.error) closeAndResolve(String(result.amount));
+            }
+        };
+
+        backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) closeAndResolve(null);
+        });
+        backdrop.querySelector('[data-result="cancel"]')?.addEventListener('click', () => closeAndResolve(null));
+        backdrop.querySelector('[data-result="accept"]')?.addEventListener('click', () => {
+            const result = validateAmount();
+            if (!result.error) closeAndResolve(String(result.amount));
+        });
+        backdrop.querySelector('.app-alert-close')?.addEventListener('click', () => closeAndResolve(null));
+        backdrop.querySelector('[data-preset="cuota"]')?.addEventListener('click', () => { if (input) input.value = cuotaActual.toFixed(2); validateAmount(); });
+        backdrop.querySelector('[data-preset="saldo"]')?.addEventListener('click', () => { if (input) input.value = saldoActual.toFixed(2); validateAmount(); });
+        backdrop.querySelector('[data-preset="sugerido"]')?.addEventListener('click', () => { if (input) input.value = suggested.toFixed(2); validateAmount(); });
+        input?.addEventListener('input', validateAmount);
+
+        document.addEventListener('keydown', keyHandler);
+        input?.focus();
+        input?.select();
+        validateAmount();
+    });
+}
+
 function renderEscaneoResumen(data) {
     const badge = document.getElementById('qrScanEstadoBadge');
     const content = document.getElementById('qrScanSummaryContent');
@@ -2456,9 +2635,20 @@ async function registrarPagoDesdeEscaneo(mode = 'abono') {
         return;
     }
 
-    const monto = mode === 'liquidar'
+    const montoSugerido = mode === 'liquidar'
         ? Math.max(saldo, 0)
         : (saldo > 0.009 ? Math.min(saldo, cuota || saldo) : (cuota || 0));
+
+    let monto = montoSugerido;
+    if (mode === 'abono') {
+        const montoRaw = await showQuickAbonoModal({
+            montoSugerido,
+            saldo,
+            cuota,
+        });
+        if (montoRaw === null) return;
+        monto = Number(montoRaw);
+    }
 
     if (monto <= 0) {
         alert('No hay monto válido para registrar pago.');
@@ -2471,7 +2661,7 @@ async function registrarPagoDesdeEscaneo(mode = 'abono') {
         numero_voip: a.numero_voip || null,
         semana_inicio: semana,
         monto,
-        pagado: true,
+        pagado: mode === 'liquidar',
         liquidar_total: mode === 'liquidar',
         observaciones: mode === 'liquidar'
             ? 'Pago procesado desde escaneo QR (liquidación total).'
@@ -3232,6 +3422,11 @@ async function detenerEscanerQR() {
         // ignore cleanup errors
     }
     qrScannerInstance = null;
+    const btn = document.getElementById('qrCameraToggleBtn');
+    if (btn) {
+        btn.textContent = '📷 Iniciar Cámara';
+        btn.classList.remove('scanning');
+    }
 }
 
 function isQrScannerRunning() {
@@ -3251,6 +3446,9 @@ async function manejarQRLeido(decodedText) {
     qrDecodeInFlight = true;
     qrLastDecodedText = normalizedCode;
     qrLastDecodedAtMs = nowMs;
+
+    // Detener inmediatamente para evitar lecturas múltiples del mismo código.
+    await detenerEscanerQR();
 
     const week = getActiveQrWeek();
 
@@ -4490,6 +4688,9 @@ async function registrarPagoSemanal(e) {
     try {
         const pago = await apiClient.registrarPagoSemanal(payload);
         const recibo = pago.recibo || {};
+        const estadoPago = (pago.pagado === true)
+            ? 'Al Corriente'
+            : (Number(pago.abono_registrado ?? payload.monto ?? 0) > 0 ? 'Abonado' : 'Pendiente de Pago');
         lastReceiptData = {
             agente_id: payload.agente_id,
             nombre: currentVerificationData?.agente?.nombre || `Agente ${payload.agente_id}`,
@@ -4499,7 +4700,9 @@ async function registrarPagoSemanal(e) {
             semana_inicio: payload.semana_inicio,
             monto: Number(pago.monto ?? payload.monto ?? 0),
             fecha_pago: pago.fecha_pago || new Date().toISOString(),
-            estado: payload.pagado ? 'Al Corriente' : 'Pendiente de Pago',
+            estado: estadoPago,
+            pago_id: pago.id || null,
+            pagado: !!pago.pagado,
             abono_registrado: Number(pago.abono_registrado ?? payload.monto ?? 0),
             saldo_acumulado: Number(pago.saldo_acumulado ?? 0),
             recibo_token: recibo.token || null,
@@ -4715,8 +4918,14 @@ async function reimprimirReciboPorToken(token) {
             linea_numero: data.linea_numero || null,
             semana_inicio: data.semana_inicio,
             monto: Number(data.monto || 0),
+            abono_registrado: Number(data.abono_aplicado ?? data.monto ?? 0),
+            saldo_acumulado: Number(data.saldo_acumulado ?? 0),
+            deuda_total: Number(data.deuda_total ?? 0),
+            total_abonado: Number(data.total_abonado ?? 0),
             fecha_pago: data.fecha_pago,
-            estado: data.pagado ? 'Al Corriente' : 'Pendiente de Pago',
+            estado: data.estado_pago || (data.pagado ? 'Al Corriente' : (Number(data.monto || 0) > 0 ? 'Abonado' : 'Pendiente de Pago')),
+            pago_id: data.pago_id || null,
+            pagado: !!data.pagado,
             recibo_token: data.token || token,
             expira_en: data.expira_en,
         };
@@ -4729,11 +4938,52 @@ async function reimprimirReciboPorToken(token) {
     }
 }
 
-function imprimirReciboPago() {
+async function _pedirCamposVisiblesRecibo(defaultFields) {
+    const defaultCsv = defaultFields.join(',');
+    const raw = await showAppPrompt(
+        'Campos visibles del recibo (separados por coma).\nOpciones: agente,id,telefono,voip,linea,semana,monto,abono,saldo,deuda,total_abonado,fecha,estado,token,vence',
+        { title: 'Configurar recibo', placeholder: defaultCsv }
+    );
+    if (raw === null) return null;
+    const csv = String(raw || '').trim() || defaultCsv;
+    const chosen = new Set(csv.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean));
+    return chosen.size ? chosen : new Set(defaultFields);
+}
+
+async function _compararDatosRecibo(data) {
+    const payload = { ...data };
+    const agenteId = Number(payload.agente_id || 0);
+    const semana = String(payload.semana_inicio || '').trim();
+    if (!agenteId || !semana) return payload;
+
+    try {
+        const res = await apiClient.getResumenPagoAgente(agenteId, semana);
+        const d = res?.data || {};
+        payload.saldo_acumulado = Number(d.saldo_acumulado ?? payload.saldo_acumulado ?? 0);
+        payload.deuda_total = Number(d.deuda_total ?? payload.deuda_total ?? 0);
+        payload.total_abonado = Number(d.total_abonado ?? payload.total_abonado ?? 0);
+        if (!Number.isFinite(Number(payload.abono_registrado))) {
+            payload.abono_registrado = Number(payload.monto || 0);
+        }
+    } catch (_) {
+        // Si no hay resumen disponible, se imprime con datos del recibo persistido.
+    }
+    return payload;
+}
+
+async function imprimirReciboPago() {
     if (!lastReceiptData) {
         alert('No hay comprobante para imprimir.');
         return;
     }
+
+    const enriched = await _compararDatosRecibo(lastReceiptData);
+    const visible = await _pedirCamposVisiblesRecibo([
+        'agente', 'id', 'telefono', 'voip', 'linea', 'semana', 'monto', 'abono', 'saldo', 'deuda', 'total_abonado', 'fecha', 'estado', 'token', 'vence'
+    ]);
+    if (!visible) return;
+
+    const line = (key, label, value) => visible.has(key) ? `<p><strong>${label}:</strong> ${value}</p>` : '';
     const receiptHtml = `
         <html>
         <head>
@@ -4748,16 +4998,21 @@ function imprimirReciboPago() {
         <body>
             <div class="receipt">
                 <h1>Comprobante de Pago</h1>
-                <p><strong>Agente:</strong> ${lastReceiptData.nombre || ''}</p>
-                <p><strong>ID:</strong> ${lastReceiptData.agente_id || ''}</p>
-                <p><strong>Teléfono:</strong> ${lastReceiptData.telefono || '-'}</p>
-                <p><strong>VoIP:</strong> ${lastReceiptData.numero_voip || '-'}</p>
-                <p><strong>Línea:</strong> ${lastReceiptData.linea_numero || '-'}</p>
-                <p><strong>Semana:</strong> ${lastReceiptData.semana_inicio || '-'}</p>
-                <p><strong>Monto:</strong> $${Number(lastReceiptData.monto || 0).toFixed(2)} MXN</p>
-                <p><strong>Fecha de pago:</strong> ${lastReceiptData.fecha_pago ? new Date(lastReceiptData.fecha_pago).toLocaleString() : '-'}</p>
-                <p><strong>Estado:</strong> ${lastReceiptData.estado || 'Al Corriente'}</p>
-                <p><strong>Token:</strong> ${lastReceiptData.recibo_token || '-'}</p>
+                ${line('agente', 'Agente', enriched.nombre || '')}
+                ${line('id', 'ID', enriched.agente_id || '')}
+                ${line('telefono', 'Teléfono', enriched.telefono || '-')}
+                ${line('voip', 'VoIP', enriched.numero_voip || '-')}
+                ${line('linea', 'Línea', enriched.linea_numero || '-')}
+                ${line('semana', 'Semana', enriched.semana_inicio || '-')}
+                ${line('monto', 'Monto', `$${Number(enriched.monto || 0).toFixed(2)} MXN`)}
+                ${line('abono', 'Abono aplicado', `$${Number(enriched.abono_registrado || 0).toFixed(2)} MXN`)}
+                ${line('saldo', 'Saldo acumulado', `$${Number(enriched.saldo_acumulado || 0).toFixed(2)} MXN`)}
+                ${line('deuda', 'Deuda total', `$${Number(enriched.deuda_total || 0).toFixed(2)} MXN`)}
+                ${line('total_abonado', 'Total abonado', `$${Number(enriched.total_abonado || 0).toFixed(2)} MXN`)}
+                ${line('fecha', 'Fecha de pago', enriched.fecha_pago ? new Date(enriched.fecha_pago).toLocaleString() : '-')}
+                ${line('estado', 'Estado', enriched.estado || 'Al Corriente')}
+                ${line('token', 'Token', enriched.recibo_token || '-')}
+                ${line('vence', 'Vence', enriched.expira_en ? new Date(enriched.expira_en).toLocaleString() : '-')}
             </div>
         </body>
         </html>
@@ -4772,6 +5027,166 @@ function imprimirReciboPago() {
     w.document.close();
     w.focus();
     w.print();
+}
+
+async function imprimirRecibosSeleccionados() {
+    const checks = Array.from(document.querySelectorAll('.recibo-select-item:checked'));
+    if (!checks.length) {
+        alert('Selecciona al menos un recibo para imprimir.');
+        return;
+    }
+
+    const rows = checks
+        .map((c) => {
+            try {
+                return JSON.parse(decodeURIComponent(c.dataset.recibo || ''));
+            } catch (_) {
+                return null;
+            }
+        })
+        .filter(Boolean);
+
+    if (!rows.length) {
+        alert('No fue posible preparar los recibos seleccionados.');
+        return;
+    }
+
+    const visible = await _pedirCamposVisiblesRecibo([
+        'agente', 'id', 'linea', 'semana', 'monto', 'abono', 'saldo', 'deuda', 'total_abonado', 'fecha', 'estado', 'token'
+    ]);
+    if (!visible) return;
+
+    const porHoja = Number(document.getElementById('recibosPorHojaSelect')?.value || 3);
+    const perPage = [2, 3, 4].includes(porHoja) ? porHoja : 3;
+    const columns = perPage >= 4 ? 2 : 1;
+    const minCardHeight = perPage === 2 ? '122mm' : (perPage === 3 ? '82mm' : '58mm');
+
+    const cards = rows.map((r) => {
+        const estado = r.pagado ? 'Al Corriente' : (Number(r.monto || 0) > 0 ? 'Abonado' : 'Pendiente de Pago');
+        const line = (key, label, value) => visible.has(key) ? `<p><strong>${label}:</strong> ${value}</p>` : '';
+        return `
+            <article class="recibo-card">
+                <h3>Comprobante de Pago</h3>
+                ${line('agente', 'Agente', `${escapeHtml(r.agente_nombre || '-')} (ID ${escapeHtml(String(r.agente_id || '-'))})`)}
+                ${line('id', 'ID', escapeHtml(String(r.agente_id || '-')))}
+                ${line('linea', 'Línea', escapeHtml(r.linea_numero || '-'))}
+                ${line('semana', 'Semana', escapeHtml(r.semana_inicio || '-'))}
+                ${line('monto', 'Monto', `$${Number(r.monto || 0).toFixed(2)} MXN`)}
+                ${line('abono', 'Abono aplicado', `$${Number(r.abono_aplicado ?? r.monto ?? 0).toFixed(2)} MXN`)}
+                ${line('saldo', 'Saldo acumulado', `$${Number(r.saldo_acumulado ?? 0).toFixed(2)} MXN`)}
+                ${line('deuda', 'Deuda total', `$${Number(r.deuda_total ?? 0).toFixed(2)} MXN`)}
+                ${line('total_abonado', 'Total abonado', `$${Number(r.total_abonado ?? 0).toFixed(2)} MXN`)}
+                ${line('estado', 'Estado', estado)}
+                ${line('fecha', 'Fecha pago', r.fecha_pago ? new Date(r.fecha_pago).toLocaleString() : '-')}
+                ${line('token', 'Token', escapeHtml(r.token || '-'))}
+            </article>
+        `;
+    });
+
+    const pages = [];
+    for (let i = 0; i < cards.length; i += perPage) {
+        const chunk = cards.slice(i, i + perPage).join('');
+        pages.push(`<section class="print-page"><section class="grid">${chunk}</section></section>`);
+    }
+
+    const printHtml = `
+        <html>
+        <head>
+            <title>Recibos de Pago</title>
+            <style>
+                @page { size: letter; margin: 10mm; }
+                body { font-family: Segoe UI, Arial, sans-serif; margin: 0; }
+                .print-page { page-break-after: always; }
+                .print-page:last-child { page-break-after: auto; }
+                .grid { display: grid; grid-template-columns: repeat(${columns}, 1fr); gap: 8mm; }
+                .recibo-card { border: 1px solid #cfd8e3; border-radius: 8px; padding: 8mm; break-inside: avoid; min-height: ${minCardHeight}; }
+                .recibo-card h3 { margin: 0 0 8px 0; color: #0c4f84; font-size: 14pt; }
+                .recibo-card p { margin: 4px 0; font-size: 10pt; }
+            </style>
+        </head>
+        <body>
+            ${pages.join('')}
+        </body>
+        </html>
+    `;
+
+    const w = window.open('', '_blank', 'width=1000,height=760');
+    if (!w) {
+        alert('No se pudo abrir la ventana de impresión.');
+        return;
+    }
+    w.document.open();
+    w.document.write(printHtml);
+    w.document.close();
+    w.focus();
+    w.print();
+}
+
+async function editarPagoDesdeRecibo(pagoId, montoActual = 0) {
+    if (!canAdmin()) {
+        alert('Solo administradores pueden editar pagos.');
+        return;
+    }
+    const montoRaw = await showAppPrompt(
+        `Monto actual: $${Number(montoActual || 0).toFixed(2)} MXN\nNuevo monto del pago:`,
+        { title: 'Editar pago', placeholder: String(Number(montoActual || 0).toFixed(2)), type: 'number' }
+    );
+    if (montoRaw === null) return;
+    const monto = Number(montoRaw);
+    if (!Number.isFinite(monto) || monto < 0) {
+        alert('Monto inválido.');
+        return;
+    }
+
+    const observaciones = await showAppPrompt('Observaciones (opcional):', { title: 'Editar recibo/pago', placeholder: 'Opcional' }) || null;
+    try {
+        const res = await apiClient.editarPagoSemanalAdmin(pagoId, { monto, observaciones });
+        const data = res?.data || {};
+        const recibo = data.recibo || {};
+        if (recibo.token) {
+            await reimprimirReciboPorToken(recibo.token);
+        } else {
+            await cargarRecibosPersistidos();
+        }
+        alert('Pago y recibo actualizados correctamente.');
+    } catch (error) {
+        console.error('Error:', error);
+        alert('No fue posible editar el recibo/pago: ' + error.message);
+    }
+}
+
+async function revertirPagoDesdeRecibo(pagoId, agenteId = 0) {
+    if (!canAdmin()) {
+        alert('Solo administradores pueden revertir pagos.');
+        return;
+    }
+
+    const confirmar = window.confirm('Esta acción revertirá el pago y lo dejará en $0.00 para esa semana. ¿Deseas continuar?');
+    if (!confirmar) return;
+
+    const motivo = await showAppPrompt('Motivo de reversa (opcional):', {
+        title: 'Revertir pago',
+        placeholder: 'Ej: pago de prueba, captura errónea'
+    });
+    if (motivo === null) return;
+
+    try {
+        const res = await apiClient.revertirPagoSemanalAdmin(pagoId, { motivo: (motivo || '').trim() });
+        const data = res?.data || {};
+        const recibo = data.recibo || {};
+        alert(`Pago revertido correctamente. Monto revertido: $${Number(data.monto_revertido || 0).toFixed(2)} MXN`);
+        await cargarReporteSemanal();
+        await cargarRecibosPersistidos();
+        if (recibo.token) {
+            await reimprimirReciboPorToken(recibo.token);
+        }
+        if (Number(document.getElementById('pagoAgenteId')?.value || 0) === Number(agenteId || 0)) {
+            await consultarResumenPagoActual(false);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('No fue posible revertir el pago: ' + error.message);
+    }
 }
 
 function generarReciboDesdeReporte(index) {
@@ -4833,13 +5248,38 @@ async function cargarReporteSemanal() {
         const tarifa = Number(reporte.cuota_semanal || 300).toFixed(2);
         const tot = reporte.totales || { agentes: 0, pagados: 0, pendientes: 0 };
 
+        const saldoGlobal = Number(tot.saldo_global || 0);
+        const claseSaldo = saldoGlobal > 0.009 ? 'color:#b00020;' : 'color:#0b6b2f;';
+        const discrepancias = Array.isArray(reporte.discrepancias) ? reporte.discrepancias : [];
+        const discrepanciasHtml = discrepancias.length
+            ? `<div style="margin-top:8px;padding:8px;border:1px solid #f0c9c9;border-radius:6px;background:#fff5f5;">
+                <strong>Discrepancias detectadas (${discrepancias.length}):</strong>
+                <ul style="margin:6px 0 0 18px;">
+                    ${discrepancias.map(d => `<li>${escapeHtml(d.codigo || 'SIN_CODIGO')} - ${escapeHtml(d.mensaje || '')}</li>`).join('')}
+                </ul>
+            </div>`
+            : '<div style="margin-top:8px;color:#0b6b2f;"><strong>Conciliación:</strong> Sin discrepancias relevantes.</div>';
+
+        const snapshot = reporte.snapshot || null;
+        const snapshotHtml = snapshot?.id
+            ? `<div style="margin-top:6px;font-size:12px;color:#444;">Snapshot BD #${snapshot.id} (${snapshot.reutilizado ? 'reutilizado' : 'nuevo'}) - ${snapshot.generado_en || '-'}</div>`
+            : '';
+
         resumen.innerHTML = `
             <div class="card" style="padding:12px;border:1px solid #d8d8d8;border-radius:8px;">
                 <strong>Semana:</strong> ${reporte.semana_inicio}<br>
                 <strong>Tarifa por línea vigente:</strong> $${tarifa} MXN<br>
                 <strong>Agentes:</strong> ${tot.agentes} |
                 <strong>Pagados:</strong> ${tot.pagados} |
-                <strong>Pendientes:</strong> ${tot.pendientes}
+                <strong>Pendientes:</strong> ${tot.pendientes}<br>
+                <strong>Deuda global:</strong> $${Number(tot.deuda_total_global || 0).toFixed(2)} MXN |
+                <strong>Total abonado:</strong> $${Number(tot.total_abonado_global || 0).toFixed(2)} MXN |
+                <strong style="${claseSaldo}">Saldo global:</strong> <span style="${claseSaldo}">$${saldoGlobal.toFixed(2)} MXN</span><br>
+                <strong>Semana (reporte):</strong> $${Number(tot.monto_semana_reportado || 0).toFixed(2)} MXN |
+                <strong>Semana (ledger):</strong> $${Number(tot.monto_semana_ledger || 0).toFixed(2)} MXN |
+                <strong>Diferencia:</strong> $${Number(tot.discrepancia_semana || 0).toFixed(2)} MXN
+                ${discrepanciasHtml}
+                ${snapshotHtml}
             </div>
         `;
 
@@ -4865,7 +5305,7 @@ async function cargarReporteSemanal() {
                     <td>$${Number(f.monto_pagado || 0).toFixed(2)}</td>
                     <td>$${Number(f.saldo || 0).toFixed(2)}</td>
                     <td>$${Number(f.saldo_acumulado || 0).toFixed(2)}</td>
-                    <td>${f.alerta_emitida ? (f.alerta_atendida ? 'Atendida' : 'Pendiente') : 'Sin alerta'}<br><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"><button onclick="generarQrIndividual(${f.agente_id})" class="btn btn-small btn-secondary">Ver QR</button><button onclick="generarReciboDesdeReporte(${index})" class="btn btn-small">Recibo</button>${adminMode && f.pago_id ? `<button onclick="editarPagoAdminDesdeReporte(${f.pago_id}, ${f.agente_id})" class="btn btn-small btn-secondary">Editar Pago</button>` : ''}</div></td>
+                    <td>${f.alerta_emitida ? (f.alerta_atendida ? 'Atendida' : 'Pendiente') : 'Sin alerta'}<br><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"><button onclick="generarQrIndividual(${f.agente_id})" class="btn btn-small btn-secondary">Ver QR</button><button onclick="generarReciboDesdeReporte(${index})" class="btn btn-small">Recibo</button>${adminMode && f.pago_id ? `<button onclick="editarPagoAdminDesdeReporte(${f.pago_id}, ${f.agente_id}, ${Number(f.monto_pagado || 0)})" class="btn btn-small btn-secondary">Editar Pago</button><button onclick="revertirPagoDesdeRecibo(${f.pago_id}, ${f.agente_id})" class="btn btn-small" style="background:#8b1d1d;color:#fff;">Revertir</button>` : ''}</div></td>
                 </tr>`;
             });
             html += '</tbody></table>';
@@ -4921,12 +5361,15 @@ async function cargarTotalesCobranzaReporte(showAlerts = true) {
     }
 }
 
-async function editarPagoAdminDesdeReporte(pagoId, agenteId) {
+async function editarPagoAdminDesdeReporte(pagoId, agenteId, montoActual = 0) {
     if (!canAdmin()) {
         alert('Solo administradores pueden editar pagos manualmente.');
         return;
     }
-    const montoRaw = await showAppPrompt('Nuevo monto semanal:', { title: 'Editar pago', placeholder: 'Ej: 300 o 450.50', type: 'number' });
+    const montoRaw = await showAppPrompt(
+        `Monto actual: $${Number(montoActual || 0).toFixed(2)} MXN\nNuevo monto semanal:`,
+        { title: 'Editar pago', placeholder: String(Number(montoActual || 0).toFixed(2)), type: 'number' }
+    );
     if (montoRaw === null) return;
     const monto = Number(montoRaw);
     if (!Number.isFinite(monto) || monto < 0) {
@@ -5004,18 +5447,37 @@ async function cargarRecibosPersistidos() {
             return;
         }
 
-        let html = '<h4>Recibos guardados</h4><table class="data-table"><thead><tr>';
-        html += '<th>Agente</th><th>Línea</th><th>Semana</th><th>Monto</th><th>Estado</th><th>Vence</th><th>Acción</th>';
+        let html = '<h4>Recibos guardados</h4>';
+        html += '<div style="margin:8px 0 12px;display:flex;gap:8px;flex-wrap:wrap;">';
+        html += '<label for="recibosPorHojaSelect" style="display:flex;align-items:center;gap:6px;">';
+        html += '<span>Recibos por hoja</span>';
+        html += '<select id="recibosPorHojaSelect" class="form-control" style="width:85px;">';
+        html += '<option value="2">2</option>';
+        html += '<option value="3" selected>3</option>';
+        html += '<option value="4">4</option>';
+        html += '</select>';
+        html += '</label>';
+        html += '<button type="button" class="btn" onclick="imprimirRecibosSeleccionados()">Imprimir seleccionados (varios por hoja)</button>';
+        html += '</div>';
+        html += '<table class="data-table"><thead><tr>';
+        html += '<th>Sel</th><th>Agente</th><th>Línea</th><th>Semana</th><th>Monto</th><th>Estado</th><th>Vence</th><th>Acción</th>';
         html += '</tr></thead><tbody>';
         rows.forEach(row => {
+            const serialized = encodeURIComponent(JSON.stringify(row));
+            const estadoPago = row.estado_pago || (row.pagado ? 'Al Corriente' : (Number(row.monto || 0) > 0 ? 'Abonado' : 'Pendiente'));
             html += `<tr>
+                <td><input type="checkbox" class="recibo-select-item" data-recibo="${serialized}"></td>
                 <td>${row.agente_nombre || '-'} (ID ${row.agente_id || '-'})</td>
                 <td>${row.linea_numero || '-'}</td>
                 <td>${row.semana_inicio || '-'}</td>
                 <td>$${Number(row.monto || 0).toFixed(2)}</td>
-                <td>${row.pagado ? 'PAGADO' : 'PENDIENTE'}</td>
+                <td>${estadoPago}</td>
                 <td>${row.expira_en ? new Date(row.expira_en).toLocaleString() : '-'}</td>
-                <td><button type="button" class="btn btn-small" onclick="reimprimirReciboPorToken('${row.token}')">Reimprimir</button></td>
+                <td style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button type="button" class="btn btn-small" onclick="reimprimirReciboPorToken('${row.token}')">Reimprimir</button>
+                    ${canAdmin() && row.pago_id ? `<button type="button" class="btn btn-small btn-secondary" onclick="editarPagoDesdeRecibo(${row.pago_id}, ${Number(row.monto || 0)})">Editar</button>` : ''}
+                    ${canAdmin() && row.pago_id ? `<button type="button" class="btn btn-small" style="background:#8b1d1d;color:#fff;" onclick="revertirPagoDesdeRecibo(${row.pago_id}, ${Number(row.agente_id || 0)})">Revertir</button>` : ''}
+                </td>
             </tr>`;
         });
         html += '</tbody></table>';

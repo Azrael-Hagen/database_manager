@@ -296,6 +296,10 @@ class APIClient {
         return this.request('PUT', `/qr/pagos/${pagoId}`, payload);
     }
 
+    async revertirPagoSemanalAdmin(pagoId, payload = {}) {
+        return this.request('POST', `/qr/pagos/${pagoId}/revertir`, payload);
+    }
+
     async getCuotaSemanal() {
         return this.request('GET', '/qr/config/cuota');
     }

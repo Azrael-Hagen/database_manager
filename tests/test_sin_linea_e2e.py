@@ -14,7 +14,13 @@ from sqlalchemy.pool import StaticPool
 
 import app.models as _all_models  # noqa: F401
 from app.database.orm import Base, get_db
-from app.models import AgenteLineaAsignacion, DatoImportado, LineaTelefonica, PagoSemanal
+from app.models import (
+    AgenteLineaAsignacion,
+    CobranzaSemanalSnapshot,
+    DatoImportado,
+    LineaTelefonica,
+    PagoSemanal,
+)
 from app.security import create_access_token
 from app.utils.pagos import monday_of_week
 from app.utils.startup_tasks import auto_qr_al_inicio, reporte_sin_linea_inicio
@@ -65,6 +71,7 @@ def _clear_agent_tables() -> None:
     _bind_test_db_override()
     db = _db()
     try:
+        db.query(CobranzaSemanalSnapshot).delete()
         db.query(PagoSemanal).delete()
         db.query(AgenteLineaAsignacion).delete()
         db.query(LineaTelefonica).delete()
@@ -501,6 +508,122 @@ class TestTotalesCobranzaQr:
         assert int(data.get("pagos_registrados_semana") or 0) == 2
 
 
+class TestReporteSemanalGlobal:
+    @classmethod
+    def setup_class(cls):
+        cls.admin_headers = {"Authorization": f"Bearer {_token('e2e_admin_reporte_global', 'admin')}"}
+
+    def setup_method(self):
+        _clear_agent_tables()
+
+    def test_reporte_semanal_expone_totales_financieros_y_discrepancias(self):
+        semana_ref = monday_of_week(date.today())
+        agente_1 = _mk_agente("Reporte Global 1")
+        agente_2 = _mk_agente("Reporte Global 2")
+        _asignar_linea(agente_1.id, activa=True)
+        _asignar_linea(agente_2.id, activa=True)
+
+        db = _db()
+        try:
+            db.add_all(
+                [
+                    PagoSemanal(
+                        agente_id=agente_1.id,
+                        telefono="5512000001",
+                        numero_voip="1101",
+                        semana_inicio=semana_ref,
+                        monto=300.0,
+                        pagado=True,
+                        fecha_pago=datetime.utcnow(),
+                    ),
+                    PagoSemanal(
+                        agente_id=agente_1.id,
+                        telefono="5512000001",
+                        numero_voip="1101",
+                        semana_inicio=semana_ref,
+                        monto=50.0,
+                        pagado=True,
+                        fecha_pago=datetime.utcnow(),
+                    ),
+                    PagoSemanal(
+                        agente_id=agente_2.id,
+                        telefono="5512000002",
+                        numero_voip="1102",
+                        semana_inicio=semana_ref,
+                        monto=100.0,
+                        pagado=True,
+                        fecha_pago=datetime.utcnow(),
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.get(
+            f"/api/qr/reporte-semanal?semana={semana_ref.isoformat()}",
+            headers=self.admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body.get("status") == "success"
+
+        tot = body.get("totales") or {}
+        assert float(tot.get("deuda_total_global") or 0) > 0
+        assert float(tot.get("total_abonado_global") or 0) >= 0
+        assert float(tot.get("saldo_global") or 0) >= 0
+        assert float(tot.get("monto_semana_ledger") or 0) == pytest.approx(450.0)
+        assert float(tot.get("discrepancia_semana") or 0) != pytest.approx(0.0)
+
+        discrepancias = body.get("discrepancias") or []
+        assert any(d.get("codigo") == "PAGOS_DUPLICADOS_AGENTE_SEMANA" for d in discrepancias)
+
+    def test_reporte_semanal_persiste_snapshot_balance_en_bd(self):
+        semana_ref = monday_of_week(date.today())
+        agente = _mk_agente("Snapshot Balance")
+        _asignar_linea(agente.id, activa=True)
+
+        db = _db()
+        try:
+            db.add(
+                PagoSemanal(
+                    agente_id=agente.id,
+                    telefono="5513000001",
+                    numero_voip="1201",
+                    semana_inicio=semana_ref,
+                    monto=250.0,
+                    pagado=True,
+                    fecha_pago=datetime.utcnow(),
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.get(
+            f"/api/qr/reporte-semanal?semana={semana_ref.isoformat()}",
+            headers=self.admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        snapshot = (resp.json() or {}).get("snapshot") or {}
+        assert snapshot.get("id")
+        assert snapshot.get("semana_inicio") == semana_ref.isoformat()
+
+        db = _db()
+        try:
+            row = (
+                db.query(CobranzaSemanalSnapshot)
+                .filter(CobranzaSemanalSnapshot.id == int(snapshot["id"]))
+                .first()
+            )
+            assert row is not None
+            assert row.semana_inicio == semana_ref
+            assert float(row.total_abonado_global or 0) >= 0
+            assert float(row.saldo_global or 0) >= 0
+        finally:
+            db.close()
+
+
 class TestQrStaticoYExportacion:
     @classmethod
     def setup_class(cls):
@@ -733,6 +856,22 @@ class TestFrontendAssets:
         assert "function isQrScannerRunning()" in js
         assert "if (qrDecodeInFlight)" in js
         assert "normalizedCode === qrLastDecodedText" in js
+        assert "await detenerEscanerQR();" in js
+
+    def test_qr_scan_abono_permite_monto_editable(self):
+        js = open(_MAIN_JS, encoding="utf-8").read()
+        assert "showQuickAbonoModal" in js
+        assert "Registrar Abono Parcial" in js
+        assert "pagado: mode === 'liquidar'" in js
+        assert "qr-abono-feedback" in js
+        assert "acceptBtn.disabled" in js
+        assert "excede el saldo acumulado" in js
+
+    def test_css_modal_abono_es_responsive_en_movil(self):
+        css = open(_STYLE_CSS, encoding="utf-8").read()
+        assert ".qr-abono-modal" in css
+        assert ".qr-abono-kpis" in css
+        assert ".qr-abono-actions" in css
 
     def test_qr_toggle_camera_espera_inicio_real(self):
         js = open(_QR_COBROS_JS, encoding="utf-8").read()
@@ -875,3 +1014,171 @@ class TestDeudaManualE2E:
         assert limpiar.status_code == 200, limpiar.text
         data_limpio = limpiar.json().get("data", {})
         assert abs(float(data_limpio.get("ajuste_manual_deuda") or 0)) < 0.01
+
+    def test_permite_registrar_pago_con_adeudo_sin_linea_activa(self):
+        agente = _mk_agente("Deuda Sin Linea")
+
+        crear_adeudo = client.put(
+            f"/api/qr/agentes/{agente.id}/deuda-manual",
+            headers=self.admin_headers,
+            json={"modo": "saldo_objetivo", "monto": 200},
+        )
+        assert crear_adeudo.status_code == 200, crear_adeudo.text
+
+        semana_ref = monday_of_week(date.today())
+        pago = client.post(
+            "/api/qr/pagos",
+            headers=self.admin_headers,
+            json={
+                "agente_id": agente.id,
+                "semana_inicio": semana_ref.isoformat(),
+                "monto": 200,
+                "pagado": True,
+                "observaciones": "Liquidacion sin linea",
+            },
+        )
+        assert pago.status_code == 200, pago.text
+        body = pago.json()
+        assert float(body.get("abono_registrado") or 0) == pytest.approx(200.0)
+        assert float(body.get("saldo_acumulado") or 0) <= 0.01
+
+    def test_editar_pago_refresca_recibo_para_reimpresion(self):
+        agente = _mk_agente("Recibo Editable")
+        semana_ref = monday_of_week(date.today())
+
+        pago_resp = client.post(
+            "/api/qr/pagos",
+            headers=self.admin_headers,
+            json={
+                "agente_id": agente.id,
+                "semana_inicio": semana_ref.isoformat(),
+                "monto": 120,
+                "pagado": False,
+                "observaciones": "abono inicial",
+            },
+        )
+        assert pago_resp.status_code == 200, pago_resp.text
+        pago_data = pago_resp.json()
+        pago_id = int(pago_data.get("id") or 0)
+        token = ((pago_data.get("recibo") or {}).get("token") or "").strip()
+        assert pago_id > 0
+        assert token
+
+        edit_resp = client.put(
+            f"/api/qr/pagos/{pago_id}",
+            headers=self.admin_headers,
+            json={"monto": 300, "pagado": True, "observaciones": "liquidado admin"},
+        )
+        assert edit_resp.status_code == 200, edit_resp.text
+        edit_data = edit_resp.json().get("data", {})
+        assert abs(float(edit_data.get("monto") or 0) - 300.0) < 0.01
+        assert bool(edit_data.get("pagado")) is True
+        token_editado = ((edit_data.get("recibo") or {}).get("token") or "").strip()
+        assert token_editado
+
+        recibo_resp = client.get(f"/api/qr/recibos/{token_editado}", headers=self.admin_headers)
+        assert recibo_resp.status_code == 200, recibo_resp.text
+        recibo_data = recibo_resp.json().get("data", {})
+        assert abs(float(recibo_data.get("monto") or 0) - 300.0) < 0.01
+        assert bool(recibo_data.get("pagado")) is True
+
+    def test_recibo_incluye_abono_y_saldo_al_reimprimir(self):
+        agente = _mk_agente("Recibo Saldo")
+        semana_ref = monday_of_week(date.today())
+
+        pago_resp = client.post(
+            "/api/qr/pagos",
+            headers=self.admin_headers,
+            json={
+                "agente_id": agente.id,
+                "semana_inicio": semana_ref.isoformat(),
+                "monto": 200,
+                "pagado": False,
+                "observaciones": "abono para recibo",
+            },
+        )
+        assert pago_resp.status_code == 200, pago_resp.text
+        token = ((pago_resp.json().get("recibo") or {}).get("token") or "").strip()
+        assert token
+
+        recibo_resp = client.get(f"/api/qr/recibos/{token}", headers=self.admin_headers)
+        assert recibo_resp.status_code == 200, recibo_resp.text
+        data = recibo_resp.json().get("data", {})
+        assert abs(float(data.get("abono_aplicado") or 0) - 200.0) < 0.01
+        assert "saldo_acumulado" in data
+        assert "deuda_total" in data
+        assert "total_abonado" in data
+
+    def test_admin_puede_revertir_pago_y_actualiza_recibo(self):
+        agente = _mk_agente("Reversion Pago")
+        semana_ref = monday_of_week(date.today())
+
+        pago_resp = client.post(
+            "/api/qr/pagos",
+            headers=self.admin_headers,
+            json={
+                "agente_id": agente.id,
+                "semana_inicio": semana_ref.isoformat(),
+                "monto": 250,
+                "pagado": False,
+                "observaciones": "pago de prueba a revertir",
+            },
+        )
+        assert pago_resp.status_code == 200, pago_resp.text
+        pago_data = pago_resp.json()
+        pago_id = int(pago_data.get("id") or 0)
+        assert pago_id > 0
+
+        revertir = client.post(
+            f"/api/qr/pagos/{pago_id}/revertir",
+            headers=self.admin_headers,
+            json={"motivo": "Pago de prueba"},
+        )
+        assert revertir.status_code == 200, revertir.text
+        revert_data = (revertir.json() or {}).get("data") or {}
+        assert abs(float(revert_data.get("monto_revertido") or 0) - 250.0) < 0.01
+        assert abs(float(revert_data.get("monto_actual") or 0)) < 0.01
+        assert bool(revert_data.get("pagado")) is False
+        assert bool(revert_data.get("revertido")) is True
+
+        token = ((revert_data.get("recibo") or {}).get("token") or "").strip()
+        assert token
+        recibo_resp = client.get(f"/api/qr/recibos/{token}", headers=self.admin_headers)
+        assert recibo_resp.status_code == 200, recibo_resp.text
+        recibo_data = (recibo_resp.json() or {}).get("data") or {}
+        assert abs(float(recibo_data.get("monto") or 0)) < 0.01
+        assert bool(recibo_data.get("pagado")) is False
+        assert str(recibo_data.get("estado_pago") or "").lower() == "cancelado"
+
+    def test_revertir_pago_ya_en_cero_regresa_error(self):
+        agente = _mk_agente("Reversion Cero")
+        semana_ref = monday_of_week(date.today())
+
+        pago_resp = client.post(
+            "/api/qr/pagos",
+            headers=self.admin_headers,
+            json={
+                "agente_id": agente.id,
+                "semana_inicio": semana_ref.isoformat(),
+                "monto": 100,
+                "pagado": False,
+                "observaciones": "abono para reversa",
+            },
+        )
+        assert pago_resp.status_code == 200, pago_resp.text
+        pago_id = int((pago_resp.json() or {}).get("id") or 0)
+        assert pago_id > 0
+
+        first = client.post(
+            f"/api/qr/pagos/{pago_id}/revertir",
+            headers=self.admin_headers,
+            json={"motivo": "primera reversa"},
+        )
+        assert first.status_code == 200, first.text
+
+        second = client.post(
+            f"/api/qr/pagos/{pago_id}/revertir",
+            headers=self.admin_headers,
+            json={"motivo": "segunda reversa"},
+        )
+        assert second.status_code == 409, second.text

@@ -460,6 +460,68 @@ body {
     box-shadow: 0 0 0 3px rgba(43, 157, 255, 0.12);
 }
 
+.qr-abono-modal {
+    width: min(520px, 100%);
+}
+
+.qr-abono-kpis {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.qr-abono-kpi {
+    border: 1px solid rgba(43, 157, 255, 0.2);
+    border-radius: 12px;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.72);
+}
+
+.qr-abono-kpi span {
+    display: block;
+    font-size: 0.78rem;
+    color: #5a7390;
+}
+
+.qr-abono-kpi strong {
+    display: block;
+    font-size: 0.98rem;
+    color: #0a2e52;
+}
+
+.qr-abono-input {
+    font-size: 1.15rem;
+    font-weight: 700;
+}
+
+.qr-abono-presets {
+    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.qr-abono-feedback {
+    margin-top: 8px;
+    min-height: 20px;
+    font-size: 0.88rem;
+    font-weight: 600;
+}
+
+.qr-abono-feedback.error {
+    color: #a12323;
+}
+
+.qr-abono-feedback.success {
+    color: #0f704a;
+}
+
+.qr-abono-actions .btn:disabled {
+    opacity: 0.56;
+    cursor: not-allowed;
+}
+
 /* QR modal — unified with the app design system */
 .modal-overlay-qr {
     position: fixed;
@@ -1955,6 +2017,32 @@ tr.row-sin-linea:hover {
     }
     .main-container {
         margin-left: 0 !important;
+    }
+
+    .app-alert-backdrop {
+        padding: 12px;
+        align-items: flex-end;
+    }
+
+    .app-alert-modal {
+        width: 100%;
+        border-radius: 16px;
+        padding: 16px;
+        max-height: 88vh;
+        overflow: auto;
+    }
+
+    .qr-abono-kpis {
+        grid-template-columns: 1fr;
+        gap: 6px;
+    }
+
+    .qr-abono-actions {
+        flex-wrap: wrap;
+    }
+
+    .qr-abono-actions .btn {
+        flex: 1 1 140px;
     }
 }
 .sidebar-overlay {

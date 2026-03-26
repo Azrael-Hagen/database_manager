@@ -257,6 +257,15 @@
                         <p class="hint" style="margin-top:8px;">Comando base: <strong>.\manage_autostart.bat [install logon|install startup|remove|status]</strong></p>
                         <p id="autostartHint" class="hint" style="margin-top:4px;">Tip: al pulsar un botón se copia el comando para pegarlo en la terminal del servidor.</p>
                     </div>
+                    <div class="dashboard-card">
+                        <h3>&#x1F4F1; App Móvil Android</h3>
+                        <p class="hint">Descarga la app Phantom para conectarte desde tu dispositivo Android en la misma red.</p>
+                        <div class="dashboard-actions">
+                            <a id="phantomAppDownloadBtn" href="/download/phantom-app" class="btn" download="PhantomApp.apk">Descargar APK</a>
+                        </div>
+                        <p id="phantomAppInfo" class="hint" style="margin-top:8px;">Verificando disponibilidad...</p>
+                        <p class="hint" style="margin-top:4px;">Requiere Android 7.0+ · Activa <em>Instalar apps desconocidas</em> en tu dispositivo.</p>
+                    </div>
                 </div>
             </section>
 
@@ -734,7 +743,9 @@
                                 <input type="date" id="qrScanSemana">
                             </div>
                             <button type="button" id="qrCameraToggleBtn" class="btn" onclick="qrToggleCamera()">📷 Iniciar Cámara</button>
+                            <button type="button" id="nativeQrScanBtn" class="btn btn-secondary" onclick="triggerNativeQrScan()" style="display:none;">📱 Escaneo nativo</button>
                         </div>
+                        <p id="nativeQrScanHint" class="hint" style="display:none;margin-top:-2px;margin-bottom:10px;">En Phantom App se usa la cámara nativa del dispositivo para un escaneo más confiable en Android.</p>
 
                         <!-- Camera config (collapsible) -->
                         <details class="qr-scan-camera-panel">

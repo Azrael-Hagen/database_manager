@@ -3,6 +3,7 @@
 from datetime import date, datetime, timedelta
 from typing import Iterable
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import AgenteLineaAsignacion, AlertaPago, ConfigSistema, DatoImportado, PagoSemanal
@@ -271,6 +272,11 @@ def obtener_reporte_semanal(
     filas = []
     total_pagados = 0
     total_pendientes = 0
+    deuda_total_global = 0.0
+    total_abonado_global = 0.0
+    saldo_global = 0.0
+    monto_semana_reportado = 0.0
+    cuota_esperada_global = 0.0
 
     for agente in agentes:
         pago = db.query(PagoSemanal).filter(
@@ -297,6 +303,12 @@ def obtener_reporte_semanal(
         else:
             total_pendientes += 1
 
+        deuda_total_global += float(resumen.get("deuda_total") or 0)
+        total_abonado_global += float(resumen.get("total_abonado") or 0)
+        saldo_global += float(resumen.get("saldo_acumulado") or 0)
+        monto_semana_reportado += monto_pagado
+        cuota_esperada_global += cuota_agente
+
         filas.append({
             "pago_id": pago.id if pago else None,
             "agente_id": agente.id,
@@ -321,6 +333,69 @@ def obtener_reporte_semanal(
 
     filas.sort(key=lambda x: (x["pagado"], x["nombre"] or ""))
 
+    monto_semana_ledger = float(
+        db.query(func.coalesce(func.sum(PagoSemanal.monto), 0.0))
+        .join(DatoImportado, DatoImportado.id == PagoSemanal.agente_id)
+        .filter(
+            PagoSemanal.semana_inicio == semana_ref,
+            PagoSemanal.pagado.is_(True),
+            DatoImportado.es_activo.is_(True),
+        )
+        .scalar()
+        or 0.0
+    )
+
+    agentes_con_pagos_duplicados = (
+        db.query(PagoSemanal.agente_id)
+        .join(DatoImportado, DatoImportado.id == PagoSemanal.agente_id)
+        .filter(
+            PagoSemanal.semana_inicio == semana_ref,
+            DatoImportado.es_activo.is_(True),
+        )
+        .group_by(PagoSemanal.agente_id)
+        .having(func.count(PagoSemanal.id) > 1)
+        .count()
+    )
+
+    deuda_total_global = round(deuda_total_global, 2)
+    total_abonado_global = round(total_abonado_global, 2)
+    saldo_global = round(saldo_global, 2)
+    monto_semana_reportado = round(monto_semana_reportado, 2)
+    monto_semana_ledger = round(monto_semana_ledger, 2)
+    cuota_esperada_global = round(cuota_esperada_global, 2)
+
+    discrepancia_semana = round(monto_semana_ledger - monto_semana_reportado, 2)
+    discrepancia_saldo = round((deuda_total_global - total_abonado_global) - saldo_global, 2)
+
+    discrepancias: list[dict] = []
+    if agentes_con_pagos_duplicados > 0:
+        discrepancias.append(
+            {
+                "codigo": "PAGOS_DUPLICADOS_AGENTE_SEMANA",
+                "severidad": "media",
+                "mensaje": "Existen agentes con mas de un pago registrado en la misma semana operativa.",
+                "total_agentes": int(agentes_con_pagos_duplicados),
+            }
+        )
+    if abs(discrepancia_semana) > 0.009:
+        discrepancias.append(
+            {
+                "codigo": "DIFERENCIA_REPORTE_VS_LEDGER",
+                "severidad": "alta",
+                "mensaje": "El total semanal mostrado por agente no coincide con el total de pagos del ledger.",
+                "monto_diferencia": discrepancia_semana,
+            }
+        )
+    if abs(discrepancia_saldo) > 0.009:
+        discrepancias.append(
+            {
+                "codigo": "DIFERENCIA_SALDO_GLOBAL",
+                "severidad": "alta",
+                "mensaje": "La formula deuda_total - total_abonado no coincide con el saldo acumulado global.",
+                "monto_diferencia": discrepancia_saldo,
+            }
+        )
+
     return {
         "semana_inicio": semana_ref.isoformat(),
         "cuota_semanal": tarifa_linea,
@@ -332,6 +407,15 @@ def obtener_reporte_semanal(
             "agentes": len(filas),
             "pagados": total_pagados,
             "pendientes": total_pendientes,
+            "cuota_esperada_global": cuota_esperada_global,
+            "deuda_total_global": deuda_total_global,
+            "total_abonado_global": total_abonado_global,
+            "saldo_global": saldo_global,
+            "monto_semana_reportado": monto_semana_reportado,
+            "monto_semana_ledger": monto_semana_ledger,
+            "discrepancia_semana": discrepancia_semana,
+            "discrepancia_saldo": discrepancia_saldo,
         },
+        "discrepancias": discrepancias,
         "data": filas,
     }

@@ -538,6 +538,32 @@ def _ensure_core_schema_updates():
         connection.execute(
             text(
                 """
+                CREATE TABLE IF NOT EXISTS `cobranza_semanal_snapshots` (
+                    `id` INT NOT NULL AUTO_INCREMENT,
+                    `semana_inicio` DATE NOT NULL,
+                    `total_agentes` INT NOT NULL DEFAULT 0,
+                    `total_pagados` INT NOT NULL DEFAULT 0,
+                    `total_pendientes` INT NOT NULL DEFAULT 0,
+                    `deuda_total_global` DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    `total_abonado_global` DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    `saldo_global` DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    `monto_semana_reportado` DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    `monto_semana_ledger` DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    `discrepancia_semana` DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    `discrepancia_saldo` DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    `discrepancias_json` TEXT NULL,
+                    `generado_en` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    KEY `ix_cobranza_semanal_snapshots_semana` (`semana_inicio`),
+                    KEY `ix_cobranza_semanal_snapshots_generado` (`generado_en`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+        )
+
+        connection.execute(
+            text(
+                """
                 UPDATE usuarios
                 SET rol = CASE
                     WHEN COALESCE(es_admin, 0) = 1 THEN :admin_role

@@ -263,6 +263,11 @@ document.addEventListener('click', function (e) {
 
 async function qrToggleCamera() {
     const btn = document.getElementById('qrCameraToggleBtn');
+    const runtimeRunning = typeof window.isQrScannerRunning === 'function'
+        ? !!window.isQrScannerRunning()
+        : _qrCameraRunning;
+    _qrCameraRunning = runtimeRunning;
+
     if (_qrCameraRunning) {
         // Stop
         if (typeof detenerEscanerQR === 'function') await detenerEscanerQR();

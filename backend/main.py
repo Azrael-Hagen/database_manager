@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = BASE_DIR / "web"
 SOURCES_DIR = WEB_DIR / "sources"
+DOWNLOADS_DIR = WEB_DIR / "downloads"
 BRANDING_FILE = SOURCES_DIR / "branding.json"
 ALLOWED_LOGO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
 SSL_CERT_PATH = Path(__file__).parent.parent / "ssl" / "cert.pem"
@@ -447,6 +448,45 @@ async def serve_index():
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
+
+
+# DESCARGA APP MÓVIL
+
+_APK_FILENAME = "PhantomApp.apk"
+_APK_MIME = "application/vnd.android.package-archive"
+
+
+@app.get("/download/phantom-app", tags=["Descargas"])
+async def download_phantom_app():
+    """Descarga la app móvil Phantom App para Android (.apk)."""
+    apk_path = DOWNLOADS_DIR / _APK_FILENAME
+    if not apk_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="La aplicación no está disponible en este momento",
+        )
+    return FileResponse(
+        path=str(apk_path),
+        media_type=_APK_MIME,
+        filename=_APK_FILENAME,
+        headers={"Content-Disposition": f'attachment; filename="{_APK_FILENAME}"'},
+    )
+
+
+@app.get("/api/download/phantom-app/info", tags=["Descargas"])
+async def phantom_app_info():
+    """Metadatos del APK disponible para descarga."""
+    apk_path = DOWNLOADS_DIR / _APK_FILENAME
+    if not apk_path.exists():
+        return {"disponible": False, "nombre": _APK_FILENAME}
+    stat = apk_path.stat()
+    return {
+        "disponible": True,
+        "nombre": _APK_FILENAME,
+        "tamanio_bytes": stat.st_size,
+        "tamanio_mb": round(stat.st_size / (1024 * 1024), 2),
+        "url_descarga": "/download/phantom-app",
+    }
 
 
 # SERVIR ARCHIVOS ESTÁTICOS

@@ -18,13 +18,14 @@ from app.models import (
     AgenteLadaPreferencia,
     AgenteLineaAsignacion,
     AlertaPago,
+    CobranzaSemanalSnapshot,
     DatoImportado,
     LadaCatalogo,
     LineaTelefonica,
     PagoSemanal,
     ReciboPago,
 )
-from app.schemas import PagoSemanalCrear, PagoSemanalAdminActualizar
+from app.schemas import PagoSemanalAdminActualizar, PagoSemanalCrear, PagoSemanalRevertir
 from app.security import get_current_user, require_admin_role, require_capture_role
 from app.qr import QRGenerator
 from app.config import config
@@ -124,8 +125,104 @@ def _cleanup_expired_receipts(db: Session) -> None:
     db.query(ReciboPago).filter(ReciboPago.expira_en < _utcnow()).delete(synchronize_session=False)
 
 
-def _build_receipt_payload(*, pago: PagoSemanal, agente: DatoImportado, linea: LineaTelefonica | None) -> dict:
+def _snapshot_identity(payload: dict) -> tuple:
+    tot = payload.get("totales") or {}
+    discrepancias = payload.get("discrepancias") or []
+    return (
+        str(payload.get("semana_inicio") or ""),
+        int(tot.get("agentes") or 0),
+        int(tot.get("pagados") or 0),
+        int(tot.get("pendientes") or 0),
+        round(float(tot.get("deuda_total_global") or 0.0), 2),
+        round(float(tot.get("total_abonado_global") or 0.0), 2),
+        round(float(tot.get("saldo_global") or 0.0), 2),
+        round(float(tot.get("monto_semana_reportado") or 0.0), 2),
+        round(float(tot.get("monto_semana_ledger") or 0.0), 2),
+        round(float(tot.get("discrepancia_semana") or 0.0), 2),
+        round(float(tot.get("discrepancia_saldo") or 0.0), 2),
+        len(discrepancias),
+    )
+
+
+def _persist_weekly_snapshot(db: Session, payload: dict) -> dict | None:
+    semana_str = str(payload.get("semana_inicio") or "").strip()
+    if not semana_str:
+        return None
+    try:
+        semana_inicio = date.fromisoformat(semana_str)
+    except ValueError:
+        return None
+
+    tot = payload.get("totales") or {}
+    discrepancias = payload.get("discrepancias") or []
+
+    latest = (
+        db.query(CobranzaSemanalSnapshot)
+        .filter(CobranzaSemanalSnapshot.semana_inicio == semana_inicio)
+        .order_by(CobranzaSemanalSnapshot.generado_en.desc(), CobranzaSemanalSnapshot.id.desc())
+        .first()
+    )
+    new_identity = _snapshot_identity(payload)
+
+    if latest:
+        old_payload = {
+            "semana_inicio": latest.semana_inicio.isoformat(),
+            "totales": {
+                "agentes": int(latest.total_agentes or 0),
+                "pagados": int(latest.total_pagados or 0),
+                "pendientes": int(latest.total_pendientes or 0),
+                "deuda_total_global": float(latest.deuda_total_global or 0),
+                "total_abonado_global": float(latest.total_abonado_global or 0),
+                "saldo_global": float(latest.saldo_global or 0),
+                "monto_semana_reportado": float(latest.monto_semana_reportado or 0),
+                "monto_semana_ledger": float(latest.monto_semana_ledger or 0),
+                "discrepancia_semana": float(latest.discrepancia_semana or 0),
+                "discrepancia_saldo": float(latest.discrepancia_saldo or 0),
+            },
+            "discrepancias": _safe_json_array(latest.discrepancias_json),
+        }
+        if _snapshot_identity(old_payload) == new_identity:
+            return {
+                "id": latest.id,
+                "semana_inicio": latest.semana_inicio.isoformat(),
+                "generado_en": latest.generado_en.isoformat() if latest.generado_en else None,
+                "reutilizado": True,
+            }
+
+    row = CobranzaSemanalSnapshot(
+        semana_inicio=semana_inicio,
+        total_agentes=int(tot.get("agentes") or 0),
+        total_pagados=int(tot.get("pagados") or 0),
+        total_pendientes=int(tot.get("pendientes") or 0),
+        deuda_total_global=round(float(tot.get("deuda_total_global") or 0.0), 2),
+        total_abonado_global=round(float(tot.get("total_abonado_global") or 0.0), 2),
+        saldo_global=round(float(tot.get("saldo_global") or 0.0), 2),
+        monto_semana_reportado=round(float(tot.get("monto_semana_reportado") or 0.0), 2),
+        monto_semana_ledger=round(float(tot.get("monto_semana_ledger") or 0.0), 2),
+        discrepancia_semana=round(float(tot.get("discrepancia_semana") or 0.0), 2),
+        discrepancia_saldo=round(float(tot.get("discrepancia_saldo") or 0.0), 2),
+        discrepancias_json=json.dumps(discrepancias, ensure_ascii=False),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
     return {
+        "id": row.id,
+        "semana_inicio": row.semana_inicio.isoformat(),
+        "generado_en": row.generado_en.isoformat() if row.generado_en else None,
+        "reutilizado": False,
+    }
+
+
+def _build_receipt_payload(
+    *,
+    pago: PagoSemanal,
+    agente: DatoImportado,
+    linea: LineaTelefonica | None,
+    extra_payload: dict | None = None,
+) -> dict:
+    estado_pago = "Al Corriente" if bool(pago.pagado) else ("Abonado" if float(pago.monto or 0) > 0 else "Pendiente de Pago")
+    payload = {
         "pago_id": pago.id,
         "agente_id": agente.id,
         "agente_nombre": agente.nombre,
@@ -136,16 +233,31 @@ def _build_receipt_payload(*, pago: PagoSemanal, agente: DatoImportado, linea: L
         "semana_inicio": pago.semana_inicio.isoformat() if pago.semana_inicio else None,
         "monto": float(pago.monto or 0),
         "pagado": bool(pago.pagado),
+        "estado_pago": estado_pago,
+        "abono_aplicado": float(pago.monto or 0),
+        "deuda_total": None,
+        "total_abonado": None,
+        "saldo_acumulado": None,
         "fecha_pago": pago.fecha_pago.isoformat() if pago.fecha_pago else None,
         "observaciones": pago.observaciones,
     }
+    if extra_payload:
+        payload.update(extra_payload)
+    return payload
 
 
-def _upsert_payment_receipt(db: Session, *, pago: PagoSemanal, agente: DatoImportado, linea: LineaTelefonica | None) -> ReciboPago:
+def _upsert_payment_receipt(
+    db: Session,
+    *,
+    pago: PagoSemanal,
+    agente: DatoImportado,
+    linea: LineaTelefonica | None,
+    extra_payload: dict | None = None,
+) -> ReciboPago:
     _cleanup_expired_receipts(db)
     retention_days = max(1, int(config.RECEIPT_RETENTION_DAYS or 1))
     expires_at = _utcnow() + timedelta(days=retention_days)
-    payload = _build_receipt_payload(pago=pago, agente=agente, linea=linea)
+    payload = _build_receipt_payload(pago=pago, agente=agente, linea=linea, extra_payload=extra_payload)
     existing = db.query(ReciboPago).filter(ReciboPago.pago_id == pago.id).first()
     if existing:
         existing.agente_id = agente.id
@@ -477,6 +589,16 @@ def _safe_json_object(raw: str | None) -> dict:
         return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return {}
+
+
+def _safe_json_array(raw: str | None) -> list:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
 
 
 def _legacy_text(raw: str | None, max_len: int) -> str:
@@ -1017,14 +1139,6 @@ async def registrar_pago_semanal(
     if not agente:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agente no encontrado")
 
-    active_assignment = _active_assignment_for_agent(db, agente.id)
-    linea_activa = active_assignment.linea if active_assignment and active_assignment.linea and active_assignment.linea.es_activa else None
-    if not linea_activa:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No se puede registrar cobro sin línea activa asignada al agente",
-        )
-
     semana = monday_of_week(pago_in.semana_inicio)
     resumen_prev = resumen_cobranza_agente(db, agente, semana)
     cuota = float(resumen_prev["cuota_semanal"])
@@ -1102,7 +1216,19 @@ async def registrar_pago_semanal(
 
     active_assignment = _active_assignment_for_agent(db, agente.id)
     linea = active_assignment.linea if active_assignment and active_assignment.linea else None
-    recibo = _upsert_payment_receipt(db, pago=pago, agente=agente, linea=linea)
+    recibo = _upsert_payment_receipt(
+        db,
+        pago=pago,
+        agente=agente,
+        linea=linea,
+        extra_payload={
+            "abono_aplicado": float(monto_final),
+            "deuda_total": float(resumen_after.get("deuda_total") or 0),
+            "total_abonado": float(resumen_after.get("total_abonado") or 0),
+            "saldo_acumulado": float(resumen_after.get("saldo_acumulado") or 0),
+            "estado_pago": "Al Corriente" if bool(pago.pagado) else ("Abonado" if float(monto_final) > 0 else "Pendiente de Pago"),
+        },
+    )
     db.commit()
     db.refresh(recibo)
 
@@ -1173,11 +1299,34 @@ async def editar_pago_semanal_admin(
             "observaciones": pago.observaciones,
         },
     )
-    db.commit()
-    db.refresh(pago)
-
     agente = db.query(DatoImportado).filter(DatoImportado.id == pago.agente_id).first()
     resumen = resumen_cobranza_agente(db, agente, pago.semana_inicio) if agente else None
+    linea = None
+    if agente:
+        active_assignment = _active_assignment_for_agent(db, agente.id)
+        linea = active_assignment.linea if active_assignment and active_assignment.linea else None
+        delta_abono = float(pago.monto or 0) - monto_anterior
+        recibo = _upsert_payment_receipt(
+            db,
+            pago=pago,
+            agente=agente,
+            linea=linea,
+            extra_payload={
+                "abono_aplicado": float(delta_abono),
+                "deuda_total": float((resumen or {}).get("deuda_total") or 0),
+                "total_abonado": float((resumen or {}).get("total_abonado") or 0),
+                "saldo_acumulado": float((resumen or {}).get("saldo_acumulado") or 0),
+                "estado_pago": "Al Corriente" if bool(pago.pagado) else ("Abonado" if float(pago.monto or 0) > 0 else "Pendiente de Pago"),
+            },
+        )
+    else:
+        recibo = None
+
+    db.commit()
+    db.refresh(pago)
+    if recibo:
+        db.refresh(recibo)
+
     return {
         "status": "success",
         "data": {
@@ -1189,6 +1338,103 @@ async def editar_pago_semanal_admin(
             "fecha_pago": pago.fecha_pago.isoformat() if pago.fecha_pago else None,
             "observaciones": pago.observaciones,
             "saldo_acumulado": float((resumen or {}).get("saldo_acumulado", 0)),
+            "recibo": {
+                "token": recibo.token_recibo if recibo else None,
+                "expira_en": recibo.expira_en.isoformat() if (recibo and recibo.expira_en) else None,
+                "linea_numero": recibo.linea_numero if recibo else None,
+            },
+        },
+    }
+
+
+@router.post("/pagos/{pago_id}/revertir")
+async def revertir_pago_semanal_admin(
+    pago_id: int,
+    payload: PagoSemanalRevertir,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Revertir por completo un pago semanal para corregir capturas de prueba o error."""
+    require_admin_role(current_user, "Solo admin puede revertir pagos")
+    pago = db.query(PagoSemanal).filter(PagoSemanal.id == pago_id).first()
+    if not pago:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pago no encontrado")
+
+    monto_anterior = float(pago.monto or 0)
+    if monto_anterior <= 0.0001 and not bool(pago.pagado):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="El pago ya estaba en cero; no hay nada que revertir")
+
+    motivo = str(payload.motivo or "").strip() or "Reversa administrativa"
+    observacion_reversa = f"[REVERSADO {_utcnow().isoformat()}] {motivo}"
+    base_obs = str(pago.observaciones or "").strip()
+    pago.observaciones = f"{base_obs} | {observacion_reversa}" if base_obs else observacion_reversa
+    pago.monto = 0.0
+    pago.pagado = False
+    pago.fecha_pago = None
+    db.add(pago)
+
+    _registrar_movimiento_cobro(
+        db,
+        agente_id=pago.agente_id,
+        tipo_movimiento="REVERSA_PAGO",
+        monto=-monto_anterior,
+        semana_inicio=pago.semana_inicio,
+        referencia_pago_id=pago.id,
+        usuario_id=current_user.get("id"),
+        payload={
+            "monto_anterior": monto_anterior,
+            "monto_nuevo": 0.0,
+            "motivo": motivo,
+            "observaciones": pago.observaciones,
+        },
+    )
+
+    agente = db.query(DatoImportado).filter(DatoImportado.id == pago.agente_id).first()
+    resumen = resumen_cobranza_agente(db, agente, pago.semana_inicio) if agente else None
+    linea = None
+    if agente:
+        active_assignment = _active_assignment_for_agent(db, agente.id)
+        linea = active_assignment.linea if active_assignment and active_assignment.linea else None
+        recibo = _upsert_payment_receipt(
+            db,
+            pago=pago,
+            agente=agente,
+            linea=linea,
+            extra_payload={
+                "revertido": True,
+                "motivo_reversion": motivo,
+                "abono_aplicado": -monto_anterior,
+                "deuda_total": float((resumen or {}).get("deuda_total") or 0),
+                "total_abonado": float((resumen or {}).get("total_abonado") or 0),
+                "saldo_acumulado": float((resumen or {}).get("saldo_acumulado") or 0),
+                "estado_pago": "Cancelado",
+            },
+        )
+    else:
+        recibo = None
+
+    db.commit()
+    db.refresh(pago)
+    if recibo:
+        db.refresh(recibo)
+
+    return {
+        "status": "success",
+        "data": {
+            "id": pago.id,
+            "agente_id": pago.agente_id,
+            "semana_inicio": pago.semana_inicio.isoformat() if pago.semana_inicio else None,
+            "monto_revertido": monto_anterior,
+            "monto_actual": float(pago.monto or 0),
+            "pagado": bool(pago.pagado),
+            "revertido": True,
+            "motivo": motivo,
+            "saldo_acumulado": float((resumen or {}).get("saldo_acumulado", 0)),
+            "recibo": {
+                "token": recibo.token_recibo if recibo else None,
+                "expira_en": recibo.expira_en.isoformat() if (recibo and recibo.expira_en) else None,
+                "linea_numero": recibo.linea_numero if recibo else None,
+            },
         },
     }
 
@@ -2304,7 +2550,8 @@ async def reporte_semanal(
 ):
     """Reporte semanal de pago por agente."""
     data = obtener_reporte_semanal(db, semana, agente_buscar=agente, empresa_buscar=empresa)
-    return {"status": "success", **data}
+    snapshot = _persist_weekly_snapshot(db, data)
+    return {"status": "success", **data, "snapshot": snapshot}
 
 
 @router.get("/agentes/estado-pago")
@@ -2876,12 +3123,15 @@ async def listar_recibos_pago(
         payload = _safe_json_object(row.contenido_json)
         data.append({
             "token": row.token_recibo,
+            "pago_id": row.pago_id,
             "agente_id": row.agente_id,
             "agente_nombre": payload.get("agente_nombre"),
             "linea_numero": row.linea_numero,
             "semana_inicio": payload.get("semana_inicio"),
             "monto": payload.get("monto"),
             "pagado": bool(payload.get("pagado", False)),
+            "estado_pago": payload.get("estado_pago"),
+            "revertido": bool(payload.get("revertido", False)),
             "fecha_pago": payload.get("fecha_pago"),
             "generado_en": row.generado_en.isoformat() if row.generado_en else None,
             "expira_en": row.expira_en.isoformat() if row.expira_en else None,
