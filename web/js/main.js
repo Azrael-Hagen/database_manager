@@ -2748,51 +2748,116 @@ async function descargarQrAgente(agenteId) {
 let _qrExportAgentes = [];
 const QR_LABEL_EDITOR_STORAGE_KEY = 'qrLabelEditorSettings';
 
+const QR_LABEL_PRESETS = {
+    sheet: {
+        estandar: {
+            label: 'Estandar (30 QR por hoja carta)',
+            settings: { rows: 10, qr_size: 62, border_gap: 1.0, pad_bottom: 2.0, draw_border: true },
+            hint: 'Balance entre tamano y densidad para carta.',
+        },
+        compacto: {
+            label: 'Compacto (33 QR por hoja carta)',
+            settings: { rows: 11, qr_size: 56, border_gap: 0.6, pad_bottom: 1.2, draw_border: true },
+            hint: 'Aumenta capacidad en carta reduciendo espacio en blanco.',
+        },
+    },
+    labels: {
+        estandar: {
+            label: 'Estandar (44 etiquetas por carta)',
+            settings: { rows: 11, qr_size: 50, border_gap: 0.8, pad_bottom: 1.5, draw_border: true },
+            hint: 'Formato base de etiquetas compactas.',
+        },
+        compacto: {
+            label: 'Compacto (48 etiquetas por carta)',
+            settings: { rows: 12, qr_size: 46, border_gap: 0.6, pad_bottom: 1.2, draw_border: true },
+            hint: 'Maximiza etiquetas por hoja para lotes grandes.',
+        },
+    },
+    oficio: {
+        estandar: {
+            label: 'Estandar (30 QR por hoja oficio)',
+            settings: { rows: 10, qr_size: 84, border_gap: 1.0, pad_bottom: 2.0, draw_border: true },
+            hint: 'Formato base para oficio con buena legibilidad.',
+        },
+        compacto: {
+            label: 'Compacto (33 QR por hoja oficio)',
+            settings: { rows: 11, qr_size: 76, border_gap: 0.6, pad_bottom: 1.4, draw_border: true },
+            hint: 'Reduce espacio muerto y aumenta piezas por hoja oficio.',
+        },
+    },
+};
+
+function qrLabelEditorGetLayoutPresets(layout) {
+    return QR_LABEL_PRESETS[layout] || QR_LABEL_PRESETS.oficio;
+}
+
+function qrLabelEditorGetDefaultPresetKey(layout) {
+    const presets = qrLabelEditorGetLayoutPresets(layout);
+    return Object.keys(presets)[0] || 'estandar';
+}
+
+function qrLabelEditorGetPresetSettings(layout, presetKey) {
+    const presets = qrLabelEditorGetLayoutPresets(layout);
+    const resolvedKey = presets[presetKey] ? presetKey : qrLabelEditorGetDefaultPresetKey(layout);
+    const preset = presets[resolvedKey];
+    return { key: resolvedKey, ...(preset || { settings: {}, hint: '' }) };
+}
+
 function qrLabelEditorGetDefaults(layout) {
-    const map = {
-        sheet: { qr_size: 62, border_gap: 1.0, cell_h: 84.0, pad_bottom: 2.0, draw_border: true },
-        labels: { qr_size: 50, border_gap: 0.8, cell_h: 69.0, pad_bottom: 1.5, draw_border: true },
-        oficio: { qr_size: 86, border_gap: 1.0, cell_h: 101.5, pad_bottom: 2.0, draw_border: true },
-    };
-    return map[layout] || map.oficio;
+    return qrLabelEditorGetPresetSettings(layout, qrLabelEditorGetDefaultPresetKey(layout));
 }
 
 function qrLabelEditorCurrentLayout() {
     return document.getElementById('qrExportLayout')?.value || 'sheet';
 }
 
-function qrLabelEditorRead() {
-    const layout = qrLabelEditorCurrentLayout();
-    const d = qrLabelEditorGetDefaults(layout);
-    const readNum = (id, fallback) => {
-        const n = Number(document.getElementById(id)?.value);
-        return Number.isFinite(n) ? n : fallback;
-    };
-    return {
-        qr_size: readNum('qrLabelEditQrSize', d.qr_size),
-        border_gap: readNum('qrLabelEditBorderGap', d.border_gap),
-        cell_h: readNum('qrLabelEditCellH', d.cell_h),
-        pad_bottom: readNum('qrLabelEditPadBottom', d.pad_bottom),
-        draw_border: document.getElementById('qrLabelEditDrawBorder')?.checked !== false,
-    };
+function qrLabelEditorRenderPresetOptions(layout) {
+    const sel = document.getElementById('qrLabelPreset');
+    if (!sel) return;
+    const presets = qrLabelEditorGetLayoutPresets(layout);
+    const options = Object.entries(presets)
+        .map(([key, cfg]) => `<option value="${key}">${cfg.label}</option>`)
+        .join('');
+    sel.innerHTML = options;
 }
 
-function qrLabelEditorApply(settings) {
-    if (!settings || typeof settings !== 'object') return;
-    const setVal = (id, value) => {
-        const el = document.getElementById(id);
-        if (el && value !== undefined && value !== null) el.value = String(value);
-    };
-    setVal('qrLabelEditQrSize', settings.qr_size);
-    setVal('qrLabelEditBorderGap', settings.border_gap);
-    setVal('qrLabelEditCellH', settings.cell_h);
-    setVal('qrLabelEditPadBottom', settings.pad_bottom);
-    const borderEl = document.getElementById('qrLabelEditDrawBorder');
-    if (borderEl && settings.draw_border !== undefined) borderEl.checked = Boolean(settings.draw_border);
+function qrLabelEditorUpdateHint(layout, presetKey) {
+    const hintEl = document.getElementById('qrLabelPresetHint');
+    if (!hintEl) return;
+    const preset = qrLabelEditorGetPresetSettings(layout, presetKey);
+    hintEl.textContent = preset.hint || '';
+}
+
+function qrLabelEditorRead() {
+    const layout = qrLabelEditorCurrentLayout();
+    const selectedPreset = document.getElementById('qrLabelPreset')?.value;
+    return qrLabelEditorGetPresetSettings(layout, selectedPreset).settings || {};
+}
+
+function qrLabelEditorApply(profileOrLegacy) {
+    const layout = qrLabelEditorCurrentLayout();
+    const selectEl = document.getElementById('qrLabelPreset');
+    if (!selectEl) return;
+
+    const presets = qrLabelEditorGetLayoutPresets(layout);
+    const defaultPreset = qrLabelEditorGetDefaultPresetKey(layout);
+    let presetKey = defaultPreset;
+
+    if (typeof profileOrLegacy === 'string' && presets[profileOrLegacy]) {
+        presetKey = profileOrLegacy;
+    } else if (profileOrLegacy && typeof profileOrLegacy === 'object') {
+        if (typeof profileOrLegacy.profile === 'string' && presets[profileOrLegacy.profile]) {
+            presetKey = profileOrLegacy.profile;
+        }
+    }
+
+    selectEl.value = presetKey;
+    qrLabelEditorUpdateHint(layout, presetKey);
 }
 
 function qrLabelEditorLoad() {
     const layout = qrLabelEditorCurrentLayout();
+    qrLabelEditorRenderPresetOptions(layout);
     let parsed = {};
     try {
         parsed = JSON.parse(localStorage.getItem(QR_LABEL_EDITOR_STORAGE_KEY) || '{}') || {};
@@ -2800,27 +2865,31 @@ function qrLabelEditorLoad() {
         parsed = {};
     }
     const defaults = qrLabelEditorGetDefaults(layout);
-    qrLabelEditorApply({ ...defaults, ...(parsed[layout] || {}) });
+    const stored = parsed[layout];
+    const fallbackProfile = defaults.key || qrLabelEditorGetDefaultPresetKey(layout);
+    const profileToApply = (stored && typeof stored.profile === 'string') ? stored.profile : fallbackProfile;
+    qrLabelEditorApply(profileToApply);
 }
 
 function qrLabelEditorGuardar() {
     const layout = qrLabelEditorCurrentLayout();
-    const settings = qrLabelEditorRead();
+    const selectedProfile = document.getElementById('qrLabelPreset')?.value || qrLabelEditorGetDefaultPresetKey(layout);
     let parsed = {};
     try {
         parsed = JSON.parse(localStorage.getItem(QR_LABEL_EDITOR_STORAGE_KEY) || '{}') || {};
     } catch (_) {
         parsed = {};
     }
-    parsed[layout] = settings;
+    parsed[layout] = { profile: selectedProfile };
     localStorage.setItem(QR_LABEL_EDITOR_STORAGE_KEY, JSON.stringify(parsed));
-    showAppAlert('Ajustes de etiqueta guardados.', { tone: 'success', title: 'Editor QR' });
+    qrLabelEditorUpdateHint(layout, selectedProfile);
+    showAppAlert('Perfil de densidad guardado.', { tone: 'success', title: 'Editor QR' });
 }
 
 function qrLabelEditorRestaurar() {
     const layout = qrLabelEditorCurrentLayout();
     const defaults = qrLabelEditorGetDefaults(layout);
-    qrLabelEditorApply(defaults);
+    qrLabelEditorApply(defaults.key || qrLabelEditorGetDefaultPresetKey(layout));
     let parsed = {};
     try {
         parsed = JSON.parse(localStorage.getItem(QR_LABEL_EDITOR_STORAGE_KEY) || '{}') || {};
@@ -3039,8 +3108,16 @@ async function qrExportActualizarBannerSinImprimir() {
 
 document.addEventListener('DOMContentLoaded', () => {
     const layoutSel = document.getElementById('qrExportLayout');
+    const presetSel = document.getElementById('qrLabelPreset');
     if (layoutSel) {
         layoutSel.addEventListener('change', () => qrLabelEditorLoad());
+    }
+    if (presetSel) {
+        presetSel.addEventListener('change', () => {
+            qrLabelEditorUpdateHint(qrLabelEditorCurrentLayout(), presetSel.value);
+        });
+    }
+    if (layoutSel || presetSel) {
         qrLabelEditorLoad();
     }
 });

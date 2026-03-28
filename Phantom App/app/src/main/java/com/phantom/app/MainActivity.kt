@@ -3,27 +3,34 @@ package com.phantom.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.View
 import android.webkit.PermissionRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.isVisible
 import com.phantom.app.bridge.PhantomJavascriptBridge
 import com.phantom.app.discovery.PhantomDiscoveryManager
 import com.phantom.app.qr.NativeQrScannerActivity
 import com.phantom.app.session.SessionStore
 import com.phantom.app.web.PhantomWebChromeClient
+import com.phantom.app.web.PhantomWebLoadPolicy
 import com.phantom.app.web.PhantomWebViewClient
 import com.phantom.app.web.QrInjectionScriptBuilder
 import com.phantom.app.web.TrustedOriginPolicy
@@ -32,6 +39,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var statusText: TextView
+    private lateinit var topControls: LinearLayout
     private lateinit var discoverButton: Button
     private lateinit var reloadButton: Button
     private lateinit var scanButton: Button
@@ -48,6 +56,8 @@ class MainActivity : AppCompatActivity() {
     private var lastProgress: Int = 0
     private var lastLoadAttemptUrl: String? = null
     private var currentLoadAttempt = 0
+    private var forceCacheOnNextLoad = false
+    private var loadingOfflineShell = false
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val maxAutoRetries = 2
@@ -104,6 +114,7 @@ class MainActivity : AppCompatActivity() {
 
         webView = findViewById(R.id.webView)
         statusText = findViewById(R.id.statusText)
+        topControls = findViewById(R.id.topControls)
         discoverButton = findViewById(R.id.discoverButton)
         reloadButton = findViewById(R.id.reloadButton)
         scanButton = findViewById(R.id.scanButton)
@@ -115,6 +126,12 @@ class MainActivity : AppCompatActivity() {
         configureWebView()
         bindActions()
         configureBackNavigation()
+
+        statusText.setOnClickListener {
+            if (!trustedBaseUrl.isNullOrBlank()) {
+                topControls.isVisible = !topControls.isVisible
+            }
+        }
 
         val cached = sessionStore.getServerUrl()
         if (!cached.isNullOrBlank()) {
@@ -140,6 +157,7 @@ class MainActivity : AppCompatActivity() {
             loadWithOverviewMode = true
             mediaPlaybackRequiresUserGesture = false
             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            cacheMode = PhantomWebLoadPolicy.resolveCacheMode(networkAvailable = true, forceCache = false)
         }
 
         webView.setInitialScale(1)
@@ -177,11 +195,24 @@ class MainActivity : AppCompatActivity() {
                 currentPageUrl = url
                 cancelLoadWatchdog()
                 currentLoadAttempt = 0
-                statusText.text = "Servidor conectado: $url"
+                forceCacheOnNextLoad = false
+                loadingOfflineShell = false
+                topControls.isVisible = false
+                statusText.text = "Panel listo · toca aqui para controles"
+                captureOfflineShellSnapshot()
                 flushPendingScanIfPossible()
             },
             onNavigationBlocked = { url -> openExternalUrl(url) },
+            onStatusUpdate = { message ->
+                if (!loadingOfflineShell) {
+                    statusText.text = message
+                }
+            },
             onPageError = { message ->
+                topControls.isVisible = true
+                if (tryLoadOfflineShell(message)) {
+                    return@PhantomWebViewClient
+                }
                 statusText.text = message
                 retryCurrentLoad("error principal")
             }
@@ -192,7 +223,11 @@ class MainActivity : AppCompatActivity() {
         discoverButton.setOnClickListener { discoverAndLoad() }
         reloadButton.setOnClickListener {
             currentLoadAttempt = 0
-            val url = trustedBaseUrl ?: lastLoadAttemptUrl
+            forceCacheOnNextLoad = false
+            if (tryLoadOfflineShell("Recarga local")) {
+                return@setOnClickListener
+            }
+            val url = lastLoadAttemptUrl ?: PhantomWebLoadPolicy.buildMobilePanelUrl(trustedBaseUrl)
             if (!url.isNullOrBlank()) {
                 startLoad(url, "Recargando")
             } else {
@@ -225,6 +260,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun discoverAndLoad() {
         discoverButton.isEnabled = false
+        topControls.isVisible = true
         statusText.text = "Buscando servidor LAN..."
 
         val previous = sessionStore.getServerUrl()
@@ -253,7 +289,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadServer(baseUrl: String, message: String) {
         val normalizedBaseUrl = TrustedOriginPolicy.normalizeBaseUrl(baseUrl)
-        if (normalizedBaseUrl == null) {
+        val mobilePanelUrl = PhantomWebLoadPolicy.buildMobilePanelUrl(baseUrl)
+        if (normalizedBaseUrl == null || mobilePanelUrl == null) {
             statusText.text = "URL de servidor inválida"
             return
         }
@@ -263,13 +300,15 @@ class MainActivity : AppCompatActivity() {
         pendingWebPermissionRequest?.deny()
         pendingWebPermissionRequest = null
 
-        startLoad(normalizedBaseUrl, message)
+        startLoad(mobilePanelUrl, message)
     }
 
     private fun startLoad(url: String, message: String) {
         cancelLoadWatchdog()
         lastLoadAttemptUrl = url
         lastProgress = 0
+        webView.settings.cacheMode = PhantomWebLoadPolicy.resolveCacheMode(isNetworkAvailable(), forceCacheOnNextLoad)
+        forceCacheOnNextLoad = false
         statusText.text = "$message: $url"
         webView.stopLoading()
         webView.loadUrl(url)
@@ -279,11 +318,22 @@ class MainActivity : AppCompatActivity() {
     private fun retryCurrentLoad(reason: String) {
         val url = lastLoadAttemptUrl ?: trustedBaseUrl ?: return
         if (currentLoadAttempt >= maxAutoRetries) {
+            if (tryLoadOfflineShell("Sin conexion con servidor")) {
+                return
+            }
             statusText.text = "No se pudo cargar en la app. Usa 'Abrir externo'."
             return
         }
         currentLoadAttempt += 1
+        forceCacheOnNextLoad = true
         startLoad(url, "Reintento ${currentLoadAttempt}/${maxAutoRetries} ($reason)")
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return true
+        val activeNetwork = manager.activeNetwork ?: return false
+        val capabilities = manager.getNetworkCapabilities(activeNetwork) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     private fun scheduleLoadWatchdog() {
@@ -337,6 +387,35 @@ class MainActivity : AppCompatActivity() {
         pendingInjectedScan = null
         val script = QrInjectionScriptBuilder.build(decodedValue)
         webView.evaluateJavascript(script, null)
+    }
+
+    private fun captureOfflineShellSnapshot() {
+        val baseUrl = trustedBaseUrl ?: return
+        if (!TrustedOriginPolicy.isTrustedNavigation(currentPageUrl, baseUrl)) {
+            return
+        }
+
+        webView.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
+            val html = PhantomWebLoadPolicy.decodeEvaluatedHtml(rawHtml) ?: return@evaluateJavascript
+            sessionStore.saveOfflineShellHtml(baseUrl, html)
+        }
+    }
+
+    private fun tryLoadOfflineShell(reason: String): Boolean {
+        val baseUrl = trustedBaseUrl ?: return false
+        val offlineUrl = PhantomWebLoadPolicy.buildMobilePanelUrl(baseUrl) ?: return false
+        val offlineHtml = sessionStore.getOfflineShellHtml(baseUrl) ?: return false
+
+        loadingOfflineShell = true
+        currentLoadAttempt = 0
+        forceCacheOnNextLoad = true
+        topControls.isVisible = false
+        lastLoadAttemptUrl = offlineUrl
+        webView.settings.cacheMode = PhantomWebLoadPolicy.resolveCacheMode(networkAvailable = false, forceCache = true)
+        statusText.text = "Modo local · $reason"
+        webView.stopLoading()
+        webView.loadDataWithBaseURL(offlineUrl, offlineHtml, "text/html", "utf-8", offlineUrl)
+        return true
     }
 
     private fun openExternalUrl(url: String) {

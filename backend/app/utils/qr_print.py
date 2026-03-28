@@ -9,9 +9,9 @@ from typing import Any, Iterable, Mapping
 # Layout definitions.
 # Each layout drives how many QR cards fit per page and how large each QR is.
 #
-# sheet  - Hoja carta:   3 cols x 9 rows  = 27 QRs/page  (was 21)
+# sheet  - Hoja carta:   3 cols x 10 rows = 30 QRs/page
 # labels - Etiquetas:    4 cols x 11 rows = 44 QRs/page  (was 30)
-# oficio - Hoja oficio:  3 cols x 9 rows  = 27 QRs/page  (compact spacing)
+# oficio - Hoja oficio:  3 cols x 10 rows = 30 QRs/page
 #
 # Units: PostScript points (1 pt = 1/72 inch).
 # Letter page: 612 x 792 pt.  Oficio/Legal: 612 x 936 pt.
@@ -19,18 +19,18 @@ LAYOUTS: dict[str, dict] = {
     "sheet": {
         "page_size": (612.0, 792.0),  # letter 8.5" x 11"
         "columns": 3,
-        "rows": 9,
+        "rows": 10,
         "margin_x": 18.0,
         "margin_y": 12.0,
-        "cell_w": 192.0,   # (612 - 36) / 3 = 192
-        "cell_h": 84.0,    # (792 - 24) / 9 = 85.3 -> 84 leaves a small buffer
+        "cell_w": 192.0,
+        "cell_h": 76.8,
         "qr_size": 62.0,
         "font_size": 8,
         "pad_bottom": 2.0,
         "pad_side": 5.0,
         "border_gap": 1.0,
         "draw_border": True,
-        "title": "Hoja carta (27 QR)",
+        "title": "Hoja carta (30 QR)",
     },
     "labels": {
         "page_size": (612.0, 792.0),  # letter
@@ -51,26 +51,23 @@ LAYOUTS: dict[str, dict] = {
     "oficio": {
         "page_size": (612.0, 936.0),  # oficio/legal 8.5" x 13"
         "columns": 3,
-        "rows": 9,
+        "rows": 10,
         "margin_x": 18.0,
         "margin_y": 10.5,
         "cell_w": 192.0,
-        "cell_h": 101.5,   # compact vertical spacing for denser labels
-        "qr_size": 86.0,
+        "cell_h": 91.5,
+        "qr_size": 84.0,
         "font_size": 8,
         "pad_bottom": 2.0,
         "pad_side": 5.0,
         "border_gap": 1.0,
         "draw_border": True,
-        "title": "Hoja oficio (27 QR compacto)",
+        "title": "Hoja oficio (30 QR compacto)",
     },
 }
 
 
 def _apply_layout_overrides(base_cfg: dict, overrides: Mapping[str, Any] | None) -> dict:
-    if not overrides:
-        return dict(base_cfg)
-
     cfg = dict(base_cfg)
     numeric_limits = {
         "qr_size": (28.0, 140.0),
@@ -79,9 +76,28 @@ def _apply_layout_overrides(base_cfg: dict, overrides: Mapping[str, Any] | None)
         "pad_side": (1.0, 16.0),
         "margin_x": (0.0, 60.0),
         "margin_y": (0.0, 60.0),
-        "cell_h": (52.0, 180.0),
-        "cell_w": (100.0, 260.0),
+        "cell_h": (40.0, 180.0),
+        "cell_w": (72.0, 260.0),
     }
+    int_limits = {
+        "rows": (6, 16),
+        "columns": (2, 6),
+    }
+
+    overrides = overrides or {}
+    explicit_cell_h = "cell_h" in overrides
+    explicit_cell_w = "cell_w" in overrides
+
+    for key, limits in int_limits.items():
+        if key not in overrides:
+            continue
+        raw = overrides.get(key)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        low, high = limits
+        cfg[key] = max(low, min(high, value))
 
     for key, limits in numeric_limits.items():
         if key not in overrides:
@@ -96,6 +112,17 @@ def _apply_layout_overrides(base_cfg: dict, overrides: Mapping[str, Any] | None)
 
     if "draw_border" in overrides:
         cfg["draw_border"] = bool(overrides.get("draw_border"))
+
+    page_w, page_h = cfg["page_size"]
+    margin_x = float(cfg["margin_x"])
+    margin_y = float(cfg["margin_y"])
+    columns = max(1, int(cfg["columns"]))
+    rows = max(1, int(cfg["rows"]))
+
+    if not explicit_cell_w:
+        cfg["cell_w"] = max(72.0, (float(page_w) - (margin_x * 2.0)) / float(columns))
+    if not explicit_cell_h:
+        cfg["cell_h"] = max(40.0, (float(page_h) - (margin_y * 2.0)) / float(rows))
 
     return cfg
 

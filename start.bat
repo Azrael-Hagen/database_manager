@@ -59,7 +59,7 @@ if exist "C:\Program Files\MariaDB 12.2\bin\mysql.exe" (
 )
 
 echo.
-choice /C SN /N /M "Configurar acceso http://phantom.database.local sin puerto? [S/N]: "
+choice /C SN /N /M "Configurar acceso http://phantom.database.net sin puerto? [S/N]: "
 if errorlevel 2 goto skip_host_setup
 if errorlevel 1 (
     echo [INFO] Ejecutando configuracion de host local; puede pedir permisos de administrador...
@@ -74,7 +74,7 @@ if errorlevel 1 (
 REM Preguntar sobre HTTPS
 if exist "%~dp0ssl\cert.pem" (
     echo [OK] Certificados TLS detectados. HTTPS estara activo en el puerto 8443.
-    echo      Accede via: https://phantom.database.local
+    echo      Accede via: https://phantom.database.net
     goto skip_https_setup
 )
 echo.

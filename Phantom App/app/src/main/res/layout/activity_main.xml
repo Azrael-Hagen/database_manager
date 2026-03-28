@@ -3,7 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:padding="8dp">
 
     <TextView
         android:id="@+id/statusText"
@@ -11,25 +11,29 @@
         android:layout_height="wrap_content"
         android:text="Phantom App: listo"
         android:textSize="14sp"
+        android:paddingTop="2dp"
         android:paddingBottom="8dp" />
 
     <LinearLayout
+        android:id="@+id/topControls"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
+        android:gravity="end"
         android:paddingBottom="8dp">
 
         <Button
             android:id="@+id/discoverButton"
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Detectar servidor LAN" />
+            android:minHeight="0dp"
+            android:text="Servidor" />
 
         <Button
             android:id="@+id/reloadButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:minHeight="0dp"
             android:text="Recargar"
             android:layout_marginStart="8dp" />
 
@@ -37,15 +41,17 @@
             android:id="@+id/scanButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:minHeight="0dp"
             android:layout_marginStart="8dp"
-            android:text="Escanear" />
+            android:text="QR" />
 
         <Button
             android:id="@+id/openExternalButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:minHeight="0dp"
             android:layout_marginStart="8dp"
-            android:text="Abrir externo" />
+            android:text="Navegador" />
     </LinearLayout>
 
     <WebView

@@ -6,6 +6,34 @@
     <title>Database Manager - Panel de Control</title>
     <link rel="icon" type="image/x-icon" href="sources/iconfinder-server2-4417099_116631.ico">
     <link rel="stylesheet" href="css/style.css">
+    <script>
+        (function () {
+            try {
+                const params = new URLSearchParams(window.location.search || '');
+                const forceDesktop = params.get('view') === 'desktop' || localStorage.getItem('dbm:view') === 'desktop';
+                if (forceDesktop) {
+                    if (params.get('view') === 'desktop') {
+                        localStorage.setItem('dbm:view', 'desktop');
+                    }
+                    return;
+                }
+
+                const path = (window.location.pathname || '').toLowerCase();
+                if (path === '/m' || path === '/m/' || path === '/mobile' || path === '/mobile/') {
+                    return;
+                }
+
+                const ua = (navigator.userAgent || '').toLowerCase();
+                const isMobileUa = /android|iphone|ipad|ipod|mobile/.test(ua);
+                const isNarrow = window.matchMedia && window.matchMedia('(max-width: 900px)').matches;
+                if (isMobileUa || isNarrow) {
+                    window.location.replace('/m/?from=auto');
+                }
+            } catch (_) {
+                // no-op
+            }
+        })();
+    </script>
 </head>
 <body>
     <!-- Navbar -->
@@ -987,9 +1015,9 @@
                     <!-- Opciones de exportación -->
                     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;border-top:1px solid #e0e8f0;padding-top:10px;">
                         <select id="qrExportLayout" style="min-width:180px;">
-                            <option value="sheet">Hoja carta — 27 QR/página</option>
+                            <option value="sheet">Hoja carta — 30 QR/página</option>
                             <option value="labels">Etiquetas compactas — 44 QR/página</option>
-                            <option value="oficio">Hoja oficio — 27 QR/página (compacto)</option>
+                            <option value="oficio">Hoja oficio — 30 QR/página</option>
                         </select>
                         <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;">
                             <input type="checkbox" id="qrExportMarcarImpreso" checked>
@@ -999,32 +1027,16 @@
                     </div>
 
                     <div class="card" style="margin-top:10px;padding:10px;border:1px solid #d8e6f4;border-radius:10px;background:#f9fcff;">
-                        <strong style="display:block;margin-bottom:8px;">Editor de Etiquetas (espacios)</strong>
+                        <strong style="display:block;margin-bottom:8px;">Densidad de impresión (rápido)</strong>
                         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">
-                            <label style="font-size:12px;display:flex;flex-direction:column;gap:4px;">
-                                Tamaño QR
-                                <input type="number" id="qrLabelEditQrSize" min="28" max="140" step="1" value="86" style="width:95px;">
+                            <label style="font-size:12px;display:flex;flex-direction:column;gap:4px;min-width:280px;">
+                                Perfil
+                                <select id="qrLabelPreset" style="min-width:280px;"></select>
                             </label>
-                            <label style="font-size:12px;display:flex;flex-direction:column;gap:4px;">
-                                Espacio lateral
-                                <input type="number" id="qrLabelEditBorderGap" min="0" max="12" step="0.1" value="1.0" style="width:95px;">
-                            </label>
-                            <label style="font-size:12px;display:flex;flex-direction:column;gap:4px;">
-                                Separación vertical
-                                <input type="number" id="qrLabelEditCellH" min="52" max="180" step="0.5" value="101.5" style="width:105px;">
-                            </label>
-                            <label style="font-size:12px;display:flex;flex-direction:column;gap:4px;">
-                                Texto inferior
-                                <input type="number" id="qrLabelEditPadBottom" min="0" max="12" step="0.1" value="2.0" style="width:95px;">
-                            </label>
-                            <label style="font-size:12px;display:flex;align-items:center;gap:6px;padding-bottom:4px;">
-                                <input type="checkbox" id="qrLabelEditDrawBorder" checked>
-                                Mostrar borde
-                            </label>
-                            <button type="button" class="btn btn-secondary" onclick="qrLabelEditorGuardar()">Guardar ajustes</button>
+                            <button type="button" class="btn btn-secondary" onclick="qrLabelEditorGuardar()">Guardar perfil</button>
                             <button type="button" class="btn btn-secondary" onclick="qrLabelEditorRestaurar()">Restablecer</button>
                         </div>
-                        <p class="hint" style="margin-top:8px;">Tip: baja <strong>Separación vertical</strong> para compactar huecos entre etiquetas.</p>
+                        <p id="qrLabelPresetHint" class="hint" style="margin-top:8px;"></p>
                     </div>
                     <div id="qrExportResult" style="margin-top:10px;"></div>
 

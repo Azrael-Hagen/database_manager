@@ -17,6 +17,7 @@ from app.api import export as export_api
 from app.api import datos as datos_api
 from app.config import config as app_config
 from main import app
+from app.config import config as app_config
 
 # DB de test en memoria
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -169,12 +170,85 @@ class TestDatos:
 
 class TestSalud:
     """Tests de endpoints de sistema."""
-    
+
     def test_health_check(self):
         """Test health check."""
         response = client.get("/api/health")
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
+
+    def test_mobile_route_exposes_qr_and_download_controls(self):
+        response = client.get("/m")
+
+        assert response.status_code == 200
+        body = response.text
+        assert 'id="qrCameraToggleBtn"' in body
+        assert 'id="qrScannerContainer"' in body
+        assert 'id="phantomAppDownloadBtn"' in body
+        assert 'id="sendToPagoBtn"' in body
+
+    def test_mobile_route_exposes_login_action_buttons(self):
+        response = client.get("/m")
+
+        assert response.status_code == 200
+        body = response.text
+        assert 'id="switchDesktopBtn"' in body
+        assert 'id="logoutBtn"' in body
+        assert body.count('id="bottomNav"') == 1
+
+    def test_mobile_route_loads_offline_modules_before_mobile_script(self):
+        response = client.get("/m")
+
+        assert response.status_code == 200
+        html = response.text
+
+        localdb_idx = html.find('src="/m/lib/localdb.js"')
+        queue_idx = html.find('src="/m/lib/offlinequeue.js"')
+        conflict_idx = html.find('src="/m/lib/conflictresolver.js"')
+        sync_idx = html.find('src="/m/lib/syncmanager.js"')
+        mobile_idx = html.find('src="/m/mobile.js"')
+
+        assert localdb_idx != -1
+        assert queue_idx != -1
+        assert conflict_idx != -1
+        assert sync_idx != -1
+        assert mobile_idx != -1
+
+        assert localdb_idx < mobile_idx
+        assert queue_idx < mobile_idx
+        assert conflict_idx < mobile_idx
+        assert sync_idx < mobile_idx
+
+    def test_mobile_route_uses_cacheable_headers_for_shell(self):
+        response = client.get("/m")
+
+        assert response.status_code == 200
+        cache_control = response.headers.get("cache-control", "")
+        assert "max-age=" in cache_control
+        assert "no-store" not in cache_control
+
+    def test_mobile_shell_static_assets_are_cacheable(self):
+        for path in (
+            "/m/mobile.css",
+            "/m/mobile.js",
+            "/m/lib/localdb.js",
+            "/m/lib/syncmanager.js",
+            "/js/api-client.js",
+        ):
+            response = client.get(path)
+
+            assert response.status_code == 200
+            cache_control = response.headers.get("cache-control", "")
+            assert "max-age=" in cache_control
+            assert "no-store" not in cache_control
+
+    def test_public_base_url_stays_on_phantom_database_net(self):
+        assert app_config.PUBLIC_BASE_URL == "http://phantom.database.net"
+        assert app_config.get_public_base_url() == "http://phantom.database.net"
+
+    def test_cors_origins_include_phantom_database_net(self):
+        assert "http://phantom.database.net" in app_config.CORS_ORIGINS
+        assert "https://phantom.database.net" in app_config.CORS_ORIGINS
 
 
 class TestSuperAdminPermisos:

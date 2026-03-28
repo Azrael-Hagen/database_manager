@@ -1,5 +1,5 @@
 param(
-    [string]$HostName  = "phantom.database.local",
+    [string]$HostName  = "phantom.database.net",
     [int]$HttpsPort    = 8443,
     [switch]$Elevated
 )

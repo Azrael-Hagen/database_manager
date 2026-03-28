@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Database Manager Mobile</title>
+    <link rel="icon" type="image/x-icon" href="../sources/iconfinder-server2-4417099_116631.ico">
+    <link rel="stylesheet" href="/m/mobile.css">
+</head>
+<body>
+    <div id="appRoot" class="mobile-shell">
+        <header class="mobile-header">
+            <div>
+                <h1>Database Manager</h1>
+                <p id="mobileStatus">Inicializando...</p>
+            </div>
+            <div class="header-actions">
+                <button id="switchDesktopBtn" class="ghost-btn" type="button">Escritorio</button>
+                <button id="logoutBtn" class="ghost-btn" type="button">Salir</button>
+            </div>
+        </header>
+
+        <main class="mobile-content">
+            <section id="loginView" class="card view active">
+                <h2>Iniciar sesión</h2>
+                <form id="loginForm">
+                    <label for="username">Usuario</label>
+                    <input id="username" type="text" autocomplete="username" required>
+
+                    <label for="password">Contraseña</label>
+                    <input id="password" type="password" autocomplete="current-password" required>
+
+                    <button type="submit" class="primary-btn">Entrar</button>
+                </form>
+                <p class="hint">Vista móvil optimizada para operación diaria.</p>
+            </section>
+
+            <section id="dashboardView" class="card view">
+                <div class="section-title-row">
+                    <h2>Resumen</h2>
+                    <button id="refreshDashboardBtn" type="button" class="ghost-btn">Actualizar</button>
+                </div>
+                <div id="statsGrid" class="stats-grid"></div>
+                <div id="networkCard" class="subcard"></div>
+                <div id="versionCard" class="subcard"></div>
+                <div id="appDownloadCard" class="subcard">
+                    <strong>App Android</strong>
+                    <div id="phantomAppInfo" class="meta">Verificando disponibilidad...</div>
+                    <div class="row-actions compact-wrap">
+                        <a id="phantomAppDownloadBtn" href="/download/phantom-app" class="ghost-btn inline-link-btn" download="PhantomApp.apk" style="display:none;">Descargar APK</a>
+                    </div>
+                </div>
+            </section>
+
+            <section id="qrView" class="card view">
+                <h2>Escaneo QR</h2>
+                <label for="qrWeek">Semana operativa</label>
+                <input id="qrWeek" type="date">
+
+                <label for="qrCodeInput">Código QR / UUID / URL</label>
+                <textarea id="qrCodeInput" rows="3" placeholder="Pega o escribe el código"></textarea>
+
+                <div class="row-actions">
+                    <button id="verifyQrBtn" type="button" class="primary-btn">Verificar</button>
+                    <button id="nativeQrBtn" type="button" class="ghost-btn" style="display:none;">Escaneo nativo</button>
+                    <button id="qrCameraToggleBtn" type="button" class="ghost-btn">Camara web</button>
+                </div>
+
+                <div class="scanner-controls">
+                    <div class="row-actions compact-wrap">
+                        <select id="qrCameraSelect" aria-label="Seleccionar camara">
+                            <option value="">Camara automatica</option>
+                        </select>
+                        <button id="refreshCamerasBtn" type="button" class="ghost-btn">Actualizar camaras</button>
+                    </div>
+                    <div id="qrCameraStatus" class="hint">Usa la camara web en HTTPS o la app Android para escaneo nativo.</div>
+                    <div id="qrScannerContainer" class="scanner-container" style="display:none;"></div>
+                </div>
+
+                <div id="qrResult" class="subcard empty">Sin verificación</div>
+                <div class="row-actions compact-wrap">
+                    <button id="sendToPagoBtn" type="button" class="primary-btn" style="display:none;">Cobrar este agente</button>
+                    <a id="qrPhantomAppBtn" href="/download/phantom-app" class="ghost-btn inline-link-btn" download="PhantomApp.apk" style="display:none;">Abrir con app Android</a>
+                </div>
+            </section>
+
+            <section id="pagosView" class="card view">
+                <h2>Pagos y cobranza</h2>
+                <label for="pagoWeek">Semana operativa</label>
+                <input id="pagoWeek" type="date">
+
+                <div class="row-actions compact-wrap">
+                    <button id="refreshPagosBtn" type="button" class="ghost-btn">Actualizar</button>
+                    <button id="procesarAlertasBtn" type="button" class="ghost-btn">Procesar alertas</button>
+                </div>
+
+                <div id="totalesCard" class="subcard"></div>
+                <div id="pagoResumenCard" class="subcard empty">Escanea o verifica un QR para cargar el resumen del agente.</div>
+
+                <h3 class="subheading">Registrar pago rápido</h3>
+                <label for="quickAgenteId">ID Agente</label>
+                <input id="quickAgenteId" type="number" min="1" placeholder="Ej. 1204">
+
+                <label for="quickMonto">Monto</label>
+                <input id="quickMonto" type="number" step="0.01" min="0" placeholder="0.00">
+
+                <div class="row-actions compact-wrap">
+                    <button id="registrarAbonoBtn" type="button" class="primary-btn">Registrar abono</button>
+                    <button id="registrarLiquidacionBtn" type="button" class="ghost-btn">Liquidar</button>
+                </div>
+
+                <div id="pagoResult" class="subcard empty">Sin operaciones</div>
+            </section>
+
+            <section id="alertasView" class="card view">
+                <h2>Alertas</h2>
+                <label for="alertasWeek">Semana operativa</label>
+                <input id="alertasWeek" type="date">
+
+                <div class="row-actions compact-wrap">
+                    <button id="refreshAlertasBtn" type="button" class="ghost-btn">Actualizar</button>
+                    <button id="onlyPendingBtn" type="button" class="ghost-btn active-toggle">Solo pendientes</button>
+                </div>
+
+                <div id="alertasList" class="list"></div>
+            </section>
+
+            <section id="datosView" class="card view">
+                <h2>Datos</h2>
+                <div class="row-actions">
+                    <input id="datosSearch" type="text" placeholder="Buscar por nombre o teléfono">
+                    <button id="datosSearchBtn" type="button" class="ghost-btn">Buscar</button>
+                </div>
+                <div id="datosList" class="list"></div>
+                <div class="row-actions">
+                    <button id="prevPageBtn" type="button" class="ghost-btn">Anterior</button>
+                    <span id="pageInfo" class="hint"></span>
+                    <button id="nextPageBtn" type="button" class="ghost-btn">Siguiente</button>
+                </div>
+            </section>
+        </main>
+
+        <nav id="bottomNav" class="bottom-nav" style="display:none;">
+            <button data-view="dashboardView" class="tab-btn active" type="button">Inicio</button>
+            <button data-view="qrView" class="tab-btn" type="button">QR</button>
+            <button data-view="pagosView" class="tab-btn" type="button">Pagos</button>
+            <button data-view="alertasView" class="tab-btn" type="button">Alertas</button>
+            <button data-view="datosView" class="tab-btn" type="button">Datos</button>
+        </nav>
+
+        <!-- Sync Status Banner -->
+        <div id="syncStatusBanner" class="sync-status-banner" style="display:none;">
+            <div class="sync-status-content">
+                <span id="pendingPagosCount">0</span> pagos pendientes
+                <button id="syncNowBtn" class="ghost-btn compact-btn" type="button">↻ Sincronizar</button>
+                <span id="lastSyncText" class="timestamp">Última: --</span>
+            </div>
+        </div>
+
+        <!-- Conflict Resolution Modal -->
+        <div id="offlineConflictModal" class="modal-overlay" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="conflictTitle">⚠️ Colisión de Pago Detectada</h3>
+                </div>
+                <div class="modal-body">
+                    <p id="conflictMessage">Se detectó un pago registrado offline y otro en el servidor para el mismo agente y semana.</p>
+                    <div id="conflictDetails" class="conflict-details" style="margin: 15px 0;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button id="conflictKeepBoth" type="button" class="action-btn primary-btn">✅ Mantener ambos</button>
+                    <button id="conflictKeepLocal" type="button" class="action-btn ghost-btn">📱 Usar local</button>
+                    <button id="conflictKeepServer" type="button" class="action-btn ghost-btn">🖥️ Usar servidor</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/api-client.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8" type="text/javascript"></script>
+    <!-- Offline-sync modules -->
+    <script src="/m/lib/localdb.js"></script>
+    <script src="/m/lib/offlinequeue.js"></script>
+    <script src="/m/lib/conflictresolver.js"></script>
+    <script src="/m/lib/syncmanager.js"></script>
+    <script src="/m/mobile.js"></script>
+</body>
+</html>

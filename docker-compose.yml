@@ -55,7 +55,7 @@ services:
       - app_network
     command: python main.py
 
-  # Proxy local para acceder sin puerto (http://phantom.database.local)
+  # Proxy local para acceder sin puerto (http://phantom.database.net)
   nginx_local:
     image: nginx:alpine
     container_name: database_manager_nginx_local

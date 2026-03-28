@@ -11,6 +11,7 @@ class PhantomWebViewClient(
     private val trustedBaseUrlProvider: () -> String?,
     private val onPageReady: (String) -> Unit,
     private val onNavigationBlocked: (String) -> Unit,
+    private val onStatusUpdate: (String) -> Unit,
     private val onPageError: (String) -> Unit,
 ) : WebViewClient() {
 
@@ -29,7 +30,7 @@ class PhantomWebViewClient(
 
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
-        onPageError("Conectando con el panel...")
+        onStatusUpdate("Conectando con el panel...")
     }
 
     override fun onPageFinished(view: WebView?, url: String?) {

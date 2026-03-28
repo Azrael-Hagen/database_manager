@@ -42,6 +42,8 @@ class PhantomDiscoveryManager(
 
     private fun discoverCandidates(previousUrl: String?): List<ServerCandidate> {
         val staticUrls = listOf(
+            "http://phantom.database.net",
+            "http://phantom.database.net:8000",
             "http://phantom.database.local",
             "http://phantom.database.local:8000",
             "http://database-manager.local:8000",

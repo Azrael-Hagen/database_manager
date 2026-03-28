@@ -63,11 +63,25 @@ class NoCacheStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope):
         response = await super().get_response(path, scope)
         lower_path = str(path).lower()
-        if lower_path in {"", "/", "index.html"} or lower_path.endswith((".html", ".js", ".css", ".json")):
+        if _is_mobile_shell_cacheable_path(lower_path):
+            response.headers["Cache-Control"] = MOBILE_SHELL_CACHE_CONTROL
+            if "Pragma" in response.headers:
+                del response.headers["Pragma"]
+            if "Expires" in response.headers:
+                del response.headers["Expires"]
+        elif lower_path in {"", "/", "index.html"} or lower_path.endswith((".html", ".js", ".css", ".json")):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
         return response
+
+
+MOBILE_SHELL_CACHE_CONTROL = "private, max-age=300, stale-while-revalidate=86400"
+
+
+def _is_mobile_shell_cacheable_path(path: str) -> bool:
+    normalized = str(path or "").replace("\\", "/").lstrip("/").lower()
+    return normalized.startswith("m/") or normalized in {"m", "js/api-client.js"}
 
 # Crear directorios necesarios
 config.create_directories()
@@ -163,17 +177,55 @@ def _request_is_https(request: Request) -> bool:
     return (request.url.scheme or "").lower() == "https"
 
 
+def _extract_host_from_header(raw_host: str | None) -> str:
+    value = (raw_host or "").strip()
+    if not value:
+        return ""
+    if value.startswith("[") and "]" in value:
+        return value[1:value.index("]")]
+    if value.count(":") == 1:
+        candidate_host, candidate_port = value.rsplit(":", 1)
+        if candidate_port.isdigit():
+            return candidate_host
+    return value
+
+
+def _request_uses_private_lan_host(request: Request) -> bool:
+    host = _extract_host_from_header(request.headers.get("host"))
+    if not host:
+        return False
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        return bool(ip.is_private and not ip.is_multicast)
+    except ValueError:
+        return False
+
+
 def _build_https_redirect_url(request: Request) -> str:
     forwarded_host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
     host_header = (request.headers.get("host") or "").strip()
     raw_host = forwarded_host or host_header or (request.url.hostname or "localhost")
 
-    host_only = raw_host.split(":")[0]
+    host_only = raw_host
+    explicit_port: int | None = None
+
+    # Parse "host:port" safely while tolerating plain hostnames.
+    if raw_host.count(":") == 1:
+        maybe_host, maybe_port = raw_host.rsplit(":", 1)
+        if maybe_port.isdigit():
+            host_only = maybe_host
+            explicit_port = int(maybe_port)
+
     https_port = int(config.SSL_PORT or 443)
-    if https_port == 443:
+
+    # For standard LAN hostnames (no explicit port, or :80), redirect to default HTTPS :443.
+    # For explicit dev ports like :8000, redirect to configured SSL_PORT (commonly :8443).
+    if explicit_port is None or explicit_port in (80, 443):
         authority = host_only
     else:
-        authority = f"{host_only}:{https_port}"
+        authority = host_only if https_port == 443 else f"{host_only}:{https_port}"
 
     query = f"?{request.url.query}" if request.url.query else ""
     return f"https://{authority}{request.url.path}{query}"
@@ -187,6 +239,11 @@ async def enforce_https_middleware(request: Request, call_next):
         return response
 
     if request.url.path == "/api/health":
+        return await call_next(request)
+
+    # En LAN por IP privada (y loopback) permitimos HTTP para compatibilidad móvil
+    # cuando el certificado no está emitido para la IP literal.
+    if _request_uses_private_lan_host(request):
         return await call_next(request)
 
     if _request_is_https(request):
@@ -447,6 +504,17 @@ async def serve_index():
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
+    return response
+
+
+@app.get("/m")
+@app.get("/mobile")
+async def serve_mobile_index():
+    mobile_index = WEB_DIR / "m" / "index.html"
+    if not mobile_index.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vista móvil no disponible")
+    response = FileResponse(mobile_index)
+    response.headers["Cache-Control"] = MOBILE_SHELL_CACHE_CONTROL
     return response
 
 
