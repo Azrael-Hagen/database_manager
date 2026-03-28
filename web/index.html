@@ -497,6 +497,14 @@
                                 <option value="actualizar">Solo actualizar existentes (omitir nuevos)</option>
                             </select>
                         </div>
+                        <label style="display:flex;align-items:center;gap:8px;margin:10px 0 14px 0;">
+                            <input type="checkbox" id="siConfirmExecute">
+                            Confirmo que revisé la vista previa y acepto aplicar estos cambios.
+                        </label>
+                        <label style="display:flex;align-items:center;gap:8px;margin:0 0 14px 0;">
+                            <input type="checkbox" id="siStrictConflictMode">
+                            Modo estricto: bloquear toda la importación si existe conflicto de línea.
+                        </label>
                         <button type="button" class="btn btn-secondary" onclick="siSetStep(2)">← Atrás</button>
                         <button type="button" class="btn" onclick="siExecuteImport()" style="margin-left:8px;background:#2ecc71;">Importar Ahora</button>
                         <p id="siExecuteStatus" style="margin-top:10px;"></p>
@@ -1015,9 +1023,9 @@
                     <!-- Opciones de exportación -->
                     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;border-top:1px solid #e0e8f0;padding-top:10px;">
                         <select id="qrExportLayout" style="min-width:180px;">
-                            <option value="sheet">Hoja carta — 30 QR/página</option>
+                            <option value="sheet">Hoja carta — 36 QR/página</option>
                             <option value="labels">Etiquetas compactas — 44 QR/página</option>
-                            <option value="oficio">Hoja oficio — 30 QR/página</option>
+                            <option value="oficio">Hoja oficio — 40 QR/página</option>
                         </select>
                         <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;">
                             <input type="checkbox" id="qrExportMarcarImpreso" checked>

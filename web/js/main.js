@@ -2751,14 +2751,14 @@ const QR_LABEL_EDITOR_STORAGE_KEY = 'qrLabelEditorSettings';
 const QR_LABEL_PRESETS = {
     sheet: {
         estandar: {
-            label: 'Estandar (30 QR por hoja carta)',
-            settings: { rows: 10, qr_size: 62, border_gap: 1.0, pad_bottom: 2.0, draw_border: true },
-            hint: 'Balance entre tamano y densidad para carta.',
+            label: 'Estandar (36 QR por hoja carta)',
+            settings: { rows: 9, columns: 4, qr_size: 68, border_gap: 0.4, pad_bottom: 2.0, draw_border: true },
+            hint: 'Carta densa con buena legibilidad para operacion diaria.',
         },
         compacto: {
-            label: 'Compacto (33 QR por hoja carta)',
-            settings: { rows: 11, qr_size: 56, border_gap: 0.6, pad_bottom: 1.2, draw_border: true },
-            hint: 'Aumenta capacidad en carta reduciendo espacio en blanco.',
+            label: 'Compacto (40 QR por hoja carta)',
+            settings: { rows: 10, columns: 4, qr_size: 62, border_gap: 0.3, pad_bottom: 1.2, draw_border: true },
+            hint: 'Maxima densidad en carta para lotes grandes.',
         },
     },
     labels: {
@@ -2775,14 +2775,14 @@ const QR_LABEL_PRESETS = {
     },
     oficio: {
         estandar: {
-            label: 'Estandar (30 QR por hoja oficio)',
-            settings: { rows: 10, qr_size: 84, border_gap: 1.0, pad_bottom: 2.0, draw_border: true },
-            hint: 'Formato base para oficio con buena legibilidad.',
+            label: 'Estandar (40 QR por hoja oficio)',
+            settings: { rows: 10, columns: 4, qr_size: 72, border_gap: 0.4, pad_bottom: 2.0, draw_border: true },
+            hint: 'Oficio optimizado para minimizar espacio en blanco lateral.',
         },
         compacto: {
-            label: 'Compacto (33 QR por hoja oficio)',
-            settings: { rows: 11, qr_size: 76, border_gap: 0.6, pad_bottom: 1.4, draw_border: true },
-            hint: 'Reduce espacio muerto y aumenta piezas por hoja oficio.',
+            label: 'Compacto (44 QR por hoja oficio)',
+            settings: { rows: 11, columns: 4, qr_size: 66, border_gap: 0.3, pad_bottom: 1.2, draw_border: true },
+            hint: 'Densidad alta en oficio conservando lectura de QR en campo.',
         },
     },
 };

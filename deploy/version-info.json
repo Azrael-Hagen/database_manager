@@ -3,12 +3,25 @@
   "channel": "production",
   "current": {
     "version": "1.5.0",
-    "revision": 5,
-    "release_date": "2026-03-23",
-    "codename": "Static Agent QR",
-    "summary": "Gestion exclusiva de lineas, QR operativo corregido y validacion E2E/debug"
+    "revision": 6,
+    "release_date": "2026-03-28",
+    "codename": "Smart Import Conciliacion IA",
+    "summary": "Importacion inteligente con conciliacion agentes/lineas, modo estricto y validacion web+movil"
   },
   "history": [
+    {
+      "version": "1.5.0",
+      "revision": 6,
+      "release_date": "2026-03-28",
+      "codename": "Smart Import Conciliacion IA",
+      "changes": [
+        "Se implementa mini-IA de importacion inteligente con conciliacion de agentes por email/telefono/alias/nombre/VOIP.",
+        "Preview ahora detecta incoherencias, datos de prueba y riesgos priorizados (alto/medio/bajo).",
+        "Execute requiere confirmacion explicita y agrega modo estricto para bloquear lotes con conflictos de linea.",
+        "Se integra asignacion/creacion de lineas VOIP en importacion y reporte de conflictos por fila.",
+        "Validacion final en verde para smart-import, E2E operativa y pruebas de flujo movil/offline."
+      ]
+    },
     {
       "version": "1.5.0",
       "revision": 5,

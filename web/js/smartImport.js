@@ -237,15 +237,51 @@ function _siRenderPreviewSummary(preview) {
     const el = document.getElementById('siPreviewSummary');
     if (!el) return;
 
-    const { nuevos, actualizaciones, sin_cambios, filas_preview, errores_formato } = preview;
+    const { nuevos, actualizaciones, sin_cambios, filas_preview, errores_formato, diagnostico_ai } = preview;
     const total = filas_preview.length + (errores_formato?.length || 0);
+    const conflictosLinea = filas_preview.filter(r => r.plan_linea?.accion === 'conflicto_linea_ocupada').length;
+    const incoherencias = diagnostico_ai?.incoherencias?.length || 0;
+    const alertasTest = diagnostico_ai?.alertas_test_data?.length || 0;
 
     let html = `<div class="stats-grid" style="margin:12px 0; grid-template-columns: repeat(auto-fit, minmax(130px,1fr));">
         <div class="stat-card"><div class="stat-number" style="color:#2ecc71">${nuevos}</div><div class="stat-label">Nuevos</div></div>
         <div class="stat-card"><div class="stat-number" style="color:#3498db">${actualizaciones}</div><div class="stat-label">Actualizaciones</div></div>
         <div class="stat-card"><div class="stat-number" style="color:#95a5a6">${sin_cambios}</div><div class="stat-label">Sin Cambios</div></div>
         <div class="stat-card"><div class="stat-number" style="color:#e74c3c">${errores_formato?.length || 0}</div><div class="stat-label">Errores de Formato</div></div>
+        <div class="stat-card"><div class="stat-number" style="color:#d35400">${conflictosLinea}</div><div class="stat-label">Conflictos Línea</div></div>
+        <div class="stat-card"><div class="stat-number" style="color:#8e44ad">${incoherencias}</div><div class="stat-label">Incoherencias</div></div>
+        <div class="stat-card"><div class="stat-number" style="color:#7f8c8d">${alertasTest}</div><div class="stat-label">Alertas Test</div></div>
     </div>`;
+
+    if (diagnostico_ai) {
+        const riesgos = diagnostico_ai.riesgos_priorizados || [];
+        if (riesgos.length) {
+            const riesgoRows = riesgos.slice(0, 8).map(r => {
+                const color = r.nivel === 'alto' ? '#c0392b' : r.nivel === 'medio' ? '#d35400' : '#16a085';
+                return `<div style="margin:4px 0;">
+                    <span style="display:inline-block;min-width:62px;color:${color};font-weight:700;text-transform:uppercase;">${escapeHtml(r.nivel)}</span>
+                    <span>Fila ${escapeHtml(String(r.fila))} · ${escapeHtml(r.categoria || 'riesgo')} · ${escapeHtml(r.detalle || '')}</span>
+                </div>`;
+            }).join('');
+            html += `<div style="padding:10px;border:1px solid #f5cba7;background:#fff7ef;border-radius:6px;margin-bottom:10px;">
+                <strong>Riesgos priorizados (alto → bajo):</strong>${riesgoRows}
+            </div>`;
+        }
+
+        if (diagnostico_ai.sugerencias?.length) {
+            html += `<div style="padding:10px;border:1px solid #dfe6e9;background:#f8fbff;border-radius:6px;margin-bottom:10px;">
+                <strong>Sugerencias IA:</strong><br>${diagnostico_ai.sugerencias.map(escapeHtml).join('<br>')}
+            </div>`;
+        }
+        if (diagnostico_ai.incoherencias?.length) {
+            const muestraIncoherencias = diagnostico_ai.incoherencias.slice(0, 5)
+                .map(x => `Fila ${x.fila}: ${x.hallazgos.map(escapeHtml).join(' | ')}`)
+                .join('<br>');
+            html += `<div style="padding:10px;border:1px solid #fdebd0;background:#fffaf3;border-radius:6px;margin-bottom:10px;">
+                <strong>Incoherencias detectadas:</strong><br>${muestraIncoherencias}
+            </div>`;
+        }
+    }
 
     if (errores_formato?.length) {
         html += `<p class="hint" style="color:#e74c3c">${errores_formato.map(escapeHtml).join('<br>')}</p>`;
@@ -255,7 +291,7 @@ function _siRenderPreviewSummary(preview) {
     const rows = filas_preview.slice(0, 10);
     if (rows.length) {
         html += '<h4 style="margin-top:12px;">Vista previa (primeras 10 filas)</h4>';
-        html += '<table class="data-table" style="font-size:0.8em;"><thead><tr><th>#</th><th>Acción</th><th>¿Tiene Número?</th><th>Campos Mapeados</th></tr></thead><tbody>';
+        html += '<table class="data-table" style="font-size:0.8em;"><thead><tr><th>#</th><th>Acción</th><th>¿Tiene Número?</th><th>Línea</th><th>Cambios</th><th>Campos Mapeados</th></tr></thead><tbody>';
         rows.forEach(r => {
             const color = r.accion === 'nuevo' ? '#2ecc71'
                         : r.accion === 'actualizar' ? '#3498db'
@@ -263,6 +299,14 @@ function _siRenderPreviewSummary(preview) {
             const numCell = r.tiene_numero === null ? '—'
                           : r.tiene_numero ? '<span style="color:#2ecc71">✓ Sí</span>'
                           : '<span style="color:#e74c3c">✗ No</span>';
+            const linePlan = r.plan_linea?.accion || 'sin_dato';
+            const lineCell = linePlan === 'sin_cambio' ? '<span style="color:#2ecc71">sin cambio</span>'
+                : linePlan === 'conflicto_linea_ocupada' ? '<span style="color:#e67e22">conflicto</span>'
+                : linePlan === 'crear_y_asignar' ? '<span style="color:#2980b9">crear+asignar</span>'
+                : linePlan === 'reasignar_existente' ? '<span style="color:#16a085">reasignar</span>'
+                : '—';
+
+            const cambiosCount = Object.keys(r.cambios_detectados || {}).length;
             const campos = Object.entries(r.datos_mapeados)
                 .slice(0, 4)
                 .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`)
@@ -272,6 +316,8 @@ function _siRenderPreviewSummary(preview) {
                 <td>${r.fila}</td>
                 <td><span style="color:${color};font-weight:bold">${escapeHtml(r.accion)}</span></td>
                 <td>${numCell}</td>
+                <td>${lineCell}</td>
+                <td>${cambiosCount}</td>
                 <td style="font-size:0.9em">${campos}</td>
             </tr>`;
         });
@@ -298,6 +344,14 @@ async function siExecuteImport() {
     const modeEl = document.getElementById('siModo');
     const delimInput = document.getElementById('siDelimitador');
     const statusEl = document.getElementById('siExecuteStatus');
+    const confirmEl = document.getElementById('siConfirmExecute');
+    const strictModeEl = document.getElementById('siStrictConflictMode');
+    if (!confirmEl?.checked) {
+        statusEl.textContent = 'Debes confirmar la revisión de la vista previa para ejecutar.';
+        statusEl.style.color = '#e74c3c';
+        return;
+    }
+
     statusEl.textContent = 'Importando…';
     statusEl.style.color = '#4a90d9';
 
@@ -308,6 +362,8 @@ async function siExecuteImport() {
     formData.append('delimitador', delimInput?.value || ',');
     formData.append('mapeo', JSON.stringify(mapping));
     formData.append('modo', modeEl?.value || 'insertar');
+    formData.append('confirmacion', 'true');
+    formData.append('modo_estricto_conflictos', strictModeEl?.checked ? 'true' : 'false');
 
     try {
         const resp = await fetch(`${API_URL}/smart-import/execute`, {
@@ -318,7 +374,15 @@ async function siExecuteImport() {
         const body = await resp.json();
 
         if (!resp.ok) {
-            statusEl.textContent = body.detail || 'Error al importar.';
+            const detail = body?.detail;
+            if (detail && typeof detail === 'object' && detail.mensaje) {
+                const conflicts = (detail.conflictos || []).slice(0, 5)
+                    .map(c => `Fila ${c.fila}: línea ${c.linea} ocupada por agente ${c.agente_ocupante_id}`)
+                    .join(' | ');
+                statusEl.textContent = `${detail.mensaje}${conflicts ? ` ${conflicts}` : ''}`;
+            } else {
+                statusEl.textContent = body.detail || 'Error al importar.';
+            }
             statusEl.style.color = '#e74c3c';
             return;
         }
@@ -326,6 +390,7 @@ async function siExecuteImport() {
         const d = body.datos;
         statusEl.innerHTML = `<span style="color:#2ecc71">✓ Completado:</span>
             ${d.insertados} insertado(s), ${d.actualizados} actualizado(s), ${d.omitidos} omitido(s)
+            <br>${d.lineas_creadas || 0} línea(s) creada(s), ${d.conflictos_linea || 0} conflicto(s) de línea
             ${d.errores?.length ? `<br><span style="color:#e74c3c">${d.errores.length} error(es): ${d.errores.slice(0,3).join('; ')}</span>` : ''}`;
 
         // Reset wizard for a new import
@@ -337,6 +402,10 @@ async function siExecuteImport() {
             document.getElementById('siStep1Results').innerHTML = '';
             document.getElementById('siAnalysisStatus').textContent = '';
             document.getElementById('siGoStep2Btn').style.display = 'none';
+            const confirmReset = document.getElementById('siConfirmExecute');
+            if (confirmReset) confirmReset.checked = false;
+            const strictReset = document.getElementById('siStrictConflictMode');
+            if (strictReset) strictReset.checked = false;
             statusEl.textContent = '';
         }, 4000);
     } catch (err) {

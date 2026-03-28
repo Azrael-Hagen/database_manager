@@ -44,3 +44,15 @@ def test_layout_overrides_ignore_invalid_rows_and_columns_types():
 
     assert updated["rows"] == base["rows"]
     assert updated["columns"] == base["columns"]
+
+
+def test_default_sheet_density_is_4x9():
+    cfg = LAYOUTS["sheet"]
+    assert cfg["columns"] == 4
+    assert cfg["rows"] == 9
+
+
+def test_default_oficio_density_is_4x10():
+    cfg = LAYOUTS["oficio"]
+    assert cfg["columns"] == 4
+    assert cfg["rows"] == 10

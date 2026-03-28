@@ -21,6 +21,8 @@ from sqlalchemy.orm import Session
 
 from app.database.orm import get_db
 from app.importers.smart_importer import (
+    apply_agent_row_changes,
+    apply_line_plan,
     analyze_file,
     apply_mapping,
     find_existing_agent,
@@ -34,7 +36,6 @@ router = APIRouter(prefix="/api/smart-import", tags=["Importación Inteligente"]
 
 _ALLOWED_EXTENSIONS = {"csv", "xlsx", "xls", "txt", "dat"}
 _MAX_FILE_BYTES = 20 * 1024 * 1024  # 20 MB
-_UPDATABLE_FIELDS = {"nombre", "email", "telefono", "empresa", "ciudad", "pais"}
 _DIRECT_FIELDS = {"nombre", "email", "telefono", "empresa", "ciudad", "pais"}
 
 
@@ -173,6 +174,14 @@ async def execute_smart_import(
             "insertar_o_actualizar – upsert"
         ),
     ),
+    confirmacion: str = Form(
+        "false",
+        description="Debe ser 'true' para confirmar que se reviso el preview antes de aplicar.",
+    ),
+    modo_estricto_conflictos: str = Form(
+        "false",
+        description="Si es 'true', bloquea toda la ejecucion cuando el preview detecta conflictos de linea.",
+    ),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -219,7 +228,45 @@ async def execute_smart_import(
             detail="Archivo demasiado grande (máximo 20 MB).",
         )
 
+    if str(confirmacion).strip().lower() not in {"true", "1", "si", "sí", "yes"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ejecucion bloqueada: confirma primero en preview (confirmacion=true).",
+        )
+
+    strict_conflicts = str(modo_estricto_conflictos).strip().lower() in {"true", "1", "si", "sí", "yes"}
+
     all_rows = _parse_rows(content, archivo.filename, delimitador)
+
+    if strict_conflicts:
+        preview = preview_import(
+            content,
+            archivo.filename,
+            mapping,
+            delimiter=delimitador,
+            db=db,
+        )
+        conflict_rows = [
+            row for row in preview.get("filas_preview", [])
+            if (row.get("plan_linea") or {}).get("accion") == "conflicto_linea_ocupada"
+        ]
+        if conflict_rows:
+            conflict_detail = [
+                {
+                    "fila": row.get("fila"),
+                    "linea": (row.get("plan_linea") or {}).get("numero"),
+                    "agente_ocupante_id": (row.get("plan_linea") or {}).get("agente_ocupante_id"),
+                }
+                for row in conflict_rows[:10]
+            ]
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "mensaje": "Modo estricto activo: existen conflictos de linea en preview.",
+                    "conflictos": conflict_detail,
+                    "total_conflictos": len(conflict_rows),
+                },
+            )
 
     from app.models import DatoImportado
 
@@ -227,6 +274,8 @@ async def execute_smart_import(
     updated = 0
     skipped = 0
     errors: list[str] = []
+    conflictos_linea = 0
+    lineas_creadas = 0
 
     for idx, raw_row in enumerate(all_rows):
         mapped = apply_mapping(raw_row, mapping)
@@ -245,26 +294,22 @@ async def execute_smart_import(
                 continue
 
             if existing and modo in {"actualizar", "insertar_o_actualizar"}:
-                # Update only safe, updatable fields
-                for field, value in mapped.items():
-                    if field in _UPDATABLE_FIELDS:
-                        setattr(existing, field, value)
-                    else:
-                        # Accumulate extras in datos_adicionales JSON bag
-                        try:
-                            extra: dict = json.loads(existing.datos_adicionales or "{}")
-                        except Exception:
-                            extra = {}
-                        extra[field] = value
-                        existing.datos_adicionales = json.dumps(
-                            extra, ensure_ascii=False
-                        )
-                db.add(existing)
+                apply_agent_row_changes(existing, mapped, db)
+                line_result = apply_line_plan(existing.id, mapped, db)
+                if line_result.get("accion") == "conflicto_linea_ocupada":
+                    conflictos_linea += 1
+                    errors.append(
+                        f"Fila {idx + 2}: conflicto de linea {line_result.get('numero')} ocupada por agente {line_result.get('agente_ocupante_id')}"
+                    )
+                if line_result.get("accion") == "crear_y_asignar":
+                    lineas_creadas += 1
                 updated += 1
             else:
                 # Insert new agent
                 direct = {k: v for k, v in mapped.items() if k in _DIRECT_FIELDS}
                 extra = {k: v for k, v in mapped.items() if k not in _DIRECT_FIELDS}
+                if not str(extra.get("alias") or "").strip() and str(direct.get("nombre") or "").strip():
+                    extra["alias"] = str(direct.get("nombre") or "").strip()
                 new_agent = DatoImportado(
                     uuid=str(_uuid.uuid4()),
                     nombre=direct.get("nombre", ""),
@@ -281,6 +326,15 @@ async def execute_smart_import(
                     es_activo=True,
                 )
                 db.add(new_agent)
+                db.flush()
+                line_result = apply_line_plan(new_agent.id, mapped, db)
+                if line_result.get("accion") == "conflicto_linea_ocupada":
+                    conflictos_linea += 1
+                    errors.append(
+                        f"Fila {idx + 2}: conflicto de linea {line_result.get('numero')} ocupada por agente {line_result.get('agente_ocupante_id')}"
+                    )
+                if line_result.get("accion") == "crear_y_asignar":
+                    lineas_creadas += 1
                 inserted += 1
 
         except Exception as exc:
@@ -303,6 +357,8 @@ async def execute_smart_import(
             "insertados": inserted,
             "actualizados": updated,
             "omitidos": skipped,
+            "conflictos_linea": conflictos_linea,
+            "lineas_creadas": lineas_creadas,
             "errores": errors,
         },
     }

@@ -9,28 +9,28 @@ from typing import Any, Iterable, Mapping
 # Layout definitions.
 # Each layout drives how many QR cards fit per page and how large each QR is.
 #
-# sheet  - Hoja carta:   3 cols x 10 rows = 30 QRs/page
+# sheet  - Hoja carta:   4 cols x 9 rows  = 36 QRs/page
 # labels - Etiquetas:    4 cols x 11 rows = 44 QRs/page  (was 30)
-# oficio - Hoja oficio:  3 cols x 10 rows = 30 QRs/page
+# oficio - Hoja oficio:  4 cols x 10 rows = 40 QRs/page
 #
 # Units: PostScript points (1 pt = 1/72 inch).
 # Letter page: 612 x 792 pt.  Oficio/Legal: 612 x 936 pt.
 LAYOUTS: dict[str, dict] = {
     "sheet": {
         "page_size": (612.0, 792.0),  # letter 8.5" x 11"
-        "columns": 3,
-        "rows": 10,
-        "margin_x": 18.0,
+        "columns": 4,
+        "rows": 9,
+        "margin_x": 12.0,
         "margin_y": 12.0,
-        "cell_w": 192.0,
-        "cell_h": 76.8,
-        "qr_size": 62.0,
+        "cell_w": 147.0,
+        "cell_h": 85.3,
+        "qr_size": 68.0,
         "font_size": 8,
         "pad_bottom": 2.0,
-        "pad_side": 5.0,
-        "border_gap": 1.0,
+        "pad_side": 3.0,
+        "border_gap": 0.4,
         "draw_border": True,
-        "title": "Hoja carta (30 QR)",
+        "title": "Hoja carta (36 QR)",
     },
     "labels": {
         "page_size": (612.0, 792.0),  # letter
@@ -50,19 +50,19 @@ LAYOUTS: dict[str, dict] = {
     },
     "oficio": {
         "page_size": (612.0, 936.0),  # oficio/legal 8.5" x 13"
-        "columns": 3,
+        "columns": 4,
         "rows": 10,
-        "margin_x": 18.0,
+        "margin_x": 12.0,
         "margin_y": 10.5,
-        "cell_w": 192.0,
+        "cell_w": 147.0,
         "cell_h": 91.5,
-        "qr_size": 84.0,
+        "qr_size": 72.0,
         "font_size": 8,
         "pad_bottom": 2.0,
-        "pad_side": 5.0,
-        "border_gap": 1.0,
+        "pad_side": 3.0,
+        "border_gap": 0.4,
         "draw_border": True,
-        "title": "Hoja oficio (30 QR compacto)",
+        "title": "Hoja oficio (40 QR compacto)",
     },
 }
 
@@ -206,17 +206,21 @@ def build_agent_qr_pdf(items: Iterable[dict], layout: str = "sheet", layout_over
         avail_w = card_w - pad_side * 2
         draw_size = min(qr_size, avail_h, avail_w)
 
-        # Build a compact content box around QR + text so lateral lines are tight.
+        # Build a content box that uses almost the full card width, minimizing wasted side whitespace.
         pdf.setFont("Helvetica-Bold", font_size)
         line1_w = pdf.stringWidth(line1, "Helvetica-Bold", font_size)
         line2_w = 0.0
         if line2:
             line2_w = pdf.stringWidth(line2, "Helvetica", line2_fs)
 
-        content_pad_x = 4.0
-        content_w = min(card_w, max(draw_size, line1_w, line2_w) + content_pad_x * 2)
-        content_x = card_x + (card_w - content_w) / 2
+        content_pad_x = 1.0
+        content_w = max(32.0, card_w - (content_pad_x * 2.0))
+        content_x = card_x + content_pad_x
         center_x = content_x + (content_w / 2)
+
+        # Ensure draw_size respects the final content width.
+        avail_w = max(20.0, content_w - pad_side * 2)
+        draw_size = min(qr_size, avail_h, avail_w)
 
         qr_path = str(item.get("qr_path") or "").strip()
         qr_y = card_y + text_block_h + label_gap

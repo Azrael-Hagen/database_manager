@@ -332,6 +332,7 @@ class TestPreviewImport:
             uuid=str(uuid.uuid4()),
             nombre="Same Name",
             email="same@test.com",
+            datos_adicionales=json.dumps({"alias": "Same Name"}, ensure_ascii=False),
             es_activo=True,
         )
         self.db.add(existing)
@@ -432,6 +433,35 @@ class TestSmartImportEndpoints:
         body = response.json()
         assert body["datos"]["nuevos"] >= 1
 
+    def test_preview_includes_ai_diagnostics(self):
+        content = _csv_bytes([
+            {
+                "nombre": "Demo User",
+                "email": "demo@example.com",
+                "telefono": "11111111",
+                "ubicacion": "Centro",
+            }
+        ])
+        mapping = json.dumps(
+            {
+                "nombre": "nombre",
+                "email": "email",
+                "telefono": "telefono",
+                "ubicacion": "ubicacion",
+            }
+        )
+        response = client.post(
+            "/api/smart-import/preview",
+            files={"archivo": ("d.csv", content, "text/csv")},
+            data={"delimitador": ",", "mapeo": mapping},
+            headers=self.headers,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert "diagnostico_ai" in body["datos"]
+        assert body["datos"]["diagnostico_ai"]["alertas_test_data"]
+        assert "riesgos_priorizados" in body["datos"]["diagnostico_ai"]
+
     def test_preview_invalid_json_mapeo(self):
         content = _csv_bytes([{"nombre": "X"}])
         response = client.post(
@@ -455,7 +485,7 @@ class TestSmartImportEndpoints:
         response = client.post(
             "/api/smart-import/execute",
             files={"archivo": ("d.csv", content, "text/csv")},
-            data={"delimitador": ",", "mapeo": mapping, "modo": "insertar"},
+            data={"delimitador": ",", "mapeo": mapping, "modo": "insertar", "confirmacion": "true"},
             headers=self.headers,
         )
         assert response.status_code == 200
@@ -491,7 +521,7 @@ class TestSmartImportEndpoints:
         response = client.post(
             "/api/smart-import/execute",
             files={"archivo": ("d.csv", content, "text/csv")},
-            data={"delimitador": ",", "mapeo": mapping, "modo": "insertar"},
+            data={"delimitador": ",", "mapeo": mapping, "modo": "insertar", "confirmacion": "true"},
             headers=self.headers,
         )
         assert response.status_code == 200
@@ -518,7 +548,7 @@ class TestSmartImportEndpoints:
         response = client.post(
             "/api/smart-import/execute",
             files={"archivo": ("d.csv", content, "text/csv")},
-            data={"delimitador": ",", "mapeo": mapping, "modo": "actualizar"},
+            data={"delimitador": ",", "mapeo": mapping, "modo": "actualizar", "confirmacion": "true"},
             headers=self.headers,
         )
         assert response.status_code == 200
@@ -536,10 +566,64 @@ class TestSmartImportEndpoints:
         response = client.post(
             "/api/smart-import/execute",
             files={"archivo": ("d.csv", content, "text/csv")},
-            data={"delimitador": ",", "mapeo": mapping, "modo": "INVALID"},
+            data={"delimitador": ",", "mapeo": mapping, "modo": "INVALID", "confirmacion": "true"},
             headers=self.headers,
         )
         assert response.status_code == 400
+
+    def test_execute_requires_confirmation(self):
+        content = _csv_bytes([{"nombre": "NeedsConfirm", "email": f"{uuid.uuid4().hex}@x.com"}])
+        mapping = json.dumps({"nombre": "nombre", "email": "email"})
+        response = client.post(
+            "/api/smart-import/execute",
+            files={"archivo": ("d.csv", content, "text/csv")},
+            data={"delimitador": ",", "mapeo": mapping, "modo": "insertar"},
+            headers=self.headers,
+        )
+        assert response.status_code == 400
+
+    def test_execute_strict_mode_blocks_line_conflicts(self):
+        db = TestingSessionLocal()
+        occupant = DatoImportado(
+            uuid=str(uuid.uuid4()),
+            nombre="Occupant",
+            email=f"{uuid.uuid4().hex}@occ.com",
+            es_activo=True,
+        )
+        db.add(occupant)
+        db.flush()
+
+        line = LineaTelefonica(numero="VOIP-9001", es_activa=True)
+        db.add(line)
+        db.flush()
+
+        db.add(
+            AgenteLineaAsignacion(
+                agente_id=occupant.id,
+                linea_id=line.id,
+                es_activa=True,
+            )
+        )
+        db.commit()
+        db.close()
+
+        content = _csv_bytes(
+            [{"nombre": "Nuevo", "email": f"{uuid.uuid4().hex}@x.com", "numero_voip": "VOIP-9001"}]
+        )
+        mapping = json.dumps({"nombre": "nombre", "email": "email", "numero_voip": "numero_voip"})
+        response = client.post(
+            "/api/smart-import/execute",
+            files={"archivo": ("d.csv", content, "text/csv")},
+            data={
+                "delimitador": ",",
+                "mapeo": mapping,
+                "modo": "insertar_o_actualizar",
+                "confirmacion": "true",
+                "modo_estricto_conflictos": "true",
+            },
+            headers=self.headers,
+        )
+        assert response.status_code == 409
 
     def test_execute_upsert_mode(self):
         unique_email = f"{uuid.uuid4().hex}@ups.com"
@@ -566,7 +650,7 @@ class TestSmartImportEndpoints:
         response = client.post(
             "/api/smart-import/execute",
             files={"archivo": ("d.csv", content, "text/csv")},
-            data={"delimitador": ",", "mapeo": mapping, "modo": "insertar_o_actualizar"},
+            data={"delimitador": ",", "mapeo": mapping, "modo": "insertar_o_actualizar", "confirmacion": "true"},
             headers=self.headers,
         )
         assert response.status_code == 200
@@ -581,7 +665,7 @@ class TestSmartImportEndpoints:
         response = client.post(
             "/api/smart-import/execute",
             files={"archivo": ("d.csv", content, "text/csv")},
-            data={"delimitador": ",", "mapeo": mapping, "modo": "insertar"},
+            data={"delimitador": ",", "mapeo": mapping, "modo": "insertar", "confirmacion": "true"},
             headers=viewer_headers,
         )
         assert response.status_code == 403

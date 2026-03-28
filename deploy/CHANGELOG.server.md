@@ -2,6 +2,13 @@
 
 Acceso previsto solo desde la maquina servidor mediante la API interna de versionado.
 
+## 1.5.0-rev6 - 2026-03-28
+- Se implementa mini-IA para importacion inteligente con conciliacion de agentes por email/telefono/alias/nombre/VOIP.
+- Preview de importacion agrega diagnostico operativo (datos de prueba, incoherencias y riesgos priorizados alto/medio/bajo).
+- Execute requiere confirmacion explicita y agrega modo estricto para bloquear todo el lote ante conflictos de linea.
+- Se integra plan de linea por fila (sin cambio, crear+asignar, reasignar, conflicto) con trazabilidad en respuesta.
+- Validacion de cierre en verde: pruebas smart-import, E2E operativa y suite de flujo movil/offline.
+
 ## 1.5.0-rev5 - 2026-03-23
 - Se agrega seccion exclusiva de Gestion de Lineas con alta/edicion y tabla dedicada.
 - Se habilita actualizacion de lineas por API y soporte de lineas manuales fuera de extensions_pbx.
