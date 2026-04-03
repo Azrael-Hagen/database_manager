@@ -45,6 +45,14 @@ class APIClient {
         }
     }
 
+    _requirePositiveInt(value, fieldName = 'id') {
+        const n = Number(value);
+        if (!Number.isInteger(n) || n <= 0) {
+            throw new Error(`Validación fallida: ${fieldName} inválido`);
+        }
+        return n;
+    }
+
     /**
      * Realizar solicitud HTTP
      */
@@ -480,7 +488,8 @@ class APIClient {
     }
 
     async actualizarLinea(lineaId, payload) {
-        return this.request('PUT', `/qr/lineas/${lineaId}`, payload);
+        const id = this._requirePositiveInt(lineaId, 'linea_id');
+        return this.request('PUT', `/qr/lineas/${id}`, payload);
     }
 
     async syncLineas() {
@@ -488,20 +497,24 @@ class APIClient {
     }
 
     async asignarLinea(lineaId, agenteId, billing = {}) {
-        return this.request('POST', `/qr/lineas/${lineaId}/asignar`, {
-            agente_id: agenteId,
+        const id = this._requirePositiveInt(lineaId, 'linea_id');
+        const agId = this._requirePositiveInt(agenteId, 'agente_id');
+        return this.request('POST', `/qr/lineas/${id}/asignar`, {
+            agente_id: agId,
             cobro_desde_semana: billing.cobroDesdeSemana || null,
             cargo_inicial: Number(billing.cargoInicial || 0),
         });
     }
 
     async liberarLinea(lineaId, agenteId = null) {
-        const body = agenteId ? { agente_id: agenteId } : {};
-        return this.request('POST', `/qr/lineas/${lineaId}/liberar`, body);
+        const id = this._requirePositiveInt(lineaId, 'linea_id');
+        const body = agenteId ? { agente_id: this._requirePositiveInt(agenteId, 'agente_id') } : {};
+        return this.request('POST', `/qr/lineas/${id}/liberar`, body);
     }
 
     async desactivarLinea(lineaId) {
-        return this.request('DELETE', `/qr/lineas/${lineaId}`);
+        const id = this._requirePositiveInt(lineaId, 'linea_id');
+        return this.request('DELETE', `/qr/lineas/${id}`);
     }
 
     // === GESTIÓN DE BASES DE DATOS ===

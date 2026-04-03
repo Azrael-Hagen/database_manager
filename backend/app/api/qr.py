@@ -867,6 +867,7 @@ def _agent_active_lines(db: Session, agente_id: int) -> list[dict]:
         if not row.linea or not row.linea.es_activa:
             continue
         result.append({
+            "id": row.linea.id,
             "linea_id": row.linea.id,
             "numero": row.linea.numero,
             "tipo": row.linea.tipo,
@@ -885,6 +886,7 @@ def _agent_active_lines_from_prefetch(dato: DatoImportado) -> list[dict]:
             continue
         result.append(
             {
+                "id": row.linea.id,
                 "linea_id": row.linea.id,
                 "numero": row.linea.numero,
                 "tipo": row.linea.tipo,
@@ -2408,7 +2410,10 @@ async def liberar_linea(
 ):
     """Liberar linea ocupada (deja historial de asignacion)."""
     require_admin_role(current_user, "Solo administradores pueden liberar lineas")
-    agente_id = int((payload or {}).get("agente_id") or 0)
+    try:
+        agente_id = int((payload or {}).get("agente_id") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="agente_id invalido")
     _sync_extensions_inventory(db)
 
     linea = _get_active_line_query(db).filter(LineaTelefonica.id == linea_id).first()

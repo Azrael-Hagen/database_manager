@@ -3,12 +3,25 @@
   "channel": "production",
   "current": {
     "version": "1.5.0",
-    "revision": 6,
-    "release_date": "2026-03-28",
-    "codename": "Smart Import Conciliacion IA",
-    "summary": "Importacion inteligente con conciliacion agentes/lineas, modo estricto y validacion web+movil"
+    "revision": 7,
+    "release_date": "2026-04-03",
+    "codename": "Line Release Guardrails",
+    "summary": "Correccion de liberar lineas con guardas de flujo y compatibilidad de IDs en datos de agente"
   },
   "history": [
+    {
+      "version": "1.5.0",
+      "revision": 7,
+      "release_date": "2026-04-03",
+      "codename": "Line Release Guardrails",
+      "changes": [
+        "Se corrige flujo Cambios y Bajas para evitar llamadas /lineas/undefined/liberar al liberar lineas de un agente.",
+        "Frontend normaliza IDs de linea y valida entradas antes de consumir API de lineas.",
+        "API client agrega guardas reutilizables para linea_id/agente_id invalidos en operaciones de lineas.",
+        "Backend unifica shape de lineas activas incluyendo id y linea_id para compatibilidad de consumidores.",
+        "Se agregan pruebas E2E para regresion de shape de lineas y rechazo de agente_id invalido en liberar linea."
+      ]
+    },
     {
       "version": "1.5.0",
       "revision": 6,

@@ -2,6 +2,13 @@
 
 Acceso previsto solo desde la maquina servidor mediante la API interna de versionado.
 
+## 1.5.0-rev7 - 2026-04-03
+- Se corrige el flujo de "Liberar líneas" en Cambios y Bajas para evitar requests con `linea_id=undefined`.
+- Se normaliza resolucion de ID de linea en frontend (`id`, `linea_id`, `linea.id`) con validacion previa.
+- API client incorpora guardas reutilizables de IDs positivos para operaciones de lineas (asignar/liberar/editar/desactivar).
+- Backend expone lineas activas con ambos campos `id` y `linea_id` para compatibilidad de consumidores.
+- Se agrega validacion robusta de `agente_id` en `/api/qr/lineas/{linea_id}/liberar` y regresiones E2E del flujo.
+
 ## 1.5.0-rev6 - 2026-03-28
 - Se implementa mini-IA para importacion inteligente con conciliacion de agentes por email/telefono/alias/nombre/VOIP.
 - Preview de importacion agrega diagnostico operativo (datos de prueba, incoherencias y riesgos priorizados alto/medio/bajo).

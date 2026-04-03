@@ -18,10 +18,10 @@ DEFAULT_VERSION_INFO: dict[str, Any] = {
     "channel": "production",
     "current": {
         "version": "1.5.0",
-        "revision": 6,
-        "release_date": "2026-03-28",
-        "codename": "Smart Import Conciliacion IA",
-        "summary": "Importacion inteligente con conciliacion agentes/lineas, modo estricto y validacion web+movil",
+        "revision": 7,
+        "release_date": "2026-04-03",
+        "codename": "Line Release Guardrails",
+        "summary": "Correccion de liberar lineas con guardas de flujo y compatibilidad de IDs en datos de agente",
     },
     "history": [],
 }

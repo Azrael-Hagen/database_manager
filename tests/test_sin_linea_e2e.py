@@ -319,6 +319,34 @@ class TestQrAgentesBusquedaYVoip:
         assert target is not None
         assert target.get("numero_voip") == "3333"
 
+    def test_qr_agentes_lineas_incluye_id_y_linea_id(self):
+        db = _db()
+        try:
+            ag = DatoImportado(nombre="Agente Lineas", es_activo=True)
+            db.add(ag)
+            db.flush()
+
+            linea = LineaTelefonica(numero="5550101001", tipo="EXT_PBX", es_activa=True)
+            db.add(linea)
+            db.flush()
+
+            db.add(AgenteLineaAsignacion(agente_id=ag.id, linea_id=linea.id, es_activa=True))
+            db.commit()
+            ag_id = ag.id
+            linea_id = linea.id
+        finally:
+            db.close()
+
+        resp = client.get("/api/qr/agentes?search=Agente%20Lineas", headers=self.capture_headers)
+        assert resp.status_code == 200, resp.text
+        rows = resp.json().get("data", [])
+        target = next((row for row in rows if row.get("id") == ag_id), None)
+        assert target is not None
+        lineas = target.get("lineas") or []
+        assert lineas, "El agente debe incluir lineas activas"
+        assert lineas[0].get("linea_id") == linea_id
+        assert lineas[0].get("id") == linea_id
+
 
 class TestQrExportListado:
     @classmethod
@@ -964,6 +992,36 @@ class TestLineasGestionDebugE2E:
         debug_libre = next((r for r in libres_rows if r.get("id") == linea_id), None)
         print("DEBUG lineas libres:", libres_rows)
         assert debug_libre is not None
+
+    def test_liberar_linea_rechaza_agente_id_invalido(self):
+        agente = _mk_agente("Debug Invalid Agente ID")
+
+        crear = client.post(
+            "/api/qr/lineas",
+            headers=self.capture_headers,
+            json={
+                "numero": "7771888",
+                "tipo": "MANUAL",
+                "descripcion": "Linea debug invalida payload",
+                "sincronizar": False,
+            },
+        )
+        assert crear.status_code == 200, crear.text
+        linea_id = int(crear.json()["data"]["id"])
+
+        asignar = client.post(
+            f"/api/qr/lineas/{linea_id}/asignar",
+            headers=self.capture_headers,
+            json={"agente_id": agente.id},
+        )
+        assert asignar.status_code == 200, asignar.text
+
+        liberar = client.post(
+            f"/api/qr/lineas/{linea_id}/liberar",
+            headers=self.admin_headers,
+            json={"agente_id": "undefined"},
+        )
+        assert liberar.status_code == 400, liberar.text
 
 
 class TestDeudaManualE2E:

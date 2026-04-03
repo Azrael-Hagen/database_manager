@@ -4046,8 +4046,19 @@ async function liberarLineasAgente(agenteId) {
     if (!(await showAppConfirm(`¿Liberar ${lines.length} línea(s) del agente ${agentLabel}?`, { title: 'Liberar líneas', tone: 'warning' }))) return;
 
     try {
+        const normalizeLineId = (line) => {
+            const raw = line?.id ?? line?.linea_id ?? line?.linea?.id ?? null;
+            const n = Number(raw);
+            return Number.isInteger(n) && n > 0 ? n : null;
+        };
+
         for (const line of lines) {
-            await apiClient.liberarLinea(line.id, agenteId);
+            const lineId = normalizeLineId(line);
+            if (!lineId) {
+                const lineLabel = String(line?.numero || line?.linea?.numero || 'sin_numero');
+                throw new Error(`Validación fallida: no se encontró ID válido para la línea ${lineLabel}`);
+            }
+            await apiClient.liberarLinea(lineId, agenteId);
         }
         alert('Líneas liberadas correctamente.');
         await cargarAgentesGestion(false, true);
@@ -4447,9 +4458,14 @@ async function asignarLineaAgente(e) {
 }
 
 async function liberarLinea(lineaId) {
+    const normalized = Number(lineaId);
+    if (!Number.isInteger(normalized) || normalized <= 0) {
+        alert('Validación fallida: línea inválida para liberar.');
+        return;
+    }
     if (!(await showAppConfirm('¿Liberar esta línea?', { title: 'Liberar línea', tone: 'warning' }))) return;
     try {
-        await apiClient.liberarLinea(lineaId);
+        await apiClient.liberarLinea(normalized);
         alert('Línea liberada.');
         await cargarLineasYAgentes();
     } catch (error) {
