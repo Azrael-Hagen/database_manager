@@ -167,6 +167,25 @@ const CANONICAL_FIELDS = [
     'imei', 'deuda', 'extension',
 ];
 
+const FIELD_DESCRIPTIONS = {
+    'nombre':      'Nombre completo del agente',
+    'alias':       'Identificador corto / apodo operativo',
+    'email':       'Correo electrónico',
+    'telefono':    'Número de teléfono o celular',
+    'extension':   'Extensión telefónica interna',
+    'empresa':     'Empresa u organización',
+    'ciudad':      'Ciudad',
+    'pais':        'País',
+    'ubicacion':   'Sede o ubicación física',
+    'fp':          'Fecha de primer pago',
+    'fc':          'Fecha de cobro regular',
+    'fcc':         'Fecha de cobro de cheque',
+    'grupo':       'Grupo o equipo al que pertenece',
+    'numero_voip': 'Número de línea VoIP asignada',
+    'imei':        'Identificador de equipo (IMEI)',
+    'deuda':       'Saldo o deuda pendiente',
+};
+
 function siGoToStep2() {
     if (!_siAnalysis) return;
     _siRenderMappingTable(_siAnalysis.columnas_detectadas);
@@ -187,6 +206,7 @@ function _siRenderMappingTable(cols) {
     tbody.innerHTML = '';
     cols.forEach((c, idx) => {
         const tr = document.createElement('tr');
+
         const tdHeader = document.createElement('td');
         tdHeader.textContent = c.header;
 
@@ -208,9 +228,18 @@ function _siRenderMappingTable(cols) {
         const color = c.confianza >= 0.9 ? '#2ecc71' : c.confianza >= 0.75 ? '#f39c12' : '#e74c3c';
         tdConf.innerHTML = `<span style="color:${color}">${pct}%</span>`;
 
+        const tdDesc = document.createElement('td');
+        tdDesc.className = 'si-field-desc';
+        tdDesc.style.cssText = 'font-size:0.8em;color:#888;font-style:italic;';
+        tdDesc.textContent = FIELD_DESCRIPTIONS[c.campo] || '';
+        sel.addEventListener('change', () => {
+            tdDesc.textContent = FIELD_DESCRIPTIONS[sel.value] || '';
+        });
+
         tr.appendChild(tdHeader);
         tr.appendChild(tdField);
         tr.appendChild(tdConf);
+        tr.appendChild(tdDesc);
         tbody.appendChild(tr);
     });
 }
