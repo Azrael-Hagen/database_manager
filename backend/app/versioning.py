@@ -18,10 +18,10 @@ DEFAULT_VERSION_INFO: dict[str, Any] = {
     "channel": "production",
     "current": {
         "version": "1.5.0",
-        "revision": 9,
+        "revision": 10,
         "release_date": "2026-04-07",
-        "codename": "Cobros Clarity and FP Search",
-        "summary": "Mejora visual de contexto QR/Cobros, guia operativa basica y busqueda unificada por nombre, ID y FP",
+        "codename": "QR Scanner Hardening + Smart Import Rollback",
+        "summary": "Guardas de carrera QR, sesion efimera Android, importador inteligente con comparacion de campos y rollback transaccional",
     },
     "history": [],
 }

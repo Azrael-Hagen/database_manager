@@ -2,6 +2,14 @@
 
 Acceso previsto solo desde la maquina servidor mediante la API interna de versionado.
 
+## 1.5.0-rev10 - 2026-04-07
+- Se agregan guardas de carrera en `startWebQrScanner`/`stopWebQrScanner` para evitar arranques duplicados.
+- Carga dinamica de html5-qrcode con fallback a CDN secundaria si la primera falla.
+- Sesion Android usa `sessionStorage` para tokens: las credenciales no persisten entre reinicios de la app nativa.
+- Fix en `smartImportSetTab`: la pestana "Inteligente" ahora se activa correctamente al hacer clic.
+- Preview del importador inteligente muestra comparacion campo a campo: valor actual vs nuevo.
+- Execute del importador admite rollback automatico transaccional al detectar cualquier error parcial.
+
 ## 1.5.0-rev9 - 2026-04-07
 - Se mejora la barra de contexto de QR/Cobros con campos mas grandes, mejor jerarquia visual y mejor lectura en mobile.
 - Se agrega una guia basica de cobros en la pestaña de pago para reducir dudas operativas recurrentes.
