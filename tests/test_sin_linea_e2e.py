@@ -319,6 +319,34 @@ class TestQrAgentesBusquedaYVoip:
         assert target is not None
         assert target.get("numero_voip") == "3333"
 
+    def test_busqueda_qr_agentes_por_id_y_fp(self):
+        db = _db()
+        try:
+            ag = DatoImportado(
+                nombre="Agente FP",
+                es_activo=True,
+                telefono="5551234567",
+                datos_adicionales=json.dumps({"alias": "AFP", "fp": "FP-7788", "numero_voip": "7788"}),
+            )
+            db.add(ag)
+            db.commit()
+            db.refresh(ag)
+            ag_id = ag.id
+        finally:
+            db.close()
+
+        resp_id = client.get(f"/api/qr/agentes?search={ag_id}", headers=self.capture_headers)
+        assert resp_id.status_code == 200, resp_id.text
+        rows_id = resp_id.json().get("data", [])
+        assert any(row.get("id") == ag_id for row in rows_id)
+
+        resp_fp = client.get("/api/qr/agentes?search=FP-7788", headers=self.capture_headers)
+        assert resp_fp.status_code == 200, resp_fp.text
+        rows_fp = resp_fp.json().get("data", [])
+        target_fp = next((row for row in rows_fp if row.get("id") == ag_id), None)
+        assert target_fp is not None
+        assert (target_fp.get("datos_adicionales") or {}).get("fp") == "FP-7788"
+
     def test_qr_agentes_lineas_incluye_id_y_linea_id(self):
         db = _db()
         try:

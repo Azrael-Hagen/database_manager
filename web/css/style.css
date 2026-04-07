@@ -2094,8 +2094,8 @@ tr.row-sin-linea:hover {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
-    gap: 10px 16px;
-    padding: 12px 16px;
+    gap: 12px 16px;
+    padding: 14px 16px;
     background: linear-gradient(135deg, #f0f8ff 0%, #e6f0fb 100%);
     border: 1px solid #c8daee;
     border-radius: 10px;
@@ -2103,21 +2103,64 @@ tr.row-sin-linea:hover {
 }
 .qr-context-bar .form-group {
     margin: 0;
+    min-width: 180px;
 }
 .qr-context-bar label {
-    font-size: 0.78rem;
+    font-size: 0.8rem;
     font-weight: 700;
     color: var(--brand-strong);
     text-transform: uppercase;
     letter-spacing: 0.03em;
     display: block;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
+}
+.qr-context-input {
+    width: 100%;
+    min-height: 42px;
+    padding: 8px 12px;
+    border: 1px solid #b8cfe5;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    background: #fff;
+}
+.qr-context-input:focus {
+    outline: none;
+    border-color: var(--brand-strong);
+    box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.14);
+}
+.qr-context-input-agent {
+    min-width: 260px;
+}
+.qr-context-input-voip {
+    min-width: 140px;
 }
 #qrCtxBadge {
     align-self: center;
     font-size: 0.85rem;
     padding: 5px 12px;
     letter-spacing: 0.02em;
+}
+
+.qr-cobros-guide {
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    border: 1px solid #d2e4f7;
+    border-radius: 10px;
+    background: #f8fbff;
+}
+
+.qr-cobros-guide h3 {
+    margin: 0 0 8px;
+    font-size: 0.98rem;
+    color: var(--brand-strong);
+}
+
+.qr-cobros-guide ol {
+    margin: 0;
+    padding-left: 18px;
+    color: #36597d;
+    font-size: 0.92rem;
+    line-height: 1.45;
 }
 
 /* --- Two-column payment layout --- */
@@ -2187,12 +2230,8 @@ tr.row-sin-linea:hover {
 
 #qrCtxAgenteSearch {
     width: 100%;
-    padding: 8px 12px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
     font-family: inherit;
-    font-size: 14px;
-    background-color: white;
+    font-size: 0.95rem;
 }
 
 #qrCtxAgenteSearch:focus {
@@ -2252,6 +2291,16 @@ tr.row-sin-linea:hover {
 @media (max-width: 720px) {
     .qr-pago-grid {
         grid-template-columns: 1fr;
+    }
+    .qr-context-bar {
+        align-items: stretch;
+    }
+    .qr-context-bar .form-group {
+        min-width: 100%;
+    }
+    .qr-context-input-agent,
+    .qr-context-input-voip {
+        min-width: 0;
     }
     .qr-tab-btn {
         padding: 6px 12px;

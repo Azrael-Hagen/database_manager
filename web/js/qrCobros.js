@@ -154,7 +154,7 @@ const _dmAgentSearchCache = new Map();
 
 /**
  * Busca agentes para el panel "Control Manual de Deuda".
- * Acepta nombre, alias, teléfono o ID numérico.
+ * Acepta nombre, alias, telefono, ID o FP.
  */
 function deudaManualSearchAgente(query) {
     const dropdown = document.getElementById('deudaManualAgentDropdown');
@@ -169,20 +169,6 @@ function deudaManualSearchAgente(query) {
         dropdown.style.display = 'none';
         dropdown.innerHTML = '';
         _dmLastSearchQuery = '';
-        return;
-    }
-
-    // Si es número puro → ofrecer carga directa por ID
-    if (/^\d+$/.test(trimmed)) {
-        const idNum = parseInt(trimmed, 10);
-        if (hiddenId) hiddenId.value = String(idNum);
-        dropdown.innerHTML = `
-            <div class="qr-agent-result" onclick="deudaManualSelectAgent(${idNum}, 'ID: ${idNum}')"
-                style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border,#d8e6f4);font-weight:500;">
-                ID: ${idNum}
-            </div>`;
-        dropdown.style.display = 'block';
-        _dmLastSearchQuery = trimmed;
         return;
     }
 
@@ -213,6 +199,7 @@ function deudaManualSearchAgente(query) {
                     ag.telefono ? '📞 ' + ag.telefono : '',
                     ag.alias    ? '🏷 '  + ag.alias    : '',
                     ag.numero_voip ? '☎ ' + ag.numero_voip : '',
+                    ag.fp ? '🆔 FP: ' + ag.fp : '',
                     'ID: ' + ag.id,
                 ].filter(Boolean).join('  ');
                 return `<div class="qr-agent-result"
@@ -296,7 +283,7 @@ async function qrToggleCamera() {
 }
 
 /**
- * Busca agentes por nombre o ID con debounce
+ * Busca agentes por nombre, ID o FP con debounce
  */
 function qrSearchAgente(query) {
     const dropdown = document.getElementById('qrAgentSearchDropdown');
@@ -308,20 +295,6 @@ function qrSearchAgente(query) {
         dropdown.innerHTML = '';
         _qrLastSearchQuery = '';
         _qrAgentSearchCache.clear();
-        return;
-    }
-    
-    // Si es solo un número, mostrar opción para cargar por ID
-    if (/^\d+$/.test(query.trim())) {
-        _qrLastSearchQuery = query.trim();
-        const idNum = parseInt(query.trim(), 10);
-        dropdown.innerHTML = `
-            <div class="qr-agent-result" onclick="qrSelectAgent('${idNum}')"
-                style="padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--border); font-weight:500;">
-                ID: ${idNum}
-            </div>
-        `;
-        dropdown.style.display = 'block';
         return;
     }
     
@@ -368,6 +341,7 @@ function qrSearchAgente(query) {
                         ${agente.telefono ? '📞 ' + agente.telefono : ''}
                         ${agente.alias ? ' 🏷 ' + agente.alias : ''}
                         ${agente.numero_voip ? ' ☎ ' + agente.numero_voip : ''}
+                        ${agente.fp ? ' 🆔 FP: ' + agente.fp : ''}
                         ID: ${agente.id}
                     </div>
                 </div>

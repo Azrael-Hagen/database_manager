@@ -847,20 +847,20 @@
                 <!-- Shared context bar -->
                 <div class="qr-context-bar">
                     <div class="form-group">
-                        <label>Buscar Agente</label>
+                        <label for="qrCtxAgenteSearch">Buscar agente</label>
                         <div class="qr-agent-search">
-                            <input type="text" id="qrCtxAgenteSearch" placeholder="Nombre o ID..." style="width:160px;" oninput="qrSearchAgente(this.value)">
+                            <input type="text" id="qrCtxAgenteSearch" class="qr-context-input qr-context-input-agent" placeholder="Nombre, ID o FP" oninput="qrSearchAgente(this.value)">
                             <input type="hidden" id="qrCtxAgenteId">
                             <div id="qrAgentSearchDropdown" class="qr-agent-dropdown" style="display:none;"></div>
                         </div>
                     </div>
                     <div class="form-group">
-                        <label>Semana (lunes)</label>
-                        <input type="date" id="qrCtxSemana">
+                        <label for="qrCtxSemana">Semana (lunes)</label>
+                        <input type="date" id="qrCtxSemana" class="qr-context-input">
                     </div>
                     <div class="form-group">
-                        <label>VoIP esperado</label>
-                        <input type="text" id="qrCtxVoip" placeholder="Ej: 1001" style="width:110px;">
+                        <label for="qrCtxVoip">VoIP esperado</label>
+                        <input type="text" id="qrCtxVoip" class="qr-context-input qr-context-input-voip" placeholder="Ej: 1001">
                     </div>
                     <button type="button" class="btn" onclick="qrSyncContext()">🔍 Cargar Agente</button>
                     <span id="qrCtxBadge" class="payment-pill" style="background:#8899aa;color:#fff;align-self:center;">—</span>
@@ -877,6 +877,15 @@
 
                 <!-- ====== TAB: Pago ====== -->
                 <div id="qrTabPago" class="qr-tab-content">
+                    <div class="qr-cobros-guide" role="note" aria-label="Guia basica de cobros">
+                        <h3>Guia basica de cobros</h3>
+                        <ol>
+                            <li>Busca al agente por nombre, ID o FP y pulsa <strong>Cargar Agente</strong>.</li>
+                            <li>Verifica semana y VoIP esperado; revisa el badge de deuda.</li>
+                            <li>En <strong>Registrar Pago Semanal</strong>, captura monto y registra el pago o liquidacion.</li>
+                            <li>Si hay diferencias, revisa <strong>Reporte</strong> y usa <strong>Control Manual de Deuda</strong> solo para ajustes justificados.</li>
+                        </ol>
+                    </div>
                     <div class="qr-pago-grid">
                         <!-- Verificación -->
                         <div class="qr-pago-col">
@@ -1083,7 +1092,7 @@
                         <p class="hint">Usa <strong>Saldo objetivo</strong> para fijar el saldo acumulado deseado, o <strong>Ajuste</strong> para sumar/restar sobre la deuda base calculada.</p>
                         <div class="search-bar" style="margin-top:8px;">
                             <div style="position:relative;display:inline-block;">
-                                <input type="text" id="deudaManualAgenteSearch" placeholder="Buscar agente por nombre o ID…" style="width:220px;" autocomplete="off"
+                                <input type="text" id="deudaManualAgenteSearch" placeholder="Buscar agente por nombre, ID o FP" style="width:260px;" autocomplete="off"
                                     oninput="deudaManualSearchAgente(this.value)" onfocus="if(this.value) deudaManualSearchAgente(this.value)">
                                 <input type="hidden" id="deudaManualAgenteId">
                                 <div id="deudaManualAgentDropdown" style="display:none;position:absolute;top:100%;left:0;z-index:9999;background:#fff;border:1px solid #c5d6e8;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.13);min-width:280px;max-height:220px;overflow-y:auto;"></div>

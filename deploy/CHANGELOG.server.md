@@ -2,6 +2,13 @@
 
 Acceso previsto solo desde la maquina servidor mediante la API interna de versionado.
 
+## 1.5.0-rev9 - 2026-04-07
+- Se mejora la barra de contexto de QR/Cobros con campos mas grandes, mejor jerarquia visual y mejor lectura en mobile.
+- Se agrega una guia basica de cobros en la pestaña de pago para reducir dudas operativas recurrentes.
+- Se habilita busqueda unificada de agentes por nombre, ID o FP sin atajos ambiguos en entradas numericas.
+- El endpoint `/api/qr/agentes` agrega coincidencia explicita por `id` y expone `fp` como metadato de respuesta.
+- Se valida la regresion del bloque de busqueda/VoIP de agentes QR con pruebas automatizadas en verde.
+
 ## 1.5.0-rev8 - 2026-04-07
 - Se valida en entorno real la regresion prioritaria del flujo de lineas: 5 pruebas objetivo en verde con Python 3.14.
 - Se endurece frontend web para normalizar `linea_id` y bloquear acciones cuando el dato no es consistente.

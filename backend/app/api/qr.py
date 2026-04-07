@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
-from sqlalchemy import func, inspect, select, text
+from sqlalchemy import func, inspect, or_, select, text
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database.orm import get_db
@@ -1865,13 +1865,18 @@ async def listar_agentes_qr(
     """Listar agentes activos para asignacion de lineas y verificaciones."""
     query = db.query(DatoImportado).filter(DatoImportado.es_activo.is_(True))
     if search:
-        term = f"%{search.strip()}%"
-        query = query.filter(
-            (DatoImportado.nombre.ilike(term)) |
-            (DatoImportado.telefono.ilike(term)) |
-            (DatoImportado.empresa.ilike(term)) |
-            (DatoImportado.datos_adicionales.ilike(term))
-        )
+        search_clean = search.strip()
+        term = f"%{search_clean}%"
+        id_term = int(search_clean) if search_clean.isdigit() else None
+        filters = [
+            DatoImportado.nombre.ilike(term),
+            DatoImportado.telefono.ilike(term),
+            DatoImportado.empresa.ilike(term),
+            DatoImportado.datos_adicionales.ilike(term),
+        ]
+        if id_term is not None:
+            filters.insert(0, DatoImportado.id == id_term)
+        query = query.filter(or_(*filters))
 
     query = query.options(
         selectinload(DatoImportado.ladas_preferidas).selectinload(AgenteLadaPreferencia.lada),
@@ -1892,12 +1897,14 @@ async def listar_agentes_qr(
     for a in agentes:
         extras = _safe_json_object(a.datos_adicionales)
         alias = extras.get("alias") if isinstance(extras, dict) else None
+        fp = extras.get("fp") if isinstance(extras, dict) else None
         data.append(
             {
                 "id": a.id,
                 "uuid": a.uuid,
                 "nombre": a.nombre,
                 "alias": alias,
+                "fp": fp,
                 "display_name": _legacy_agent_display_name(a.nombre, alias, a.id),
                 "telefono": a.telefono,
                 "numero_voip": _extract_voip(a),

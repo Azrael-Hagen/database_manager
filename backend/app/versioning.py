@@ -18,10 +18,10 @@ DEFAULT_VERSION_INFO: dict[str, Any] = {
     "channel": "production",
     "current": {
         "version": "1.5.0",
-        "revision": 8,
+        "revision": 9,
         "release_date": "2026-04-07",
-        "codename": "Operational Hardening Sweep",
-        "summary": "Validacion completa del flujo de lineas, hardening web/mobile y paginacion segura en listados QR",
+        "codename": "Cobros Clarity and FP Search",
+        "summary": "Mejora visual de contexto QR/Cobros, guia operativa basica y busqueda unificada por nombre, ID y FP",
     },
     "history": [],
 }
