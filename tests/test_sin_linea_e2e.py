@@ -59,6 +59,8 @@ _INDEX_HTML = os.path.join(_REPO_ROOT, "web", "index.html")
 _MAIN_JS = os.path.join(_REPO_ROOT, "web", "js", "main.js")
 _API_CLIENT_JS = os.path.join(_REPO_ROOT, "web", "js", "api-client.js")
 _QR_COBROS_JS = os.path.join(_REPO_ROOT, "web", "js", "qrCobros.js")
+_MOBILE_JS = os.path.join(_REPO_ROOT, "web", "m", "mobile.js")
+_SMART_IMPORT_JS = os.path.join(_REPO_ROOT, "web", "js", "smartImport.js")
 _STYLE_CSS = os.path.join(_REPO_ROOT, "web", "css", "style.css")
 
 
@@ -956,6 +958,44 @@ class TestFrontendAssets:
         assert "async function qrToggleCamera()" in js
         assert "await iniciarEscanerQR()" in js
         assert "window.isQrScannerRunning" in js
+
+    def test_mobile_qr_scanner_tiene_loader_y_guardas_de_arranque(self):
+        js = open(_MOBILE_JS, encoding="utf-8").read()
+        assert "let qrScannerStartInFlight = false;" in js
+        assert "let qrScannerStopInFlight = false;" in js
+        assert "async function ensureQrScannerLibrary()" in js
+        assert "https://unpkg.com/html5-qrcode@2.3.8" in js
+        assert "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8" in js
+        assert "if (qrScannerInstance || qrScannerStartInFlight || qrScannerStopInFlight)" in js
+
+    def test_mobile_android_usa_sesion_efimera_para_token(self):
+        api_js = open(_API_CLIENT_JS, encoding="utf-8").read()
+        mobile_js = open(_MOBILE_JS, encoding="utf-8").read()
+
+        assert "_detectPreferredPersistence()" in api_js
+        assert "return window.PhantomAndroid ? 'session' : 'local';" in api_js
+        assert "setAuthPersistence(mode = 'local')" in api_js
+        assert "if (normalized === 'session') {" in api_js
+        assert "localStorage.removeItem('authToken');" in api_js
+
+        assert "function getMobileSessionStorage()" in mobile_js
+        assert "return isInsideNativeApp() ? sessionStorage : localStorage;" in mobile_js
+        assert "mobileToken = apiClient.getToken() || '';" in mobile_js
+
+    def test_smart_import_ui_tabs_y_rollback_wiring(self):
+        index_html = open(_INDEX_HTML, encoding="utf-8").read()
+        smart_js = open(_SMART_IMPORT_JS, encoding="utf-8").read()
+
+        assert "id=\"siTabClassicBtn\"" in index_html
+        assert "id=\"siTabSmartBtn\"" in index_html
+        assert "id=\"importClassicTab\"" in index_html
+        assert "id=\"importSmartTab\"" in index_html
+        assert "id=\"siRollbackOnErrors\"" in index_html
+
+        assert "const isSmart = tab === 'smart' || tab === 'intelligent';" in smart_js
+        assert "document.getElementById('siTabClassicBtn')" in smart_js
+        assert "document.getElementById('siTabSmartBtn')" in smart_js
+        assert "formData.append('rollback_si_hay_errores'" in smart_js
 
     def test_css_tiene_estilos_sin_linea(self):
         css = open(_STYLE_CSS, encoding="utf-8").read()

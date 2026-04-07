@@ -658,6 +658,61 @@ class TestSmartImportEndpoints:
         assert body["datos"]["actualizados"] == 1
         assert body["datos"]["insertados"] == 1
 
+    def test_execute_rollback_on_error_reverts_changes(self):
+        db = TestingSessionLocal()
+        occupant = DatoImportado(
+            uuid=str(uuid.uuid4()),
+            nombre="Occupant Rollback",
+            email=f"{uuid.uuid4().hex}@occ-rb.com",
+            es_activo=True,
+        )
+        db.add(occupant)
+        db.flush()
+
+        line = LineaTelefonica(numero="VOIP-RB-9001", es_activa=True)
+        db.add(line)
+        db.flush()
+
+        db.add(
+            AgenteLineaAsignacion(
+                agente_id=occupant.id,
+                linea_id=line.id,
+                es_activa=True,
+            )
+        )
+        db.commit()
+        db.close()
+
+        fresh_email = f"{uuid.uuid4().hex}@rollback.com"
+        content = _csv_bytes([
+            {"nombre": "Nuevo Rollback", "email": fresh_email, "numero_voip": "VOIP-RB-9001"}
+        ])
+        mapping = json.dumps({"nombre": "nombre", "email": "email", "numero_voip": "numero_voip"})
+
+        response = client.post(
+            "/api/smart-import/execute",
+            files={"archivo": ("d.csv", content, "text/csv")},
+            data={
+                "delimitador": ",",
+                "mapeo": mapping,
+                "modo": "insertar_o_actualizar",
+                "confirmacion": "true",
+                "rollback_si_hay_errores": "true",
+            },
+            headers=self.headers,
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["datos"].get("rollback_aplicado") is True
+        assert body["datos"].get("insertados") == 0
+        assert body["datos"].get("actualizados") == 0
+        assert body["datos"].get("errores")
+
+        db = TestingSessionLocal()
+        created = db.query(DatoImportado).filter_by(email=fresh_email).first()
+        db.close()
+        assert created is None
+
     def test_execute_requires_capture_role(self):
         viewer_headers = {"Authorization": f"Bearer {_make_viewer_token()}"}
         content = _csv_bytes([{"nombre": "X"}])

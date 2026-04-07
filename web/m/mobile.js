@@ -1,14 +1,21 @@
-let mobileToken = localStorage.getItem('authToken') || '';
+let mobileToken = '';
 let mobileCurrentUser = null;
 let activeViewId = 'dashboardView';
 let datosPage = 1;
 let datosSearch = '';
 let alertasSoloPendientes = true;
 let qrScannerInstance = null;
+let qrScannerStartInFlight = false;
+let qrScannerStopInFlight = false;
+let qrScannerLibraryLoadingPromise = null;
 let qrLastDecodedText = '';
 let qrLastDecodedAtMs = 0;
 const datosLimit = 20;
 const QR_SCAN_DUPLICATE_WINDOW_MS = 2500;
+const QR_SCANNER_CDN_SOURCES = [
+    'https://unpkg.com/html5-qrcode@2.3.8',
+    'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js',
+];
 
 // Offline-sync modules
 let offlineDb = null;
@@ -107,9 +114,23 @@ function isInsideNativeApp() {
     return !!window.PhantomAndroid;
 }
 
+function getMobileSessionStorage() {
+    return isInsideNativeApp() ? sessionStorage : localStorage;
+}
+
+function clearPersistentAuthCacheForNativeRuntime() {
+    if (!isInsideNativeApp()) return;
+    try {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('currentUser');
+    } catch (_) {
+        // noop
+    }
+}
+
 function getCachedCurrentUser() {
     try {
-        const raw = localStorage.getItem('currentUser');
+        const raw = getMobileSessionStorage().getItem('currentUser');
         return raw ? JSON.parse(raw) : null;
     } catch (_) {
         return null;
@@ -326,6 +347,63 @@ function renderScannerState(active) {
     refs.qrCameraToggleBtn.textContent = active ? 'Detener camara' : 'Camara web';
 }
 
+function setQrScannerButtonBusy(isBusy) {
+    if (!refs.qrCameraToggleBtn) return;
+    refs.qrCameraToggleBtn.disabled = !!isBusy;
+}
+
+function loadQrScannerScript(src) {
+    return new Promise((resolve, reject) => {
+        const existing = document.querySelector(`script[data-qr-scanner-src="${src}"]`);
+        if (existing) {
+            if (typeof Html5Qrcode !== 'undefined') {
+                resolve(true);
+                return;
+            }
+            existing.addEventListener('load', () => resolve(true), { once: true });
+            existing.addEventListener('error', () => reject(new Error(`No se pudo cargar ${src}`)), { once: true });
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.dataset.qrScannerSrc = src;
+        script.onload = () => resolve(true);
+        script.onerror = () => reject(new Error(`No se pudo cargar ${src}`));
+        document.head.appendChild(script);
+    });
+}
+
+async function ensureQrScannerLibrary() {
+    if (typeof Html5Qrcode !== 'undefined') {
+        return true;
+    }
+    if (qrScannerLibraryLoadingPromise) {
+        return qrScannerLibraryLoadingPromise;
+    }
+
+    qrScannerLibraryLoadingPromise = (async () => {
+        for (const src of QR_SCANNER_CDN_SOURCES) {
+            try {
+                await loadQrScannerScript(src);
+                if (typeof Html5Qrcode !== 'undefined') {
+                    return true;
+                }
+            } catch (_) {
+                // Intentar siguiente CDN.
+            }
+        }
+        return typeof Html5Qrcode !== 'undefined';
+    })();
+
+    try {
+        return await qrScannerLibraryLoadingPromise;
+    } finally {
+        qrScannerLibraryLoadingPromise = null;
+    }
+}
+
 function populatePagoFromVerification(agente, verificacion) {
     refs.quickAgenteId.value = agente?.id ? String(agente.id) : '';
     refs.quickMonto.value = Number(verificacion?.cuota_semanal || verificacion?.saldo_acumulado || 0).toFixed(2);
@@ -375,9 +453,10 @@ function renderCameraOptions(cameras) {
 }
 
 async function loadAvailableCameras(silent = false) {
-    if (typeof Html5Qrcode === 'undefined') {
+    const scannerLibReady = await ensureQrScannerLibrary();
+    if (!scannerLibReady) {
         if (!silent) {
-            setQrCameraStatus('La librería de cámara no está disponible.', 'error');
+            setQrCameraStatus('No fue posible cargar el escaner QR. Verifica internet o usa la app Android.', 'error');
         }
         return [];
     }
@@ -412,8 +491,16 @@ async function loadAvailableCameras(silent = false) {
 }
 
 async function stopWebQrScanner() {
+    if (qrScannerStopInFlight) {
+        return;
+    }
+    qrScannerStopInFlight = true;
+    setQrScannerButtonBusy(true);
+
     if (!qrScannerInstance) {
         renderScannerState(false);
+        qrScannerStopInFlight = false;
+        setQrScannerButtonBusy(false);
         return;
     }
 
@@ -426,13 +513,21 @@ async function stopWebQrScanner() {
     qrScannerInstance = null;
     renderScannerState(false);
     setQrCameraStatus('Camara detenida.');
+    qrScannerStopInFlight = false;
+    setQrScannerButtonBusy(false);
 }
 
 async function startWebQrScanner() {
-    if (qrScannerInstance) return;
+    if (qrScannerInstance || qrScannerStartInFlight || qrScannerStopInFlight) return;
 
-    if (typeof Html5Qrcode === 'undefined') {
-        setQrCameraStatus('No se pudo cargar el modulo de camara.', 'error');
+    qrScannerStartInFlight = true;
+    setQrScannerButtonBusy(true);
+
+    const scannerLibReady = await ensureQrScannerLibrary();
+    if (!scannerLibReady) {
+        setQrCameraStatus('No se pudo cargar el escaner QR. Verifica internet o usa la app Android.', 'error');
+        qrScannerStartInFlight = false;
+        setQrScannerButtonBusy(false);
         return;
     }
 
@@ -451,6 +546,8 @@ async function startWebQrScanner() {
     } catch (error) {
         setQrCameraStatus(`No se concedio permiso de camara: ${error.message}`, 'error');
         renderScannerState(false);
+        qrScannerStartInFlight = false;
+        setQrScannerButtonBusy(false);
         return;
     }
 
@@ -500,7 +597,14 @@ async function startWebQrScanner() {
                 qrLastDecodedAtMs = now;
                 refs.qrCodeInput.value = normalized;
                 await stopWebQrScanner();
-                await verifyQr({ jumpToPagos: true, source: 'camera' });
+                try {
+                    await verifyQr({ jumpToPagos: true, source: 'camera' });
+                } catch (error) {
+                    setStatus(`Error QR: ${error.message}`);
+                    if (isConnectivityError(error)) {
+                        setQrCameraStatus('Sin red. Reintenta al restablecer conexion.', 'warning');
+                    }
+                }
             },
             () => {}
         );
@@ -515,6 +619,9 @@ async function startWebQrScanner() {
         } catch (_) {
             // noop
         }
+    } finally {
+        qrScannerStartInFlight = false;
+        setQrScannerButtonBusy(false);
     }
 }
 
@@ -597,7 +704,7 @@ async function loginMobile(event) {
         apiClient.setToken(result.access_token);
         mobileToken = result.access_token;
         mobileCurrentUser = await apiClient.getMe();
-        localStorage.setItem('currentUser', JSON.stringify(mobileCurrentUser));
+        getMobileSessionStorage().setItem('currentUser', JSON.stringify(mobileCurrentUser));
 
         setLoggedInUi(true);
         await refreshAllOperationalData();
@@ -887,7 +994,7 @@ async function bootWithToken() {
     try {
         apiClient.setToken(mobileToken);
         mobileCurrentUser = await apiClient.getMe();
-        localStorage.setItem('currentUser', JSON.stringify(mobileCurrentUser));
+        getMobileSessionStorage().setItem('currentUser', JSON.stringify(mobileCurrentUser));
         setLoggedInUi(true);
         await refreshAllOperationalData();
     } catch (error) {
@@ -909,6 +1016,12 @@ async function bootWithToken() {
 function logoutMobile() {
     stopWebQrScanner().catch(() => {});
     apiClient.clearToken();
+    try {
+        sessionStorage.removeItem('currentUser');
+        localStorage.removeItem('currentUser');
+    } catch (_) {
+        // noop
+    }
     mobileToken = '';
     mobileCurrentUser = null;
     setLoggedInUi(false);
@@ -925,6 +1038,7 @@ function logoutMobile() {
     refs.qrResult.classList.add('empty');
     refs.qrResult.textContent = 'Sin verificación';
     refs.sendToPagoBtn.style.display = 'none';
+    setQrScannerButtonBusy(false);
 
     setStatus('Sesión cerrada');
 }
@@ -1231,6 +1345,12 @@ function showConflictModal(review) {
 }
 
 (function bootstrap() {
+    if (typeof apiClient?.setAuthPersistence === 'function') {
+        apiClient.setAuthPersistence(isInsideNativeApp() ? 'session' : 'local');
+    }
+    clearPersistentAuthCacheForNativeRuntime();
+    mobileToken = apiClient.getToken() || '';
+
     clearDesktopOverride();
     const monday = isoDateMonday();
     refs.qrWeek.value = monday;

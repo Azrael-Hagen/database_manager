@@ -21,10 +21,16 @@ let _siFileContent = null;   // File object carried through all steps
 // ---------------------------------------------------------------------------
 
 function smartImportSetTab(tab) {
-    document.getElementById('importClassicTab').style.display  = tab === 'classic'     ? '' : 'none';
-    document.getElementById('importSmartTab').style.display    = tab === 'intelligent' ? '' : 'none';
-    document.getElementById('importTabClassic').classList.toggle('active', tab === 'classic');
-    document.getElementById('importTabSmart').classList.toggle('active', tab === 'intelligent');
+    const isSmart = tab === 'smart' || tab === 'intelligent';
+    const classicTab = document.getElementById('importClassicTab');
+    const smartTab = document.getElementById('importSmartTab');
+    const classicBtn = document.getElementById('siTabClassicBtn');
+    const smartBtn = document.getElementById('siTabSmartBtn');
+
+    if (classicTab) classicTab.style.display = isSmart ? 'none' : '';
+    if (smartTab) smartTab.style.display = isSmart ? '' : 'none';
+    if (classicBtn) classicBtn.classList.toggle('active', !isSmart);
+    if (smartBtn) smartBtn.classList.toggle('active', isSmart);
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +313,10 @@ function _siRenderPreviewSummary(preview) {
                 : '—';
 
             const cambiosCount = Object.keys(r.cambios_detectados || {}).length;
+            const cambiosDetalle = Object.entries(r.cambios_detectados || {})
+                .slice(0, 3)
+                .map(([field, delta]) => `${escapeHtml(field)}: ${escapeHtml(delta?.actual ?? '')} → ${escapeHtml(delta?.nuevo ?? '')}`)
+                .join('<br>');
             const campos = Object.entries(r.datos_mapeados)
                 .slice(0, 4)
                 .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`)
@@ -317,7 +327,7 @@ function _siRenderPreviewSummary(preview) {
                 <td><span style="color:${color};font-weight:bold">${escapeHtml(r.accion)}</span></td>
                 <td>${numCell}</td>
                 <td>${lineCell}</td>
-                <td>${cambiosCount}</td>
+                <td>${cambiosCount}${cambiosDetalle ? `<div style="margin-top:4px;color:#2c3e50;">${cambiosDetalle}</div>` : ''}</td>
                 <td style="font-size:0.9em">${campos}</td>
             </tr>`;
         });
@@ -346,6 +356,7 @@ async function siExecuteImport() {
     const statusEl = document.getElementById('siExecuteStatus');
     const confirmEl = document.getElementById('siConfirmExecute');
     const strictModeEl = document.getElementById('siStrictConflictMode');
+    const rollbackEl = document.getElementById('siRollbackOnErrors');
     if (!confirmEl?.checked) {
         statusEl.textContent = 'Debes confirmar la revisión de la vista previa para ejecutar.';
         statusEl.style.color = '#e74c3c';
@@ -364,6 +375,7 @@ async function siExecuteImport() {
     formData.append('modo', modeEl?.value || 'insertar');
     formData.append('confirmacion', 'true');
     formData.append('modo_estricto_conflictos', strictModeEl?.checked ? 'true' : 'false');
+    formData.append('rollback_si_hay_errores', rollbackEl?.checked ? 'true' : 'false');
 
     try {
         const resp = await fetch(`${API_URL}/smart-import/execute`, {
@@ -388,6 +400,14 @@ async function siExecuteImport() {
         }
 
         const d = body.datos;
+        if (d.rollback_aplicado) {
+            statusEl.innerHTML = `<span style="color:#e67e22">↩ Rollback aplicado:</span>
+                Se revirtieron cambios por errores detectados.
+                <br>Insertados revertidos: ${d.insertados_revertidos || 0}, actualizados revertidos: ${d.actualizados_revertidos || 0}
+                ${d.errores?.length ? `<br><span style="color:#e74c3c">${d.errores.length} error(es): ${d.errores.slice(0,3).join('; ')}</span>` : ''}`;
+            return;
+        }
+
         statusEl.innerHTML = `<span style="color:#2ecc71">✓ Completado:</span>
             ${d.insertados} insertado(s), ${d.actualizados} actualizado(s), ${d.omitidos} omitido(s)
             <br>${d.lineas_creadas || 0} línea(s) creada(s), ${d.conflictos_linea || 0} conflicto(s) de línea
@@ -406,6 +426,8 @@ async function siExecuteImport() {
             if (confirmReset) confirmReset.checked = false;
             const strictReset = document.getElementById('siStrictConflictMode');
             if (strictReset) strictReset.checked = false;
+            const rollbackReset = document.getElementById('siRollbackOnErrors');
+            if (rollbackReset) rollbackReset.checked = false;
             statusEl.textContent = '';
         }, 4000);
     } catch (err) {

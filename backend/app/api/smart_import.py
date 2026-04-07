@@ -182,6 +182,10 @@ async def execute_smart_import(
         "false",
         description="Si es 'true', bloquea toda la ejecucion cuando el preview detecta conflictos de linea.",
     ),
+    rollback_si_hay_errores: str = Form(
+        "false",
+        description="Si es 'true', revierte toda la transaccion cuando ocurre cualquier error por fila.",
+    ),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -235,6 +239,7 @@ async def execute_smart_import(
         )
 
     strict_conflicts = str(modo_estricto_conflictos).strip().lower() in {"true", "1", "si", "sí", "yes"}
+    rollback_on_error = str(rollback_si_hay_errores).strip().lower() in {"true", "1", "si", "sí", "yes"}
 
     all_rows = _parse_rows(content, archivo.filename, delimitador)
 
@@ -341,6 +346,23 @@ async def execute_smart_import(
             logger.error("Error procesando fila %d: %s", idx + 2, exc)
             errors.append(f"Fila {idx + 2}: {exc}")
 
+    if rollback_on_error and errors:
+        db.rollback()
+        return {
+            "status": "ok",
+            "datos": {
+                "insertados": 0,
+                "actualizados": 0,
+                "omitidos": skipped,
+                "conflictos_linea": conflictos_linea,
+                "lineas_creadas": 0,
+                "errores": errors,
+                "rollback_aplicado": True,
+                "insertados_revertidos": inserted,
+                "actualizados_revertidos": updated,
+            },
+        }
+
     db.commit()
     logger.info(
         "smart-import ejecutado por %s: insertados=%d, actualizados=%d, omitidos=%d, errores=%d",
@@ -360,5 +382,6 @@ async def execute_smart_import(
             "conflictos_linea": conflictos_linea,
             "lineas_creadas": lineas_creadas,
             "errores": errors,
+            "rollback_aplicado": False,
         },
     }

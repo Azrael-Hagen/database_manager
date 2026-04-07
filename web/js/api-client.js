@@ -6,11 +6,43 @@
 class APIClient {
     constructor(baseURL = `${window.location.origin}/api`) {
         this.baseURL = baseURL;
-        this.token = localStorage.getItem('authToken');
+        this.authPersistence = this._detectPreferredPersistence();
+        this.token = this._readStoredToken();
+    }
+
+    _detectPreferredPersistence() {
+        return window.PhantomAndroid ? 'session' : 'local';
+    }
+
+    _getStorage(mode = this.authPersistence) {
+        return mode === 'session' ? sessionStorage : localStorage;
+    }
+
+    _readStoredToken() {
+        try {
+            return this._getStorage().getItem('authToken');
+        } catch (_) {
+            return null;
+        }
+    }
+
+    setAuthPersistence(mode = 'local') {
+        const normalized = mode === 'session' ? 'session' : 'local';
+        this.authPersistence = normalized;
+        this.token = this._readStoredToken();
+
+        if (normalized === 'session') {
+            try {
+                // En modo nativo no dejamos credenciales durables entre cierres de app.
+                localStorage.removeItem('authToken');
+            } catch (_) {
+                // noop
+            }
+        }
     }
 
     getToken() {
-        return this.token || localStorage.getItem('authToken');
+        return this.token || this._readStoredToken();
     }
 
     _shouldInvalidateSession(status, detail = '') {
@@ -197,12 +229,17 @@ class APIClient {
 
     setToken(token) {
         this.token = token;
-        localStorage.setItem('authToken', token);
+        this._getStorage().setItem('authToken', token);
     }
 
     clearToken() {
         this.token = null;
-        localStorage.removeItem('authToken');
+        try {
+            localStorage.removeItem('authToken');
+            sessionStorage.removeItem('authToken');
+        } catch (_) {
+            // noop
+        }
     }
 
     // === DATOS ===

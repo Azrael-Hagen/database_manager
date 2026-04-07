@@ -505,6 +505,10 @@
                             <input type="checkbox" id="siStrictConflictMode">
                             Modo estricto: bloquear toda la importación si existe conflicto de línea.
                         </label>
+                        <label style="display:flex;align-items:center;gap:8px;margin:0 0 14px 0;">
+                            <input type="checkbox" id="siRollbackOnErrors">
+                            Rollback automático: revertir todos los cambios si ocurre cualquier error.
+                        </label>
                         <button type="button" class="btn btn-secondary" onclick="siSetStep(2)">← Atrás</button>
                         <button type="button" class="btn" onclick="siExecuteImport()" style="margin-left:8px;background:#2ecc71;">Importar Ahora</button>
                         <p id="siExecuteStatus" style="margin-top:10px;"></p>
