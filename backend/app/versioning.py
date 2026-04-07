@@ -18,10 +18,10 @@ DEFAULT_VERSION_INFO: dict[str, Any] = {
     "channel": "production",
     "current": {
         "version": "1.5.0",
-        "revision": 7,
-        "release_date": "2026-04-03",
-        "codename": "Line Release Guardrails",
-        "summary": "Correccion de liberar lineas con guardas de flujo y compatibilidad de IDs en datos de agente",
+        "revision": 8,
+        "release_date": "2026-04-07",
+        "codename": "Operational Hardening Sweep",
+        "summary": "Validacion completa del flujo de lineas, hardening web/mobile y paginacion segura en listados QR",
     },
     "history": [],
 }

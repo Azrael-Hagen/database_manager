@@ -877,6 +877,28 @@ class TestFrontendAssets:
         assert "async registrarTemporal(" in api_js
         assert "async getSelfServiceResumen()" in api_js
 
+    def test_lineas_ui_normaliza_linea_id_en_acciones(self):
+        js = open(_MAIN_JS, encoding="utf-8").read()
+        assert "function resolveLineaId(linea)" in js
+        assert "const safeLineaId = resolveLineaId(linea);" in js
+        assert "if (!safeLineaId) {" in js
+        assert "onclick=\"liberarLinea(${safeLineaId})\"" in js
+
+    def test_api_client_bloquea_segmentos_invalidos_en_endpoint(self):
+        api_js = open(_API_CLIENT_JS, encoding="utf-8").read()
+        assert "_containsInvalidPathSegment(endpoint)" in api_js
+        assert "segment === 'undefined' || segment === 'null' || segment === 'nan'" in api_js
+        assert "throw new Error('Validación fallida: endpoint inválido')" in api_js
+
+    def test_qr_api_listados_soportan_paginacion_basica(self):
+        qr_api = open(os.path.join(_REPO_ROOT, "backend", "app", "api", "qr.py"), encoding="utf-8").read()
+        assert "def listar_agentes_sin_linea(" in qr_api
+        assert "skip: int = Query(0, ge=0)" in qr_api
+        assert "limit: int = Query(500, ge=1, le=1000)" in qr_api
+        assert ".offset(skip).limit(limit)" in qr_api
+        assert "LIMIT :limit" in qr_api
+        assert "OFFSET :skip" in qr_api
+
     def test_qr_scan_tiene_continuidad_y_antirebote(self):
         js = open(_MAIN_JS, encoding="utf-8").read()
         assert "const QR_SCAN_DUPLICATE_WINDOW_MS" in js

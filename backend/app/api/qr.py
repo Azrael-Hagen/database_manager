@@ -334,7 +334,12 @@ def _sync_extensions_inventory(db: Session) -> dict[str, int]:
         logger.warning("No se pudo sincronizar inventario extensions_pbx; se mantiene inventario local activo", exc_info=exc)
         source_numbers = []
     source_set = set(source_numbers)
-    existing_lines = {row.numero: row for row in db.query(LineaTelefonica).all()}
+    existing_lines: dict[str, LineaTelefonica] = {}
+    if source_numbers:
+        existing_lines = {
+            row.numero: row
+            for row in db.query(LineaTelefonica).filter(LineaTelefonica.numero.in_(source_numbers)).all()
+        }
     now = _utcnow()
     created = 0
     updated = 0
@@ -396,8 +401,13 @@ def _sync_extensions_inventory(db: Session) -> dict[str, int]:
 
     ladas_created = 0
     ladas_reactivated = 0
-    ladas_known = {row.codigo: row for row in db.query(LadaCatalogo).all()}
     source_ladas = sorted({numero[:3] for numero in source_numbers if len(numero) >= 3})
+    ladas_known: dict[str, LadaCatalogo] = {}
+    if source_ladas:
+        ladas_known = {
+            row.codigo: row
+            for row in db.query(LadaCatalogo).filter(LadaCatalogo.codigo.in_(source_ladas)).all()
+        }
     for lada_code in source_ladas:
         existing_lada = ladas_known.get(lada_code)
         if existing_lada is None:
@@ -2766,6 +2776,8 @@ async def listar_agentes_extension_estado_pago(
 @router.get("/agentes/sin-linea")
 async def listar_agentes_sin_linea(
     search: str | None = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=1000),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -2793,7 +2805,7 @@ async def listar_agentes_sin_linea(
             | DatoImportado.telefono.ilike(term)
         )
 
-    agentes = query.order_by(DatoImportado.nombre.asc()).limit(500).all()
+    agentes = query.order_by(DatoImportado.nombre.asc()).offset(skip).limit(limit).all()
 
     data = [
         {
@@ -2807,12 +2819,14 @@ async def listar_agentes_sin_linea(
         for ag in agentes
     ]
 
-    return {"status": "success", "total": len(data), "data": data}
+    return {"status": "success", "total": len(data), "skip": skip, "limit": limit, "data": data}
 
 
 @router.get("/agentes/estado")
 async def listar_agentes_estado(
     search: str | None = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=1000),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -2825,6 +2839,8 @@ async def listar_agentes_estado(
     if search:
         search_clause = " AND (d.nombre LIKE :term OR d.telefono LIKE :term) "
         params["term"] = f"%{search.strip()}%"
+    params["skip"] = int(skip)
+    params["limit"] = int(limit)
 
     rows = db.execute(
         text(
@@ -2853,7 +2869,8 @@ async def listar_agentes_estado(
               {search_clause}
             GROUP BY d.id, d.uuid, d.nombre, d.telefono, d.datos_adicionales, d.qr_filename, d.fecha_creacion
             ORDER BY d.nombre ASC
-            LIMIT 500
+            LIMIT :limit
+            OFFSET :skip
             """
         ),
         params,
@@ -2888,6 +2905,8 @@ async def listar_agentes_estado(
     return {
         "status": "success",
         "total": len(data),
+        "skip": skip,
+        "limit": limit,
         "data": data,
     }
 
@@ -2945,6 +2964,8 @@ async def generar_qr_masivo_sin_qr(
 async def listar_agentes_sin_imprimir(
     solo_activos: bool = Query(True),
     estado: str = Query("sin_imprimir", description="sin_imprimir | impresos | todos"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=1000),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -2967,7 +2988,7 @@ async def listar_agentes_sin_imprimir(
     # estado="todos" => no extra filter
     if solo_activos:
         query = query.filter(DatoImportado.es_activo.is_(True))
-    agentes = query.order_by(DatoImportado.nombre.asc()).all()
+    agentes = query.order_by(DatoImportado.nombre.asc()).offset(skip).limit(limit).all()
     result = []
     for a in agentes:
         extras = _safe_json_object(a.datos_adicionales)
@@ -2981,7 +3002,7 @@ async def listar_agentes_sin_imprimir(
             "qr_impreso": bool(a.qr_impreso),
             "qr_impreso_at": a.qr_impreso_at.isoformat() if a.qr_impreso_at else None,
         })
-    return {"total": len(result), "agentes": result}
+    return {"total": len(result), "skip": skip, "limit": limit, "agentes": result}
 
 
 @router.post("/agentes/marcar-impreso")
@@ -3110,6 +3131,8 @@ async def exportar_qr_agentes_pdf(
 async def listar_recibos_pago(
     agente_id: int | None = Query(None),
     include_expired: bool = Query(False),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(300, ge=1, le=1000),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -3122,7 +3145,7 @@ async def listar_recibos_pago(
     if not include_expired:
         query = query.filter(ReciboPago.expira_en >= _utcnow())
 
-    rows = query.order_by(ReciboPago.generado_en.desc()).limit(300).all()
+    rows = query.order_by(ReciboPago.generado_en.desc()).offset(skip).limit(limit).all()
     data = []
     for row in rows:
         payload = _safe_json_object(row.contenido_json)
@@ -3142,7 +3165,7 @@ async def listar_recibos_pago(
             "expira_en": row.expira_en.isoformat() if row.expira_en else None,
             "impresiones": int(row.impresiones_count or 0),
         })
-    return {"status": "success", "data": data}
+    return {"status": "success", "skip": skip, "limit": limit, "data": data}
 
 
 @router.get("/recibos/{token_recibo}")
@@ -3313,6 +3336,7 @@ async def verificar_publico_qr_seguro(
             "telefono": agente.telefono,
             "tiene_asignacion": True,
             "linea": linea.numero if linea else None,
+            "linea_estado": "asignada" if linea else "sin_linea",
         },
         "semana_inicio": semana_ref.isoformat(),
         "pagado": bool(pago.pagado) if pago else False,
@@ -3356,9 +3380,9 @@ async def verificar_publico_por_uuid(
     payload = {
         "status": "success",
         "agente": {
+            "nombre": agente.nombre,
             "id": agente.id,
             "uuid": agente.uuid,
-            "nombre": agente.nombre,
             "telefono": agente.telefono,
             "tiene_asignacion": bool(linea),
             "linea": linea.numero if linea else None,

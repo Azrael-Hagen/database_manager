@@ -2,6 +2,14 @@
 
 Acceso previsto solo desde la maquina servidor mediante la API interna de versionado.
 
+## 1.5.0-rev8 - 2026-04-07
+- Se valida en entorno real la regresion prioritaria del flujo de lineas: 5 pruebas objetivo en verde con Python 3.14.
+- Se endurece frontend web para normalizar `linea_id` y bloquear acciones cuando el dato no es consistente.
+- API client agrega guardia transversal para evitar endpoints malformados con segmentos `undefined`, `null` o `nan`.
+- Mobile valida `agenteId` positivo antes de consultar resumen de pago y evita requests inconsistentes.
+- Se agrega paginacion segura a listados de agentes/QR/recibos y se optimiza la sincronizacion de inventario de lineas/ladas.
+- Se reconstruye y revalida el bloque publico de verificacion QR para dejar el modulo limpio tras la refactorizacion.
+
 ## 1.5.0-rev7 - 2026-04-03
 - Se corrige el flujo de "Liberar líneas" en Cambios y Bajas para evitar requests con `linea_id=undefined`.
 - Se normaliza resolucion de ID de linea en frontend (`id`, `linea_id`, `linea.id`) con validacion previa.

@@ -3,12 +3,25 @@
   "channel": "production",
   "current": {
     "version": "1.5.0",
-    "revision": 7,
-    "release_date": "2026-04-03",
-    "codename": "Line Release Guardrails",
-    "summary": "Correccion de liberar lineas con guardas de flujo y compatibilidad de IDs en datos de agente"
+    "revision": 8,
+    "release_date": "2026-04-07",
+    "codename": "Operational Hardening Sweep",
+    "summary": "Validacion completa del flujo de lineas, hardening web/mobile y paginacion segura en listados QR"
   },
   "history": [
+    {
+      "version": "1.5.0",
+      "revision": 8,
+      "release_date": "2026-04-07",
+      "codename": "Operational Hardening Sweep",
+      "changes": [
+        "Se valida en entorno real la regresion del flujo liberar lineas con 5 pruebas objetivo en verde.",
+        "Se endurece web y mobile para bloquear IDs invalidos antes de consumir endpoints operativos.",
+        "Se agrega paginacion segura a listados masivos de QR y recibos sin romper compatibilidad de respuesta.",
+        "Se optimiza la sincronizacion de inventario de lineas y ladas para evitar cargas completas innecesarias.",
+        "Se corrige y revalida el bloque publico de verificacion QR afectado durante la refactorizacion."
+      ]
+    },
     {
       "version": "1.5.0",
       "revision": 7,

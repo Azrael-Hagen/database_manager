@@ -53,10 +53,22 @@ class APIClient {
         return n;
     }
 
+    _containsInvalidPathSegment(endpoint) {
+        const safeEndpoint = String(endpoint || '');
+        const segments = safeEndpoint
+            .split('/')
+            .map((segment) => segment.trim().toLowerCase())
+            .filter(Boolean);
+        return segments.some((segment) => segment === 'undefined' || segment === 'null' || segment === 'nan');
+    }
+
     /**
      * Realizar solicitud HTTP
      */
     async request(method, endpoint, data = null) {
+        if (this._containsInvalidPathSegment(endpoint)) {
+            throw new Error('Validación fallida: endpoint inválido');
+        }
         const url = `${this.baseURL}${endpoint}`;
         const options = {
             method,

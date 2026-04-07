@@ -3580,6 +3580,7 @@ function renderLineasEstado(lineas) {
     html += '</tr></thead><tbody>';
 
     lineas.forEach(linea => {
+        const safeLineaId = resolveLineaId(linea);
         const ocupada = !!linea.ocupada;
         const agente = linea.agente ? `${getAgentDisplayName(linea.agente)} (ID ${linea.agente.id})` : '-';
         const estado = ocupada ? '<span class="payment-pill unpaid">OCUPADA</span>' : '<span class="payment-pill paid">LIBRE</span>';
@@ -3587,14 +3588,18 @@ function renderLineasEstado(lineas) {
         const conexion = String(linea.estado_conexion || 'DESCONOCIDA');
         const ultimoUso = formatDisplayDateTime(linea.fecha_ultimo_uso);
         const actions = [];
-        if (ocupada) {
-            actions.push(`<button class="btn btn-small btn-danger" onclick="liberarLinea(${linea.id})">Liberar</button>`);
+        if (!safeLineaId) {
+            actions.push('<span class="hint">ID inválido</span>');
+        } else if (ocupada) {
+            actions.push(`<button class="btn btn-small btn-danger" onclick="liberarLinea(${safeLineaId})">Liberar</button>`);
         } else {
             actions.push('<span class="hint">Disponible</span>');
         }
-        actions.push(`<button class="btn btn-small btn-secondary" onclick="abrirGestionLinea(${linea.id})">Editar</button>`);
+        if (safeLineaId) {
+            actions.push(`<button class="btn btn-small btn-secondary" onclick="abrirGestionLinea(${safeLineaId})">Editar</button>`);
+        }
         html += `<tr>
-            <td>${linea.id}</td>
+            <td>${safeLineaId ?? '-'}</td>
             <td>${linea.numero}</td>
             <td>${linea.lada || '-'}</td>
             <td>${linea.tipo || '-'}</td>
@@ -3608,6 +3613,12 @@ function renderLineasEstado(lineas) {
     });
     html += '</tbody></table>';
     container.innerHTML = html;
+}
+
+function resolveLineaId(linea) {
+    const raw = linea?.id ?? linea?.linea_id ?? linea?.linea?.id ?? null;
+    const normalized = Number(raw);
+    return Number.isInteger(normalized) && normalized > 0 ? normalized : null;
 }
 
 function toDateTimeLocalValue(value) {
@@ -3656,6 +3667,7 @@ function renderLineasGestion(lineas) {
     html += '</tr></thead><tbody>';
 
     lineas.forEach(linea => {
+        const safeLineaId = resolveLineaId(linea);
         const ocupada = !!linea.ocupada;
         const agente = linea.agente ? `${getAgentDisplayName(linea.agente)} (ID ${linea.agente.id})` : '-';
         const estado = ocupada ? '<span class="payment-pill unpaid">OCUPADA</span>' : '<span class="payment-pill paid">LIBRE</span>';
@@ -3664,18 +3676,22 @@ function renderLineasGestion(lineas) {
         const conexion = String(linea.estado_conexion || 'DESCONOCIDA');
         const ultimoUso = formatDisplayDateTime(linea.fecha_ultimo_uso);
         const actions = [];
-        actions.push(`<button type="button" class="btn btn-small" onclick="editarLineaGestion(${linea.id})">Editar</button>`);
-        if (ocupada) {
-            actions.push(`<button type="button" class="btn btn-small btn-danger" onclick="liberarLinea(${linea.id})">Liberar</button>`);
-            if (linea.agente?.id) {
-                actions.push(`<button type="button" class="btn btn-small btn-secondary" onclick="mostrarQrParaAgente(${linea.agente.id}, '${String(getAgentDisplayName(linea.agente)).replace(/'/g, "\\'")}')">QR Agente</button>`);
-            }
+        if (!safeLineaId) {
+            actions.push('<span class="hint">ID inválido</span>');
         } else {
-            actions.push(`<button type="button" class="btn btn-small btn-secondary" onclick="desactivarLineaGestion(${linea.id})">Desactivar</button>`);
+            actions.push(`<button type="button" class="btn btn-small" onclick="editarLineaGestion(${safeLineaId})">Editar</button>`);
+            if (ocupada) {
+                actions.push(`<button type="button" class="btn btn-small btn-danger" onclick="liberarLinea(${safeLineaId})">Liberar</button>`);
+                if (linea.agente?.id) {
+                    actions.push(`<button type="button" class="btn btn-small btn-secondary" onclick="mostrarQrParaAgente(${linea.agente.id}, '${String(getAgentDisplayName(linea.agente)).replace(/'/g, "\\'")}')">QR Agente</button>`);
+                }
+            } else {
+                actions.push(`<button type="button" class="btn btn-small btn-secondary" onclick="desactivarLineaGestion(${safeLineaId})">Desactivar</button>`);
+            }
         }
 
         html += `<tr>
-            <td>${linea.id}</td>
+            <td>${safeLineaId ?? '-'}</td>
             <td>${escapeHtml(linea.numero || '-')}</td>
             <td>${escapeHtml(linea.lada || '-')}</td>
             <td>${escapeHtml(linea.tipo || '-')}</td>

@@ -333,15 +333,16 @@ function populatePagoFromVerification(agente, verificacion) {
 }
 
 async function loadPagoResumen(agenteId, semana = '') {
-    if (!agenteId) {
+    const parsedAgenteId = Number(agenteId);
+    if (!Number.isInteger(parsedAgenteId) || parsedAgenteId <= 0) {
         renderPagoResumen(null);
         return;
     }
 
-    const cacheKey = `pago-resumen:${agenteId}:${semana || '-'}`;
+    const cacheKey = `pago-resumen:${parsedAgenteId}:${semana || '-'}`;
 
     try {
-        const res = await apiClient.getResumenPagoAgente(agenteId, semana);
+        const res = await apiClient.getResumenPagoAgente(parsedAgenteId, semana);
         const payload = res?.data || null;
         renderPagoResumen(payload);
         saveSnapshot(cacheKey, payload);
