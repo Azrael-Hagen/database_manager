@@ -563,7 +563,7 @@ async def maintenance_overview(
         )
     ).mappings().all()
     protected = {
-        "usuarios", "agentes_operativos", "import_logs", "auditoria_acciones", "config_sistema",
+        "usuarios", "agentes_operativos", "datos_importados", "import_logs", "auditoria_acciones", "config_sistema",
         "pagos_semanales", "lineas_telefonicas", "agente_linea_asignaciones", "alertas_pago", "recibos_pago",
         "ladas_catalogo", "agente_lada_preferencias", "esquemas_base_datos"
     }
@@ -656,7 +656,7 @@ async def purge_temporary_objects(
         if include_empty and table_type == "BASE TABLE" and not should_drop:
             row_count = int(db.execute(text(f"SELECT COUNT(*) FROM `{name}`")).scalar() or 0)
             should_drop = row_count == 0 and lower_name not in {
-                "usuarios", "agentes_operativos", "import_logs", "auditoria_acciones", "config_sistema",
+                "usuarios", "agentes_operativos", "datos_importados", "import_logs", "auditoria_acciones", "config_sistema",
                 "pagos_semanales", "lineas_telefonicas", "agente_linea_asignaciones", "alertas_pago", "recibos_pago",
                 "ladas_catalogo", "agente_lada_preferencias", "esquemas_base_datos"
             }

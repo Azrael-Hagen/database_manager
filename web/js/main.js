@@ -1753,7 +1753,10 @@ async function applyQrDeepLinkIfPresent() {
 }
 
 function isAgentDataTableContext(dbName, tableName) {
-    return tableName === 'datos_importados' && dbName === 'database_manager';
+    return dbName === 'database_manager' && (
+        tableName === 'agentes_operativos' ||
+        tableName === 'datos_importados'
+    );
 }
 
 // === DASHBOARD ===
@@ -2009,6 +2012,8 @@ async function cargarTablas() {
 
         if (prevTable && tables.includes(prevTable)) {
             tableSelect.value = prevTable;
+        } else if (tables.includes('agentes_operativos')) {
+            tableSelect.value = 'agentes_operativos';
         } else if (tables.includes('datos_importados')) {
             tableSelect.value = 'datos_importados';
         } else if (tables.length) {
@@ -2022,7 +2027,7 @@ async function cargarTablas() {
     }
 }
 
-async function cargarTodosLosDatos() {
+async function cargarTodosLosDatos(allowRecovery = true) {
     try {
         const dbName = document.getElementById('datosDatabaseSelect')?.value || '';
         const tableName = document.getElementById('tablasSelect')?.value || '';
@@ -2046,6 +2051,25 @@ async function cargarTodosLosDatos() {
         mostrarDatos(rows);
     } catch (error) {
         console.error('Error:', error);
+        // Recuperacion automatica para tablas canonicas de agentes en migration legacy.
+        if (allowRecovery && (document.getElementById('datosDatabaseSelect')?.value || '') === 'database_manager') {
+            const tableSelect = document.getElementById('tablasSelect');
+            const current = tableSelect?.value || '';
+            const fallback = current === 'agentes_operativos' ? 'datos_importados' : (current === 'datos_importados' ? 'agentes_operativos' : '');
+            if (fallback) {
+                try {
+                    const tablesResult = await apiClient.getTables('database_manager');
+                    const tables = tablesResult.data || [];
+                    if (tableSelect && tables.includes(fallback)) {
+                        tableSelect.value = fallback;
+                        await cargarTodosLosDatos(false);
+                        return;
+                    }
+                } catch (_) {
+                    // noop: keep original error message below
+                }
+            }
+        }
         alert('Error al cargar todos los datos: ' + error.message);
     }
 }
@@ -2082,7 +2106,7 @@ async function consultarUnDato() {
         
         // Si es una tabla de agentes (datos_importados) y tiene QR, mostrarlo
         const registro = rows[0];
-        if (tableName === 'datos_importados' && registro.id && registro.qr_filename) {
+        if (isAgentDataTableContext(dbName, tableName) && registro.id && registro.qr_filename) {
             setTimeout(() => {
                 mostrarQrParaAgente(registro.id, registro.nombre || 'Agente');
             }, 500);
@@ -2177,7 +2201,7 @@ function mostrarDatos(datos) {
     const dbName = document.getElementById('datosDatabaseSelect')?.value || '';
     const tableName = document.getElementById('tablasSelect')?.value || '';
     const editableContext = isAgentDataTableContext(dbName, tableName);
-    const isAgentTable = tableName === 'datos_importados' || tableName === 'registro_agentes';
+    const isAgentTable = isAgentDataTableContext(dbName, tableName) || tableName === 'registro_agentes';
     
     let html = '<table class="data-table"><thead><tr>';
 
@@ -2223,7 +2247,9 @@ function mostrarDatos(datos) {
             actionHtml += `</td></tr>`;
             html += actionHtml;
         } else {
-            const roReason = tableName === 'datos_importados' ? 'Solo lectura en esta base. Para editar/eliminar usa database_manager.datos_importados.' : 'Solo lectura';
+            const roReason = (tableName === 'datos_importados' || tableName === 'agentes_operativos')
+                ? 'Solo lectura en esta base. Para editar/eliminar usa database_manager.agentes_operativos.'
+                : 'Solo lectura';
             html += `<td><span class="hint">${roReason}</span></td></tr>`;
         }
     });
