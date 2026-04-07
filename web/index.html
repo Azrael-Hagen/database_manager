@@ -497,6 +497,14 @@
                                 <option value="actualizar">Solo actualizar existentes (omitir nuevos)</option>
                             </select>
                         </div>
+                        <div class="form-group" style="max-width:420px;">
+                            <label>Resolución de conflicto de línea VoIP:</label>
+                            <select id="siResolucionConflictoLinea">
+                                <option value="conservar">Conservar ocupante actual (marcar conflicto)</option>
+                                <option value="reasignar">Reasignar línea al agente importado</option>
+                                <option value="liberar">Liberar línea ocupada (sin asignarla al importado)</option>
+                            </select>
+                        </div>
                         <label style="display:flex;align-items:center;gap:8px;margin:10px 0 14px 0;">
                             <input type="checkbox" id="siConfirmExecute">
                             Confirmo que revisé la vista previa y acepto aplicar estos cambios.

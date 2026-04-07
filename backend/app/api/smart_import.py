@@ -25,6 +25,7 @@ from app.importers.smart_importer import (
     apply_line_plan,
     analyze_file,
     apply_mapping,
+    CONFLICT_RESOLUTION_MODES,
     find_existing_agent,
     preview_import,
 )
@@ -112,6 +113,7 @@ async def preview_import_file(
         description='JSON: {"Columna Archivo": "campo_canonico", ...}',
     ),
     header_fila: int = Form(0),
+    resolucion_conflicto_linea: str = Form("conservar"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -147,6 +149,13 @@ async def preview_import_file(
             detail="El campo 'mapeo' debe ser un objeto JSON (dict).",
         )
 
+    resolucion_conflicto_linea = str(resolucion_conflicto_linea or "conservar").strip().lower()
+    if resolucion_conflicto_linea not in CONFLICT_RESOLUTION_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"resolucion_conflicto_linea inválida: '{resolucion_conflicto_linea}'. Válidas: {sorted(CONFLICT_RESOLUTION_MODES)}",
+        )
+
     content = await archivo.read()
     if len(content) > _MAX_FILE_BYTES:
         raise HTTPException(
@@ -160,6 +169,7 @@ async def preview_import_file(
         mapping,
         delimiter=delimitador,
         header_fila=header_fila,
+        conflict_resolution_mode=resolucion_conflicto_linea,
         db=db,
     )
     return {"status": "ok", "datos": result}
@@ -192,6 +202,10 @@ async def execute_smart_import(
     rollback_si_hay_errores: str = Form(
         "false",
         description="Si es 'true', revierte toda la transaccion cuando ocurre cualquier error por fila.",
+    ),
+    resolucion_conflicto_linea: str = Form(
+        "conservar",
+        description="conservar|reasignar|liberar: estrategia ante conflicto de línea VOIP ocupada.",
     ),
     header_fila: int = Form(0),
     current_user: dict = Depends(get_current_user),
@@ -248,6 +262,12 @@ async def execute_smart_import(
 
     strict_conflicts = str(modo_estricto_conflictos).strip().lower() in {"true", "1", "si", "sí", "yes"}
     rollback_on_error = str(rollback_si_hay_errores).strip().lower() in {"true", "1", "si", "sí", "yes"}
+    resolucion_conflicto_linea = str(resolucion_conflicto_linea or "conservar").strip().lower()
+    if resolucion_conflicto_linea not in CONFLICT_RESOLUTION_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"resolucion_conflicto_linea inválida: '{resolucion_conflicto_linea}'. Válidas: {sorted(CONFLICT_RESOLUTION_MODES)}",
+        )
 
     all_rows = _parse_rows(content, archivo.filename, delimitador, header=header_fila)
 
@@ -258,6 +278,7 @@ async def execute_smart_import(
             mapping,
             delimiter=delimitador,
             header_fila=header_fila,
+            conflict_resolution_mode=resolucion_conflicto_linea,
             db=db,
         )
         conflict_rows = [
@@ -290,6 +311,8 @@ async def execute_smart_import(
     errors: list[str] = []
     conflictos_linea = 0
     lineas_creadas = 0
+    lineas_reasignadas_forzadas = 0
+    lineas_liberadas_conflicto = 0
 
     for idx, raw_row in enumerate(all_rows):
         mapped = apply_mapping(raw_row, mapping)
@@ -309,7 +332,12 @@ async def execute_smart_import(
 
             if existing and modo in {"actualizar", "insertar_o_actualizar"}:
                 apply_agent_row_changes(existing, mapped, db)
-                line_result = apply_line_plan(existing.id, mapped, db)
+                line_result = apply_line_plan(
+                    existing.id,
+                    mapped,
+                    db,
+                    conflict_resolution_mode=resolucion_conflicto_linea,
+                )
                 if line_result.get("accion") == "conflicto_linea_ocupada":
                     conflictos_linea += 1
                     errors.append(
@@ -317,6 +345,10 @@ async def execute_smart_import(
                     )
                 if line_result.get("accion") == "crear_y_asignar":
                     lineas_creadas += 1
+                if line_result.get("accion") == "reasignar_forzado":
+                    lineas_reasignadas_forzadas += 1
+                if line_result.get("accion") == "liberar_conflicto":
+                    lineas_liberadas_conflicto += 1
                 updated += 1
             else:
                 # Insert new agent
@@ -341,7 +373,12 @@ async def execute_smart_import(
                 )
                 db.add(new_agent)
                 db.flush()
-                line_result = apply_line_plan(new_agent.id, mapped, db)
+                line_result = apply_line_plan(
+                    new_agent.id,
+                    mapped,
+                    db,
+                    conflict_resolution_mode=resolucion_conflicto_linea,
+                )
                 if line_result.get("accion") == "conflicto_linea_ocupada":
                     conflictos_linea += 1
                     errors.append(
@@ -349,6 +386,10 @@ async def execute_smart_import(
                     )
                 if line_result.get("accion") == "crear_y_asignar":
                     lineas_creadas += 1
+                if line_result.get("accion") == "reasignar_forzado":
+                    lineas_reasignadas_forzadas += 1
+                if line_result.get("accion") == "liberar_conflicto":
+                    lineas_liberadas_conflicto += 1
                 inserted += 1
 
         except Exception as exc:
@@ -365,6 +406,8 @@ async def execute_smart_import(
                 "omitidos": skipped,
                 "conflictos_linea": conflictos_linea,
                 "lineas_creadas": 0,
+                "lineas_reasignadas_forzadas": 0,
+                "lineas_liberadas_conflicto": 0,
                 "errores": errors,
                 "rollback_aplicado": True,
                 "insertados_revertidos": inserted,
@@ -398,6 +441,8 @@ async def execute_smart_import(
             "omitidos": skipped,
             "conflictos_linea": conflictos_linea,
             "lineas_creadas": lineas_creadas,
+            "lineas_reasignadas_forzadas": lineas_reasignadas_forzadas,
+            "lineas_liberadas_conflicto": lineas_liberadas_conflicto,
             "errores": errors,
             "rollback_aplicado": False,
         },

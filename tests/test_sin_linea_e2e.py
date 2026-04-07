@@ -991,11 +991,13 @@ class TestFrontendAssets:
         assert "id=\"importClassicTab\"" in index_html
         assert "id=\"importSmartTab\"" in index_html
         assert "id=\"siRollbackOnErrors\"" in index_html
+        assert "id=\"siResolucionConflictoLinea\"" in index_html
 
         assert "const isSmart = tab === 'smart' || tab === 'intelligent';" in smart_js
         assert "document.getElementById('siTabClassicBtn')" in smart_js
         assert "document.getElementById('siTabSmartBtn')" in smart_js
         assert "formData.append('rollback_si_hay_errores'" in smart_js
+        assert "formData.append('resolucion_conflicto_linea'" in smart_js
 
     def test_css_tiene_estilos_sin_linea(self):
         css = open(_STYLE_CSS, encoding="utf-8").read()

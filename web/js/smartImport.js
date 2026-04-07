@@ -260,12 +260,14 @@ async function siPreview() {
 
     const mapping = _siGetCurrentMapping();
     const delimInput = document.getElementById('siDelimitador');
+    const conflictModeEl = document.getElementById('siResolucionConflictoLinea');
 
     const formData = new FormData();
     formData.append('archivo', _siFileContent);
     formData.append('delimitador', delimInput?.value || ',');
     formData.append('mapeo', JSON.stringify(mapping));
     formData.append('header_fila', String(_siAnalysis?.detected_header_row ?? 0));
+    formData.append('resolucion_conflicto_linea', conflictModeEl?.value || 'conservar');
 
     try {
         const resp = await fetch(`${API_URL}/smart-import/preview`, {
@@ -361,6 +363,8 @@ function _siRenderPreviewSummary(preview) {
             const lineCell = linePlan === 'sin_cambio' ? '<span style="color:#2ecc71">sin cambio</span>'
                 : linePlan === 'conflicto_linea_ocupada' ? '<span style="color:#e67e22">conflicto</span>'
                 : linePlan === 'crear_y_asignar' ? '<span style="color:#2980b9">crear+asignar</span>'
+                : linePlan === 'reasignar_forzado' ? '<span style="color:#8e44ad">reasignar (forzado)</span>'
+                : linePlan === 'liberar_conflicto' ? '<span style="color:#c0392b">liberar conflicto</span>'
                 : linePlan === 'reasignar_existente' ? '<span style="color:#16a085">reasignar</span>'
                 : '—';
 
@@ -409,6 +413,7 @@ async function siExecuteImport() {
     const confirmEl = document.getElementById('siConfirmExecute');
     const strictModeEl = document.getElementById('siStrictConflictMode');
     const rollbackEl = document.getElementById('siRollbackOnErrors');
+    const conflictModeEl = document.getElementById('siResolucionConflictoLinea');
     if (!confirmEl?.checked) {
         statusEl.textContent = 'Debes confirmar la revisión de la vista previa para ejecutar.';
         statusEl.style.color = '#e74c3c';
@@ -429,6 +434,7 @@ async function siExecuteImport() {
     formData.append('confirmacion', 'true');
     formData.append('modo_estricto_conflictos', strictModeEl?.checked ? 'true' : 'false');
     formData.append('rollback_si_hay_errores', rollbackEl?.checked ? 'true' : 'false');
+    formData.append('resolucion_conflicto_linea', conflictModeEl?.value || 'conservar');
 
     try {
         const resp = await fetch(`${API_URL}/smart-import/execute`, {
@@ -463,7 +469,7 @@ async function siExecuteImport() {
 
         statusEl.innerHTML = `<span style="color:#2ecc71">✓ Completado:</span>
             ${d.insertados} insertado(s), ${d.actualizados} actualizado(s), ${d.omitidos} omitido(s)
-            <br>${d.lineas_creadas || 0} línea(s) creada(s), ${d.conflictos_linea || 0} conflicto(s) de línea
+            <br>${d.lineas_creadas || 0} línea(s) creada(s), ${d.lineas_reasignadas_forzadas || 0} reasignada(s), ${d.lineas_liberadas_conflicto || 0} liberada(s), ${d.conflictos_linea || 0} conflicto(s) pendiente(s)
             ${d.errores?.length ? `<br><span style="color:#e74c3c">${d.errores.length} error(es): ${d.errores.slice(0,3).join('; ')}</span>` : ''}`;
 
         // Reset wizard for a new import
@@ -481,6 +487,8 @@ async function siExecuteImport() {
             if (strictReset) strictReset.checked = false;
             const rollbackReset = document.getElementById('siRollbackOnErrors');
             if (rollbackReset) rollbackReset.checked = false;
+            const conflictReset = document.getElementById('siResolucionConflictoLinea');
+            if (conflictReset) conflictReset.value = 'conservar';
             statusEl.textContent = '';
         }, 4000);
     } catch (err) {

@@ -22,6 +22,12 @@ from app.importers.column_detector import (
 
 logger = logging.getLogger(__name__)
 
+CONFLICT_RESOLUTION_MODES = {
+    "conservar",
+    "reasignar",
+    "liberar",
+}
+
 # ---------------------------------------------------------------------------
 # Field synonym catalog
 # Keys = canonical field names (matching columns in datos_importados or the
@@ -524,7 +530,12 @@ def get_active_line_context(agent_id: int, db: Any) -> dict:
     }
 
 
-def plan_line_update(agent_id: int, mapped_row: dict, db: Any) -> dict:
+def plan_line_update(
+    agent_id: int,
+    mapped_row: dict,
+    db: Any,
+    conflict_resolution_mode: str = "conservar",
+) -> dict:
     from app.models import AgenteLineaAsignacion, LineaTelefonica
 
     target_number = str(mapped_row.get("numero_voip") or "").strip()
@@ -554,11 +565,29 @@ def plan_line_update(agent_id: int, mapped_row: dict, db: Any) -> dict:
     )
 
     if ocupacion and ocupacion.agente_id != agent_id:
+        resolution = str(conflict_resolution_mode or "conservar").strip().lower()
+        if resolution == "reasignar":
+            return {
+                "accion": "reasignar_forzado",
+                "numero": target_number,
+                "linea_id": target_line.id,
+                "agente_ocupante_id": ocupacion.agente_id,
+                "resolucion": "reasignar",
+            }
+        if resolution == "liberar":
+            return {
+                "accion": "liberar_conflicto",
+                "numero": target_number,
+                "linea_id": target_line.id,
+                "agente_ocupante_id": ocupacion.agente_id,
+                "resolucion": "liberar",
+            }
         return {
             "accion": "conflicto_linea_ocupada",
             "numero": target_number,
             "linea_id": target_line.id,
             "agente_ocupante_id": ocupacion.agente_id,
+            "resolucion": "conservar",
         }
 
     return {
@@ -626,6 +655,14 @@ def _build_row_risk(
             "detalle": f"Linea {plan_linea.get('numero')} ocupada por agente {plan_linea.get('agente_ocupante_id')}",
         }
 
+    if line_action in {"reasignar_forzado", "liberar_conflicto"}:
+        return {
+            "fila": fila,
+            "nivel": "medio",
+            "categoria": "resolucion_conflicto_linea",
+            "detalle": f"Linea {plan_linea.get('numero')} se resolvera con modo {line_action}.",
+        }
+
     if incoherencias:
         return {
             "fila": fila,
@@ -666,6 +703,7 @@ def preview_import(
     mapping: dict[str, str],
     delimiter: str = ",",
     header_fila: int = 0,
+    conflict_resolution_mode: str = "conservar",
     db: Any | None = None,
 ) -> dict:
     """
@@ -755,7 +793,12 @@ def preview_import(
                             "motivo": "fallback_nombre",
                         }
 
-                plan_linea = plan_line_update(existing.id, mapped, db)
+                plan_linea = plan_line_update(
+                    existing.id,
+                    mapped,
+                    db,
+                    conflict_resolution_mode=conflict_resolution_mode,
+                )
                 if cambios_detectados:
                     accion = "actualizar"
                     actualizaciones += 1
@@ -770,7 +813,12 @@ def preview_import(
                     sin_cambios = max(0, sin_cambios - 1)
             else:
                 if db is not None:
-                    plan_linea = plan_line_update(0, mapped, db)
+                    plan_linea = plan_line_update(
+                        0,
+                        mapped,
+                        db,
+                        conflict_resolution_mode=conflict_resolution_mode,
+                    )
                 nuevos += 1
         else:
             nuevos += 1
@@ -843,10 +891,20 @@ def apply_agent_row_changes(existing: Any, mapped: dict, db: Any) -> dict:
     }
 
 
-def apply_line_plan(agent_id: int, mapped: dict, db: Any) -> dict:
+def apply_line_plan(
+    agent_id: int,
+    mapped: dict,
+    db: Any,
+    conflict_resolution_mode: str = "conservar",
+) -> dict:
     from app.models import AgenteLineaAsignacion, LineaTelefonica
 
-    plan = plan_line_update(agent_id, mapped, db)
+    plan = plan_line_update(
+        agent_id,
+        mapped,
+        db,
+        conflict_resolution_mode=conflict_resolution_mode,
+    )
     action = plan.get("accion")
 
     if action in {"sin_dato_voip", "sin_cambio", "conflicto_linea_ocupada"}:
@@ -864,7 +922,7 @@ def apply_line_plan(agent_id: int, mapped: dict, db: Any) -> dict:
         )
         db.add(line)
         db.flush()
-    elif action == "reasignar_existente":
+    elif action in {"reasignar_existente", "reasignar_forzado", "liberar_conflicto"}:
         line = db.query(LineaTelefonica).filter(LineaTelefonica.id == plan.get("linea_id")).first()
 
     if not line:
@@ -872,6 +930,30 @@ def apply_line_plan(agent_id: int, mapped: dict, db: Any) -> dict:
             "accion": "error",
             "detalle": "No se pudo resolver linea objetivo.",
         }
+
+    if action in {"reasignar_forzado", "liberar_conflicto"}:
+        ocupacion = (
+            db.query(AgenteLineaAsignacion)
+            .filter(
+                AgenteLineaAsignacion.linea_id == line.id,
+                AgenteLineaAsignacion.es_activa.is_(True),
+                AgenteLineaAsignacion.agente_id != agent_id,
+            )
+            .order_by(AgenteLineaAsignacion.id.desc())
+            .first()
+        )
+        if ocupacion:
+            ocupacion.es_activa = False
+            ocupacion.fecha_liberacion = None
+            db.add(ocupacion)
+
+        if action == "liberar_conflicto":
+            return {
+                "accion": action,
+                "linea_id": line.id,
+                "numero": line.numero,
+                "agente_liberado_id": plan.get("agente_ocupante_id"),
+            }
 
     current_ctx = get_active_line_context(agent_id, db)
     current_assignment = current_ctx.get("assignment")

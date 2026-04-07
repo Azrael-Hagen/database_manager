@@ -713,6 +713,117 @@ class TestSmartImportEndpoints:
         db.close()
         assert created is None
 
+    def test_execute_conflict_resolution_reasignar_transfers_line(self):
+        db = TestingSessionLocal()
+        occupant = DatoImportado(
+            uuid=str(uuid.uuid4()),
+            nombre="Occupant Reassign",
+            email=f"{uuid.uuid4().hex}@occ-rs.com",
+            es_activo=True,
+        )
+        db.add(occupant)
+        db.flush()
+
+        line = LineaTelefonica(numero="VOIP-RS-9001", es_activa=True)
+        db.add(line)
+        db.flush()
+
+        db.add(
+            AgenteLineaAsignacion(
+                agente_id=occupant.id,
+                linea_id=line.id,
+                es_activa=True,
+            )
+        )
+        db.commit()
+        db.close()
+
+        fresh_email = f"{uuid.uuid4().hex}@reasignar.com"
+        content = _csv_bytes([
+            {"nombre": "Nuevo Reasignar", "email": fresh_email, "numero_voip": "VOIP-RS-9001"}
+        ])
+        mapping = json.dumps({"nombre": "nombre", "email": "email", "numero_voip": "numero_voip"})
+
+        response = client.post(
+            "/api/smart-import/execute",
+            files={"archivo": ("d.csv", content, "text/csv")},
+            data={
+                "delimitador": ",",
+                "mapeo": mapping,
+                "modo": "insertar_o_actualizar",
+                "confirmacion": "true",
+                "resolucion_conflicto_linea": "reasignar",
+            },
+            headers=self.headers,
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["datos"].get("lineas_reasignadas_forzadas", 0) >= 1
+        assert body["datos"].get("conflictos_linea", 0) == 0
+
+        db = TestingSessionLocal()
+        created = db.query(DatoImportado).filter_by(email=fresh_email).first()
+        assert created is not None
+        active_assignment = (
+            db.query(AgenteLineaAsignacion)
+            .filter(
+                AgenteLineaAsignacion.agente_id == created.id,
+                AgenteLineaAsignacion.es_activa.is_(True),
+            )
+            .order_by(AgenteLineaAsignacion.id.desc())
+            .first()
+        )
+        db.close()
+        assert active_assignment is not None
+
+    def test_execute_conflict_resolution_liberar_releases_line(self):
+        db = TestingSessionLocal()
+        occupant = DatoImportado(
+            uuid=str(uuid.uuid4()),
+            nombre="Occupant Release",
+            email=f"{uuid.uuid4().hex}@occ-lb.com",
+            es_activo=True,
+        )
+        db.add(occupant)
+        db.flush()
+
+        line = LineaTelefonica(numero="VOIP-LB-9001", es_activa=True)
+        db.add(line)
+        db.flush()
+
+        db.add(
+            AgenteLineaAsignacion(
+                agente_id=occupant.id,
+                linea_id=line.id,
+                es_activa=True,
+            )
+        )
+        db.commit()
+        db.close()
+
+        fresh_email = f"{uuid.uuid4().hex}@liberar.com"
+        content = _csv_bytes([
+            {"nombre": "Nuevo Liberar", "email": fresh_email, "numero_voip": "VOIP-LB-9001"}
+        ])
+        mapping = json.dumps({"nombre": "nombre", "email": "email", "numero_voip": "numero_voip"})
+
+        response = client.post(
+            "/api/smart-import/execute",
+            files={"archivo": ("d.csv", content, "text/csv")},
+            data={
+                "delimitador": ",",
+                "mapeo": mapping,
+                "modo": "insertar_o_actualizar",
+                "confirmacion": "true",
+                "resolucion_conflicto_linea": "liberar",
+            },
+            headers=self.headers,
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["datos"].get("lineas_liberadas_conflicto", 0) >= 1
+        assert body["datos"].get("conflictos_linea", 0) == 0
+
     def test_execute_requires_capture_role(self):
         viewer_headers = {"Authorization": f"Bearer {_make_viewer_token()}"}
         content = _csv_bytes([{"nombre": "X"}])
