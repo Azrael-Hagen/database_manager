@@ -724,3 +724,225 @@ class TestSmartImportEndpoints:
             headers=viewer_headers,
         )
         assert response.status_code == 403
+
+
+    # ===========================================================================
+    # Unit tests: column_detector
+    # ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Module-level helper (accessible from nested TestColumnDetector methods)
+# ---------------------------------------------------------------------------
+def _make_category_header_excel() -> bytes:
+    """
+    Build an Excel file that mimics the user-reported structure:
+    Row 0: category label row (mostly blank → pandas names cols Unnamed:N)
+    Row 1: actual field headers (ALIAS, NOMBRE COMPLETO, F.P, DEUDA …)
+    Row 2+: data rows
+    """
+    import io as _io
+
+    import pandas as pd
+
+    rows = [
+        ["", "EMPRESA DEMO", "", "", "", "", "", "", "", ""],
+        ["ALIAS", "NOMBRE COMPLETO", "EXTENSION", "CONTRASEÑA", "UBICACION", "F.P", "F.C.", "F.C.C.", "IMEI", "DEUDA"],
+        ["SECO", "AARON MOISES CORONA MADRIGAL", "525598160749", "gw5uk78", "1127", "720", "1010", "001 C", "355143594429515/17", "$600"],
+        ["GUACHO", "ADAN JOSE GARCIA GOMEZ", "525598160804", "htx7hz",  "1057", "700", "1003", "002 C", "352422853427359/17", "$300"],
+        ["MONA", "ALBERTO SANTIAGO RAMIREZ MARTINEZ", "525598160920", "zvf9vvz", "1039", "721", "1012", "004 A", "", "$600"],
+    ]
+    df = pd.DataFrame(rows)
+    buf = _io.BytesIO()
+    df.to_excel(buf, index=False, header=False)
+    buf.seek(0)
+    return buf.read()
+
+
+class TestColumnDetector:
+    """Tests for backend/app/importers/column_detector.py"""
+
+    # ------------------------------------------------------------------
+    # infer_from_values
+    # ------------------------------------------------------------------
+
+    def test_infer_detects_email(self):
+        from app.importers.column_detector import infer_from_values
+        field, conf, label = infer_from_values(
+            ["ana@gmail.com", "bob@company.mx", "carol@hotmail.com", "dave@yahoo.com"]
+        )
+        assert field == "email"
+        assert conf >= 0.70
+        assert label == "valor_patron"
+
+    def test_infer_detects_mexican_phone(self):
+        from app.importers.column_detector import infer_from_values
+        field, conf, _ = infer_from_values(
+            ["5255981607", "5255981601", "5255981602", "5255981603"]
+        )
+        assert field == "telefono"
+        assert conf >= 0.60
+
+    def test_infer_detects_currency_as_deuda(self):
+        from app.importers.column_detector import infer_from_values
+        field, conf, _ = infer_from_values(["$600", "$300", "$600", "$1200", "$500"])
+        assert field == "deuda"
+        assert conf >= 0.70
+
+    def test_infer_detects_imei_slash_format(self):
+        from app.importers.column_detector import infer_from_values
+        field, conf, _ = infer_from_values(
+            ["355143594429515/17", "352422853427359/17", "355143594429515/17"]
+        )
+        assert field == "imei"
+        assert conf >= 0.60
+
+    def test_infer_detects_nombre_from_full_names(self):
+        from app.importers.column_detector import infer_from_values
+        field, conf, _ = infer_from_values(
+            ["AARON MOISES CORONA MADRIGAL", "ADAN JOSE GARCIA GOMEZ", "JUAN PEDRO SANTOS VEGA"]
+        )
+        assert field == "nombre"
+        assert conf >= 0.50
+
+    def test_infer_returns_none_for_random_strings(self):
+        from app.importers.column_detector import infer_from_values
+        field, conf, _ = infer_from_values(["gw5uk78xnz9qj8ty", "htx7hzz62acuqrx1", "zvf9vvz9u90hlyru"])
+        assert field is None  # passwords – no recognizable pattern
+
+    def test_infer_returns_vacio_for_empty_list(self):
+        from app.importers.column_detector import infer_from_values
+        field, conf, label = infer_from_values([])
+        assert field is None
+        assert conf == 0.0
+        assert label == "vacio"
+
+    # ------------------------------------------------------------------
+    # detect_header_row
+    # ------------------------------------------------------------------
+
+    def test_detect_header_row_returns_zero_for_normal_file(self):
+        """A file whose first row contains standard headers should return 0."""
+        import io as _io
+        import pandas as pd
+        from app.importers.column_detector import detect_header_row
+
+        rows = [
+            ["nombre", "email", "telefono"],
+            ["Ana Garcia", "ana@x.com", "5255001234"],
+            ["Luis Perez", "luis@x.com", "5255005678"],
+        ]
+        df = pd.DataFrame(rows)
+        assert detect_header_row(df) == 0
+
+    def test_detect_header_row_finds_row_1_when_row_0_is_category(self):
+        """Detects row 1 as the real header when row 0 is a category label row."""
+        import io as _io
+        import pandas as pd
+        from app.importers.column_detector import detect_header_row
+
+        rows = [
+            ["", "EMPRESA DEMO", "", "", "", ""],          # category row (low header score)
+            ["ALIAS", "NOMBRE COMPLETO", "EXTENSION", "UBICACION", "F.P", "DEUDA"],  # real headers
+            ["SECO", "AARON MOISES CORONA MADRIGAL", "525598160749", "1127", "720", "$600"],
+        ]
+        df = pd.DataFrame(rows)
+        detected = detect_header_row(df)
+        assert detected == 1, f"Expected 1 but got {detected}"
+
+    # ------------------------------------------------------------------
+    # suggest_mapping_advanced
+    # ------------------------------------------------------------------
+
+    def test_advanced_mapping_uses_value_pattern_for_unnamed_column(self):
+        """Unnamed column with email values should be mapped via value pattern."""
+        from app.importers.column_detector import suggest_mapping_advanced
+        result = suggest_mapping_advanced(
+            "Unnamed: 3",
+            ["ana@gmail.com", "bob@corp.mx", "carol@hotmail.com"],
+        )
+        assert result["campo"] == "email"
+        assert result["tipo"] in ("valor_patron", "combinado")
+        assert result["confianza"] >= 0.50
+        assert "evidencia" in result
+
+    def test_advanced_mapping_combined_boosts_confidence_when_both_agree(self):
+        """When header name and value pattern agree the confidence should be ≥ both alone."""
+        from app.importers.column_detector import suggest_mapping_advanced, infer_from_values
+        from app.importers.smart_importer import suggest_mapping
+        header = "correo"
+        values = ["a@b.com", "c@d.com", "e@f.com", "g@h.com"]
+        h_result = suggest_mapping(header)
+        _, vp_conf, _ = infer_from_values(values)
+        combined = suggest_mapping_advanced(header, values)
+        # Combined confidence must be >= min of the two individual signals
+        assert combined["campo"] == "email"
+        assert combined["confianza"] >= min(h_result["confianza"], max(vp_conf, 0.1))
+
+    def test_advanced_mapping_profile_takes_priority(self):
+        """A saved profile entry should override header and value pattern results."""
+        from app.importers.column_detector import suggest_mapping_advanced
+        profile = {"CONCHA": "nombre"}
+        result = suggest_mapping_advanced("CONCHA", ["X", "Y"], profile_mapping=profile)
+        assert result["campo"] == "nombre"
+        assert result["tipo"] == "perfil_guardado"
+        assert result["confianza"] >= 0.90
+
+    # ------------------------------------------------------------------
+    # ProfileStore
+    # ------------------------------------------------------------------
+
+    def test_profile_store_save_and_lookup(self, tmp_path):
+        from app.importers.column_detector import ProfileStore
+        store = ProfileStore(path=tmp_path / "profiles.json")
+        headers = ["ALIAS", "NOMBRE COMPLETO", "EXTENSION", "DEUDA"]
+        mapping = {"ALIAS": "alias", "NOMBRE COMPLETO": "nombre", "EXTENSION": "telefono", "DEUDA": "deuda"}
+        store.save(headers, mapping)
+        result = store.lookup(headers)
+        assert result is not None
+        assert result["ALIAS"] == "alias"
+        assert result["NOMBRE COMPLETO"] == "nombre"
+        assert result["DEUDA"] == "deuda"
+
+    def test_profile_store_returns_none_for_unknown_headers(self, tmp_path):
+        from app.importers.column_detector import ProfileStore
+        store = ProfileStore(path=tmp_path / "profiles_empty.json")
+        assert store.lookup(["COL_A", "COL_B"]) is None
+
+    def test_profile_store_is_failure_safe(self, tmp_path):
+        """Profile lookup on a corrupted file should not raise."""
+        from app.importers.column_detector import ProfileStore
+        bad_path = tmp_path / "bad.json"
+        bad_path.write_text("NOT JSON {{{")
+        store = ProfileStore(path=bad_path)
+        assert store.lookup(["X"]) is None  # graceful degradation
+
+    # ------------------------------------------------------------------
+    # analyze_file integration with header detection
+    # ------------------------------------------------------------------
+
+    def test_analyze_file_detects_real_headers_in_category_excel(self):
+        """Excel with a category row should have column_detector find row 1 as headers."""
+        content = _make_category_header_excel()
+        result = analyze_file(content, "agentes.xlsx")
+        assert result["errores"] == []
+        # After correct header detection, "ALIAS" should map to "alias"
+        campos = {c["header"]: c["campo"] for c in result["columnas_detectadas"]}
+        assert "ALIAS" in campos, f"'ALIAS' not in detected columns. Got: {list(campos.keys())}"
+        assert campos.get("ALIAS") == "alias", f"Expected 'alias' but got {campos.get('ALIAS')}"
+        # At least 3 data rows detected (not counting the category and header rows)
+        assert result["total_filas"] >= 3
+
+    def test_analyze_file_returns_detected_header_row(self):
+        """analyze_file should include 'detected_header_row' in the result."""
+        content = _make_category_header_excel()
+        result = analyze_file(content, "agentes.xlsx")
+        assert "detected_header_row" in result
+        assert result["detected_header_row"] == 1
+
+    def test_analyze_file_normal_csv_detected_header_row_is_zero(self):
+        """For a well-formed CSV, detected_header_row should be 0."""
+        rows = [{"nombre": "Ana", "email": "ana@x.com"}, {"nombre": "Bob", "email": "bob@x.com"}]
+        content = _csv_bytes(rows)
+        result = analyze_file(content, "normal.csv")
+        assert result.get("detected_header_row", 0) == 0

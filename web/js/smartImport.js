@@ -71,7 +71,9 @@ async function smartAnalyzeFile() {
         }
 
         _siAnalysis = body.datos;
-        statusEl.textContent = `${_siAnalysis.total_filas} fila(s) detectada(s).`;
+        const detectedRow = _siAnalysis.detected_header_row ?? 0;
+        const rowInfo = detectedRow > 0 ? ` (fila de encabezado detectada: ${detectedRow + 1})` : '';
+        statusEl.textContent = `${_siAnalysis.total_filas} fila(s) detectada(s).${rowInfo}`;
         statusEl.style.color = '#2ecc71';
 
         _siRenderStep1Results(_siAnalysis);
@@ -98,21 +100,40 @@ function _siRenderStep1Results(analysis) {
         return;
     }
 
+    // Detected header row info
+    const detRow = analysis.detected_header_row ?? 0;
+    if (detRow > 0) {
+        html += `<p class="hint" style="color:#4a90d9;">ℹ️ Fila de encabezado detectada automáticamente: fila ${detRow + 1}</p>`;
+    }
+
+    // Multi-table regions
+    const regiones = analysis.tabla_regiones || [];
+    if (regiones.length > 1) {
+        html += `<p class="hint" style="color:#9b59b6;">📋 Se detectaron ${regiones.length} tablas en la misma hoja.</p>`;
+    }
+
     // Column detection table
     html += '<h4 style="margin-top:12px;">Detección de Columnas</h4>';
     html += '<table class="data-table" style="font-size:0.85em;">';
-    html += '<thead><tr><th>Columna Detectada</th><th>Campo Sugerido</th><th>Confianza</th><th>Tipo</th></tr></thead><tbody>';
+    html += '<thead><tr><th>Columna Detectada</th><th>Campo Sugerido</th><th>Confianza</th><th>Tipo</th><th>Evidencia</th></tr></thead><tbody>';
     cols.forEach(c => {
-        const badge = c.tipo === 'exacta'    ? '<span style="color:#2ecc71">●</span>'
-                    : c.tipo === 'sinonimo'  ? '<span style="color:#3498db">●</span>'
-                    : c.tipo === 'fuzzy'     ? '<span style="color:#f39c12">●</span>'
-                    :                          '<span style="color:#e74c3c">●</span>';
+        const badgeColor = {
+            exacta:          '#2ecc71',
+            sinonimo:        '#3498db',
+            fuzzy:           '#f39c12',
+            valor_patron:    '#9b59b6',
+            perfil_guardado: '#1abc9c',
+            combinado:       '#3498db',
+        }[c.tipo] || '#e74c3c';
+        const badge = `<span style="color:${badgeColor}">●</span>`;
         const pct = (c.confianza * 100).toFixed(0);
+        const evidencia = (c.evidencia || []).map(e => `<span style="font-size:0.8em;color:#999">${escapeHtml(e)}</span>`).join(' ');
         html += `<tr>
             <td>${escapeHtml(c.header)}</td>
             <td>${c.campo ? escapeHtml(c.campo) : '<em>sin sugerencia</em>'}</td>
             <td>${pct}%</td>
             <td>${badge} ${escapeHtml(c.tipo)}</td>
+            <td>${evidencia || '—'}</td>
         </tr>`;
     });
     html += '</tbody></table>';
@@ -142,7 +163,8 @@ function _siRenderStep1Results(analysis) {
 
 const CANONICAL_FIELDS = [
     '', 'nombre', 'email', 'telefono', 'empresa', 'ciudad', 'pais',
-    'alias', 'ubicacion', 'fp', 'fc', 'grupo', 'numero_voip',
+    'alias', 'ubicacion', 'fp', 'fc', 'fcc', 'grupo', 'numero_voip',
+    'imei', 'deuda', 'extension',
 ];
 
 function siGoToStep2() {
@@ -214,6 +236,7 @@ async function siPreview() {
     formData.append('archivo', _siFileContent);
     formData.append('delimitador', delimInput?.value || ',');
     formData.append('mapeo', JSON.stringify(mapping));
+    formData.append('header_fila', String(_siAnalysis?.detected_header_row ?? 0));
 
     try {
         const resp = await fetch(`${API_URL}/smart-import/preview`, {
@@ -372,6 +395,7 @@ async function siExecuteImport() {
     formData.append('archivo', _siFileContent);
     formData.append('delimitador', delimInput?.value || ',');
     formData.append('mapeo', JSON.stringify(mapping));
+    formData.append('header_fila', String(_siAnalysis?.detected_header_row ?? 0));
     formData.append('modo', modeEl?.value || 'insertar');
     formData.append('confirmacion', 'true');
     formData.append('modo_estricto_conflictos', strictModeEl?.checked ? 'true' : 'false');

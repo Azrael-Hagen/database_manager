@@ -13,6 +13,13 @@ from difflib import SequenceMatcher
 from io import StringIO
 from typing import Any
 
+from app.importers.column_detector import (
+    detect_header_row,
+    detect_table_regions,
+    get_profile_store,
+    suggest_mapping_advanced,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -51,12 +58,37 @@ FIELD_SYNONYMS: dict[str, list[str]] = {
         "extension", "ext", "numero_linea",
         "num_ext", "numext", "num ext", "num. ext",
     ],
+    "fcc": [
+        "f.c.c.", "f_c_c", "fcc", "fecha_cobro_cheque",
+        "fcc.", "fcobro_cheq",
+    ],
+    "imei": [
+        "imei", "device_id", "device", "num_imei",
+        "imei_equipo", "serial",
+    ],
+    "deuda": [
+        "debt", "balance", "saldo", "debe", "monto_deuda",
+        "total_deuda", "adeudo",
+    ],
 }
 
 # Build inverse mapping: normalized_synonym → canonical
 _SYNONYM_TO_CANONICAL: dict[str, str] = {}
 for _canonical, _syns in FIELD_SYNONYMS.items():
     _SYNONYM_TO_CANONICAL[_canonical] = _canonical  # self-map
+    for _s in _syns:
+        _normalized_syn = re.sub(r"[\s\-]+", "_", _s.strip().lower())
+        _normalized_syn = re.sub(r"[^a-z0-9_]+", "", _normalized_syn)
+        _SYNONYM_TO_CANONICAL[_normalized_syn] = _canonical
+
+# Extend existing entries with abbreviated/dot-notation variants.
+FIELD_SYNONYMS["fp"].extend(["f.p", "f_p", "f.p.", "fecha_p", "fpago"])
+FIELD_SYNONYMS["fc"].extend(["f.c", "f_c", "f.c.", "fecha_c", "fcobro"])
+FIELD_SYNONYMS["ubicacion"].extend(["ubic", "ubi"])
+FIELD_SYNONYMS["telefono"].extend(["num_telefono", "extension_telefonica", "num_extension"])
+# Rebuild inverse map to include newly appended synonyms
+for _canonical, _syns in FIELD_SYNONYMS.items():
+    _SYNONYM_TO_CANONICAL[_canonical] = _canonical
     for _s in _syns:
         _normalized_syn = re.sub(r"[\s\-]+", "_", _s.strip().lower())
         _normalized_syn = re.sub(r"[^a-z0-9_]+", "", _normalized_syn)
@@ -132,9 +164,18 @@ def suggest_mapping(header: str) -> dict:
 # File parsing helpers
 # ---------------------------------------------------------------------------
 
-def _parse_file_to_rows(content: bytes, filename: str, delimiter: str = ",") -> tuple[list[dict], list[str]]:
+def _parse_file_to_rows(
+    content: bytes,
+    filename: str,
+    delimiter: str = ",",
+    header: int = 0,
+) -> tuple[list[dict], list[str]]:
     """
     Parse file bytes into a list of row dicts.
+
+    `header` is the 0-based row index to use as column names.
+    Use 0 for normal files; pass detect_header_row() output for files
+    with category-label rows before actual headers.
     Returns (rows, errors).
     """
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
@@ -145,15 +186,23 @@ def _parse_file_to_rows(content: bytes, filename: str, delimiter: str = ",") -> 
         if ext in ("xlsx", "xls"):
             import io
             import pandas as pd
-            df = pd.read_excel(io.BytesIO(content), sheet_name=0)
+            df = pd.read_excel(io.BytesIO(content), sheet_name=0, header=header)
             df = df.where(pd.notna(df), None)
             rows = df.to_dict(orient="records")
         else:
-            # CSV / TXT / DAT – treat as delimited text
             text = content.decode("utf-8-sig", errors="replace")
-            reader = csv.DictReader(StringIO(text), delimiter=delimiter)
-            for row in reader:
-                rows.append(dict(row))
+            if header == 0:
+                reader = csv.DictReader(StringIO(text), delimiter=delimiter)
+                for row in reader:
+                    rows.append(dict(row))
+            else:
+                all_lines = list(csv.reader(StringIO(text), delimiter=delimiter))
+                if len(all_lines) <= header:
+                    errors.append("header_fila excede el numero de filas del archivo.")
+                else:
+                    field_names = all_lines[header]
+                    for raw_row in all_lines[header + 1:]:
+                        rows.append(dict(zip(field_names, raw_row)))
     except Exception as exc:
         errors.append(f"Error al parsear '{filename}': {exc}")
 
@@ -168,17 +217,39 @@ def analyze_file(
     content: bytes,
     filename: str,
     delimiter: str = ",",
+    header_fila: int = -1,
 ) -> dict:
     """
     Parse a file and return column analysis + sample rows.
 
+    When header_fila < 0 the function auto-detects the best header row
+    using column_detector.detect_header_row().
+
     Returns:
-        columnas_detectadas – list of suggest_mapping() results for each header
-        total_filas         – total data rows (excluding header)
-        muestra             – first 5 rows as list[dict[str, str]]
-        errores             – parse errors, if any
+        columnas_detectadas   – list of suggest_mapping_advanced() results
+        total_filas           – total data rows (excluding header)
+        muestra               – first 5 rows as list[dict[str, str]]
+        errores               – parse errors, if any
+        detected_header_row   – 0-based row index actually used as header
+        tabla_regiones        – list of {inicio_fila, fin_fila} if >1 table
     """
-    rows, errors = _parse_file_to_rows(content, filename, delimiter)
+    import io
+    import pandas as pd
+
+    detected_row: int = max(header_fila, 0)
+    tabla_regiones: list = []
+
+    # --- Auto-detect header row for Excel files ---
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext in ("xlsx", "xls", "xlsm") and header_fila < 0:
+        try:
+            df_raw = pd.read_excel(io.BytesIO(content), header=None)
+            detected_row = detect_header_row(df_raw)
+            tabla_regiones = detect_table_regions(df_raw)
+        except Exception:
+            detected_row = 0
+
+    rows, errors = _parse_file_to_rows(content, filename, delimiter, header=detected_row)
 
     if errors or not rows:
         if not errors:
@@ -188,10 +259,31 @@ def analyze_file(
             "total_filas": 0,
             "muestra": [],
             "errores": errors,
+            "detected_header_row": detected_row,
+            "tabla_regiones": tabla_regiones,
         }
 
     headers = list(rows[0].keys())
-    suggestions = [suggest_mapping(h) for h in headers]
+    profile_mapping = get_profile_store().lookup(headers) or {}
+
+    # Sample up to 20 values per column for value-pattern inference
+    _SAMPLE_SIZE = 20
+    column_samples: dict[str, list] = {h: [] for h in headers}
+    for row in rows[:_SAMPLE_SIZE]:
+        for h in headers:
+            v = row.get(h)
+            if v is not None and str(v).strip():
+                column_samples[h].append(str(v).strip())
+
+    suggestions = [
+        suggest_mapping_advanced(
+            header=h,
+            sample_values=column_samples[h],
+            profile_mapping=profile_mapping,
+            _suggest_fn=suggest_mapping,
+        )
+        for h in headers
+    ]
 
     # Serialize sample (first 5 rows) to plain strings
     muestra = [
@@ -204,6 +296,8 @@ def analyze_file(
         "total_filas": len(rows),
         "muestra": muestra,
         "errores": errors,
+        "detected_header_row": detected_row,
+        "tabla_regiones": tabla_regiones,
     }
 
 
@@ -571,6 +665,7 @@ def preview_import(
     filename: str,
     mapping: dict[str, str],
     delimiter: str = ",",
+    header_fila: int = 0,
     db: Any | None = None,
 ) -> dict:
     """
@@ -585,7 +680,7 @@ def preview_import(
                             agente_existente_id, tiene_numero}
         errores_formato  – rows that could not be mapped at all
     """
-    rows, parse_errors = _parse_file_to_rows(content, filename, delimiter)
+    rows, parse_errors = _parse_file_to_rows(content, filename, delimiter, header=header_fila)
 
     if parse_errors and not rows:
         return {

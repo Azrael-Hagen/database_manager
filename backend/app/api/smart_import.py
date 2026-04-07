@@ -28,6 +28,7 @@ from app.importers.smart_importer import (
     find_existing_agent,
     preview_import,
 )
+from app.importers.column_detector import get_profile_store
 from app.security import get_current_user, require_capture_role
 
 logger = logging.getLogger(__name__)
@@ -49,18 +50,21 @@ def _check_extension(filename: str) -> str:
     return ext
 
 
-def _parse_rows(content: bytes, filename: str, delimiter: str) -> list[dict]:
+def _parse_rows(content: bytes, filename: str, delimiter: str, header: int = 0) -> list[dict]:
     """Parse file content to a list of row dicts."""
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext in ("xlsx", "xls"):
         import io
         import pandas as pd
-        df = pd.read_excel(io.BytesIO(content), sheet_name=0)
+        df = pd.read_excel(io.BytesIO(content), sheet_name=0, header=header)
         df = df.where(pd.notna(df), None)
         return df.to_dict(orient="records")
     else:
         text = content.decode("utf-8-sig", errors="replace")
-        return list(csv.DictReader(StringIO(text), delimiter=delimiter))
+        lines = text.splitlines()
+        if header > 0 and len(lines) > header:
+            lines = lines[header:]
+        return list(csv.DictReader(iter(lines), delimiter=delimiter))
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +75,7 @@ def _parse_rows(content: bytes, filename: str, delimiter: str) -> list[dict]:
 async def analyze_import_file(
     archivo: UploadFile = File(...),
     delimitador: str = Form(","),
+    header_fila: int = Form(-1),
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -94,7 +99,7 @@ async def analyze_import_file(
             detail="Archivo demasiado grande (máximo 20 MB).",
         )
 
-    result = analyze_file(content, archivo.filename, delimiter=delimitador)
+    result = analyze_file(content, archivo.filename, delimiter=delimitador, header_fila=header_fila)
     return {"status": "ok", "datos": result}
 
 
@@ -106,6 +111,7 @@ async def preview_import_file(
         ...,
         description='JSON: {"Columna Archivo": "campo_canonico", ...}',
     ),
+    header_fila: int = Form(0),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -153,6 +159,7 @@ async def preview_import_file(
         archivo.filename,
         mapping,
         delimiter=delimitador,
+        header_fila=header_fila,
         db=db,
     )
     return {"status": "ok", "datos": result}
@@ -186,6 +193,7 @@ async def execute_smart_import(
         "false",
         description="Si es 'true', revierte toda la transaccion cuando ocurre cualquier error por fila.",
     ),
+    header_fila: int = Form(0),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -241,7 +249,7 @@ async def execute_smart_import(
     strict_conflicts = str(modo_estricto_conflictos).strip().lower() in {"true", "1", "si", "sí", "yes"}
     rollback_on_error = str(rollback_si_hay_errores).strip().lower() in {"true", "1", "si", "sí", "yes"}
 
-    all_rows = _parse_rows(content, archivo.filename, delimitador)
+    all_rows = _parse_rows(content, archivo.filename, delimitador, header=header_fila)
 
     if strict_conflicts:
         preview = preview_import(
@@ -249,6 +257,7 @@ async def execute_smart_import(
             archivo.filename,
             mapping,
             delimiter=delimitador,
+            header_fila=header_fila,
             db=db,
         )
         conflict_rows = [
@@ -362,6 +371,14 @@ async def execute_smart_import(
                 "actualizados_revertidos": updated,
             },
         }
+
+    # Save profile mapping so future imports on same column layout benefit from learning
+    if inserted + updated > 0:
+        try:
+            headers_for_profile = list(mapping.keys())
+            get_profile_store().save(headers_for_profile, mapping)
+        except Exception as _profile_err:
+            logger.warning("No se pudo guardar perfil de mapeo: %s", _profile_err)
 
     db.commit()
     logger.info(
