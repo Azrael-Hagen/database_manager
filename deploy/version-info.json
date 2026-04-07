@@ -3,12 +3,28 @@
   "channel": "production",
   "current": {
     "version": "1.5.0",
-    "revision": 10,
-    "release_date": "2026-04-07",
-    "codename": "QR Scanner Hardening + Smart Import Rollback",
-    "summary": "Guardas de carrera QR, sesion efimera Android, importador inteligente con comparacion de campos y rollback transaccional"
+    "revision": 11,
+    "release_date": "2026-04-08",
+    "codename": "Intelligent Column Detection + Profile Learning",
+    "summary": "Deteccion automatica de fila de encabezado, inferencia por patrones de valor, aprendizaje de perfiles de mapeo y soporte para IMEI/deuda/FCC en importacion inteligente"
   },
   "history": [
+    {
+      "version": "1.5.0",
+      "revision": 11,
+      "release_date": "2026-04-08",
+      "codename": "Intelligent Column Detection + Profile Learning",
+      "changes": [
+        "detect_header_row: escanea hasta 10 filas para detectar automaticamente la fila de encabezado real en Excel con etiquetas de categoria.",
+        "infer_from_values: infiere el campo canonico a partir de patrones en los datos (email, telefono, IMEI, deuda, nombre, ubicacion, etc.).",
+        "ProfileStore: aprende y reutiliza mapeos validados almacenados en mapping_profiles.json (clave SHA-1 por cabeceras).",
+        "detect_table_regions: detecta multiples tablas en la misma hoja separadas por filas en blanco.",
+        "suggest_mapping_advanced: combina sinonimo, patron de valor y perfil guardado en 6 niveles de decision con campo evidencia.",
+        "Se agregan fcc, imei, deuda y extension al catalogo de campos canonicos y a la UI del importador.",
+        "API actualizada: los endpoints analyze/preview/execute aceptan header_fila; execute guarda perfil al completar.",
+        "Frontend muestra fila de encabezado detectada, badge por tipo de evidencia y regiones de tablas multiples."
+      ]
+    },
     {
       "version": "1.5.0",
       "revision": 10,

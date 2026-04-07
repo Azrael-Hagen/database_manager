@@ -2,6 +2,16 @@
 
 Acceso previsto solo desde la maquina servidor mediante la API interna de versionado.
 
+## 1.5.0-rev11 - 2026-04-08
+- `detect_header_row`: detecta automaticamente la fila real de cabecera en Excel con etiquetas de categoria en la primera fila.
+- `infer_from_values`: infiere campo canonico a partir de valores en la columna (email, telefono, IMEI, deuda, nombre, ubicacion, etc.).
+- `ProfileStore`: aprende y reutiliza mapeos confirmados almacenados en `mapping_profiles.json` (clave SHA-1 por conjunto de cabeceras).
+- `detect_table_regions`: detecta multiples tablas en la misma hoja separadas por filas en blanco.
+- `suggest_mapping_advanced`: combina sinonimo, patron de valor y perfil guardado con 6 niveles de decision; incluye campo `evidencia`.
+- Se agregan `fcc`, `imei`, `deuda` y `extension` al catalogo FIELD_SYNONYMS y a CANONICAL_FIELDS del frontend.
+- API `analyze/preview/execute` aceptan `header_fila`; `execute` guarda perfil de mapeo al completar importacion exitosa.
+- UI muestra fila de encabezado detectada, badges por tipo (valor_patron/perfil_guardado/combinado) y alerta de tablas multiples.
+
 ## 1.5.0-rev10 - 2026-04-07
 - Se agregan guardas de carrera en `startWebQrScanner`/`stopWebQrScanner` para evitar arranques duplicados.
 - Carga dinamica de html5-qrcode con fallback a CDN secundaria si la primera falla.

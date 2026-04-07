@@ -18,10 +18,10 @@ DEFAULT_VERSION_INFO: dict[str, Any] = {
     "channel": "production",
     "current": {
         "version": "1.5.0",
-        "revision": 10,
-        "release_date": "2026-04-07",
-        "codename": "QR Scanner Hardening + Smart Import Rollback",
-        "summary": "Guardas de carrera QR, sesion efimera Android, importador inteligente con comparacion de campos y rollback transaccional",
+        "revision": 11,
+        "release_date": "2026-04-08",
+        "codename": "Intelligent Column Detection + Profile Learning",
+        "summary": "Deteccion automatica de fila de encabezado, inferencia por patrones de valor, aprendizaje de perfiles de mapeo y soporte para IMEI/deuda/FCC en importacion inteligente",
     },
     "history": [],
 }
