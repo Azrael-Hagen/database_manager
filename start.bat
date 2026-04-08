@@ -19,6 +19,21 @@ echo.
 
 CD /D "%~dp0"
 
+REM Mostrar version de codigo cargada para evitar confusion por sesiones antiguas.
+if exist ".git" (
+    for /f %%H in ('git rev-parse --short HEAD 2^>nul') do set "GIT_COMMIT=%%H"
+    if defined GIT_COMMIT (
+        set "GIT_DIRTY="
+        for /f %%D in ('git status --porcelain 2^>nul ^| find /c /v ""') do set "GIT_DIRTY=%%D"
+        if not defined GIT_DIRTY set "GIT_DIRTY=0"
+        echo [CODE] Commit: !GIT_COMMIT! ^| Cambios locales: !GIT_DIRTY!
+    )
+)
+
+if not exist "%~dp0web\js\modules\datos-section.js" (
+    echo [AVISO] Falta web\js\modules\datos-section.js. Puede haber una actualizacion incompleta.
+)
+
 REM Verificar Python
 echo [PASO 1/3] Verificando Python...
 python --version >nul 2>&1

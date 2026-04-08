@@ -70,7 +70,7 @@ switch ($Action) {
             Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
         }
 
-        $cmd = "`"$StartScript`""
+        $cmd = "`"$StartScript`" --reuse"
         $actionObj = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c $cmd" -WorkingDirectory "$ProjectRoot"
 
         if ($Mode -eq "startup") {

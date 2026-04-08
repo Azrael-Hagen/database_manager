@@ -6,6 +6,7 @@ REM Inicio simple para usuarios no tecnicos
 set "ROOT=%~dp0"
 set "PORT=8000"
 set "URL=http://localhost:%PORT%"
+set "MODE=%~1"
 
 title Database Manager - Inicio Facil
 color 0B
@@ -22,9 +23,13 @@ set "IS_RUNNING="
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%PORT% .*LISTENING"') do set "IS_RUNNING=1"
 
 if defined IS_RUNNING (
-    echo [OK] El servidor ya estaba activo en %URL%
-    start "" "%URL%"
-    exit /b 0
+    if /I "%MODE%"=="--force-restart" goto :restart_running
+    if /I "%MODE%"=="--reuse" goto :reuse_running
+
+    echo [INFO] Hay una sesion activa en %URL%
+    choice /C SN /N /M "Reiniciar para aplicar actualizaciones? [S/N]: "
+    if errorlevel 2 goto :reuse_running
+    if errorlevel 1 goto :restart_running
 )
 
 echo [1/3] Iniciando servidor oficial en una nueva ventana...
@@ -46,6 +51,29 @@ for /L %%I in (1,1,90) do (
 
 echo [AVISO] No se pudo confirmar el puerto en tiempo esperado.
 echo Si el servidor sigue iniciando, espera unos segundos y abre: %URL%
+start "" "%URL%"
+exit /b 0
+
+:reuse_running
+echo [OK] Reutilizando sesion activa en %URL%
+start "" "%URL%"
+exit /b 0
+
+:restart_running
+echo [INFO] Reiniciando servidor para aplicar codigo actualizado...
+if exist "%ROOT%stop.bat" (
+    call "%ROOT%stop.bat"
+)
+timeout /t 1 /nobreak >nul
+start "Database Manager Server" "%ROOT%start.bat"
+echo [OK] Nueva sesion iniciada, esperando disponibilidad...
+for /L %%I in (1,1,90) do (
+    set "READY="
+    for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%PORT% .*LISTENING"') do set "READY=1"
+    if defined READY goto :open_ui
+    timeout /t 1 /nobreak >nul
+)
+echo [AVISO] No se pudo confirmar el puerto en tiempo esperado.
 start "" "%URL%"
 exit /b 0
 
