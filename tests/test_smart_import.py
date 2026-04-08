@@ -658,6 +658,12 @@ class TestSmartImportEndpoints:
         assert body["datos"]["actualizados"] == 1
         assert body["datos"]["insertados"] == 1
 
+        db = TestingSessionLocal()
+        inserted = db.query(DatoImportado).filter(DatoImportado.email == brand_new).first()
+        assert inserted is not None
+        assert isinstance(inserted.creado_por, int) or inserted.creado_por is None
+        db.close()
+
     def test_execute_rollback_on_error_reverts_changes(self):
         db = TestingSessionLocal()
         occupant = DatoImportado(

@@ -68,6 +68,25 @@ def _parse_rows(content: bytes, filename: str, delimiter: str, header: int = 0) 
         return list(csv.DictReader(iter(lines), delimiter=delimiter))
 
 
+def _resolve_creator_user_id(current_user: dict, db: Session) -> int | None:
+    """Resolve a valid integer id for DatoImportado.creado_por."""
+    token_id = current_user.get("id")
+    if token_id is not None:
+        try:
+            return int(token_id)
+        except (TypeError, ValueError):
+            logger.warning("Token user id invalido en smart-import: %r", token_id)
+
+    username = str(current_user.get("username") or "").strip()
+    if not username:
+        return None
+
+    from app.models import Usuario
+
+    db_user = db.query(Usuario).filter(Usuario.username == username).first()
+    return int(db_user.id) if db_user else None
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -305,6 +324,8 @@ async def execute_smart_import(
 
     from app.models import DatoImportado
 
+    creator_user_id = _resolve_creator_user_id(current_user, db)
+
     inserted = 0
     updated = 0
     skipped = 0
@@ -367,7 +388,7 @@ async def execute_smart_import(
                     datos_adicionales=(
                         json.dumps(extra, ensure_ascii=False) if extra else None
                     ),
-                    creado_por=current_user["username"],
+                    creado_por=creator_user_id,
                     fecha_creacion=datetime.now(timezone.utc),
                     es_activo=True,
                 )
@@ -395,6 +416,10 @@ async def execute_smart_import(
         except Exception as exc:
             logger.error("Error procesando fila %d: %s", idx + 2, exc)
             errors.append(f"Fila {idx + 2}: {exc}")
+
+            # Evitar cascada de errores duplicados cuando la sesion ya quedo invalidada.
+            if rollback_on_error or "This Session's transaction has been rolled back" in str(exc):
+                break
 
     if rollback_on_error and errors:
         db.rollback()
