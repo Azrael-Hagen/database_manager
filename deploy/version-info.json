@@ -3,12 +3,25 @@
   "channel": "production",
   "current": {
     "version": "1.5.0",
-    "revision": 11,
-    "release_date": "2026-04-08",
-    "codename": "Intelligent Column Detection + Profile Learning",
-    "summary": "Deteccion automatica de fila de encabezado, inferencia por patrones de valor, aprendizaje de perfiles de mapeo y soporte para IMEI/deuda/FCC en importacion inteligente"
+    "revision": 12,
+    "release_date": "2026-04-07",
+    "codename": "Modularizacion Datos + Depuracion Segura",
+    "summary": "Se extrae la seccion Datos a modulo dedicado, se limpia artefacto de verificacion obsoleto y se mantiene compatibilidad total de flujo con pruebas en verde"
   },
   "history": [
+    {
+      "version": "1.5.0",
+      "revision": 12,
+      "release_date": "2026-04-07",
+      "codename": "Modularizacion Datos + Depuracion Segura",
+      "changes": [
+        "Se modulariza la seccion Datos desde web/js/main.js hacia web/js/modules/datos-section.js para reducir acoplamiento y mejorar mantenibilidad.",
+        "Se actualiza web/index.html para cargar el nuevo modulo sin alterar handlers ni comportamiento de UI existente.",
+        "Se depura archivo generado obsoleto backend/verification_results.json para mantener el repositorio limpio.",
+        "Se conserva compatibilidad del flujo de Datos, QR y Smart Import con validacion de pruebas automatizadas en verde.",
+        "Se mantiene regla de BD predeterminada database_manager en la seccion Datos y fallback seguro de tablas canonicas/legacy."
+      ]
+    },
     {
       "version": "1.5.0",
       "revision": 11,

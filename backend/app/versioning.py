@@ -18,10 +18,10 @@ DEFAULT_VERSION_INFO: dict[str, Any] = {
     "channel": "production",
     "current": {
         "version": "1.5.0",
-        "revision": 11,
-        "release_date": "2026-04-08",
-        "codename": "Intelligent Column Detection + Profile Learning",
-        "summary": "Deteccion automatica de fila de encabezado, inferencia por patrones de valor, aprendizaje de perfiles de mapeo y soporte para IMEI/deuda/FCC en importacion inteligente",
+        "revision": 12,
+        "release_date": "2026-04-07",
+        "codename": "Modularizacion Datos + Depuracion Segura",
+        "summary": "Se extrae la seccion Datos a modulo dedicado, se limpia artefacto de verificacion obsoleto y se mantiene compatibilidad total de flujo con pruebas en verde",
     },
     "history": [],
 }

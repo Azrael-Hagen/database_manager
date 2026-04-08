@@ -2,6 +2,12 @@
 
 Acceso previsto solo desde la maquina servidor mediante la API interna de versionado.
 
+## 1.5.0-rev12 - 2026-04-07
+- Se extrae la sección `Datos` de `web/js/main.js` hacia `web/js/modules/datos-section.js` para mejorar mantenibilidad y facilitar futuras iteraciones.
+- Se integra carga explícita del nuevo módulo en `web/index.html` manteniendo handlers y flujo actual sin regresiones funcionales.
+- Se elimina `backend/verification_results.json` (artefacto histórico generado) para reducir ruido y deuda de repositorio.
+- Se valida continuidad operativa con pruebas backend/API, smart import y escenarios E2E clave en verde.
+
 ## 1.5.0-rev11 - 2026-04-08
 - `detect_header_row`: detecta automaticamente la fila real de cabecera en Excel con etiquetas de categoria en la primera fila.
 - `infer_from_values`: infiere campo canonico a partir de valores en la columna (email, telefono, IMEI, deuda, nombre, ubicacion, etc.).
