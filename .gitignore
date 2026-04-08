@@ -41,6 +41,7 @@ ENV/
 uploads/
 qr_codes/
 backend/backups/
+backend/app/importers/mapping_profiles.json
 *.log
 temp/
 tmp/
