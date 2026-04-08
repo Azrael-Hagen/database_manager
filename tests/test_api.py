@@ -15,6 +15,7 @@ from app.security import create_access_token
 from app import security as security_module
 from app.api import export as export_api
 from app.api import datos as datos_api
+from app.api import database as database_api
 from app.config import config as app_config
 from main import app
 from app.config import config as app_config
@@ -552,6 +553,22 @@ class TestAlertasRoles:
         items = data.get("items", [])
         role_keys = {item.get("role") for item in items}
         assert {"viewer", "capture", "admin", "super_admin"}.issubset(role_keys)
+
+
+class TestDatabaseSerialization:
+    def test_json_safe_value_serializa_bytes_a_blob_base64(self):
+        out = database_api._json_safe_value(b"\x89PNG\x00")
+        assert isinstance(out, str)
+        assert out.startswith("[BLOB:")
+        assert "base64," in out
+
+    def test_json_safe_row_serializa_memoryview(self):
+        cols = ["id", "qr_code"]
+        row = (1, memoryview(b"\x00\x01\x02"))
+        out = database_api._json_safe_row(cols, row)
+        assert out["id"] == 1
+        assert isinstance(out["qr_code"], str)
+        assert out["qr_code"].startswith("[BLOB:3 bytes;base64,")
 
 
 class TestUsuariosAutoservicioLimitado:

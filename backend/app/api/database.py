@@ -13,6 +13,7 @@ import csv
 import io
 import os
 import re
+import base64
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/databases", tags=["Database Management"])
@@ -29,6 +30,25 @@ def _safe_ident(name: str, field: str = "identificador") -> str:
             detail=f"{field} inválido"
         )
     return value
+
+
+def _json_safe_value(value):
+    """Make DB cell values JSON-safe for FastAPI responses.
+
+    Binary columns (e.g. BLOB qr_code) are encoded as base64 markers so the
+    UI can render rows without crashing the response serializer.
+    """
+    if isinstance(value, memoryview):
+        value = value.tobytes()
+    if isinstance(value, (bytes, bytearray)):
+        raw = bytes(value)
+        b64 = base64.b64encode(raw).decode("ascii")
+        return f"[BLOB:{len(raw)} bytes;base64,{b64}]"
+    return value
+
+
+def _json_safe_row(columns: list[str], row) -> dict:
+    return {col: _json_safe_value(val) for col, val in zip(columns, row)}
 
 
 @router.get("/")
@@ -112,7 +132,7 @@ async def get_table_data(
         
         # Obtener datos
         result = db.execute(text(f"SELECT * FROM `{table_name}`{order_sql} LIMIT {limit} OFFSET {offset}"))
-        rows = [dict(zip(columns, row)) for row in result.fetchall()]
+        rows = [_json_safe_row(columns, row) for row in result.fetchall()]
         
         # Contar total de registros
         count_result = db.execute(text(f"SELECT COUNT(*) FROM `{table_name}`"))
@@ -171,7 +191,7 @@ async def execute_query(
         # Si es SELECT, devolver resultados
         if is_select:
             columns = result.keys()
-            rows = [dict(zip(columns, row)) for row in result.fetchall()]
+            rows = [_json_safe_row(list(columns), row) for row in result.fetchall()]
             logger.info(f"Query SELECT ejecutada, {len(rows)} filas retornadas")
             return {
                 "status": "success",
