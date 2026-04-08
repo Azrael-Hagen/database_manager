@@ -602,6 +602,25 @@ _TEST_DATA_PATTERNS = [
     re.compile(r"@(example\.com|test\.com|mailinator\.com)$", re.IGNORECASE),
 ]
 
+_NON_AGENT_TERMS = {
+    "baja",
+    "bajas",
+    "equipo",
+    "equipos",
+    "grupo",
+    "grupos",
+    "linea",
+    "lineas",
+    "disponible",
+    "disponibles",
+    "asignado",
+    "asignada",
+    "vacante",
+    "pendiente",
+    "cancelado",
+    "cancelada",
+}
+
 
 def _detect_test_data(mapped_row: dict) -> list[str]:
     findings: list[str] = []
@@ -626,6 +645,20 @@ def _detect_incoherencias(mapped_row: dict) -> list[str]:
     voip = str(mapped_row.get("numero_voip") or "").strip()
     if voip and not re.fullmatch(r"[A-Za-z0-9_\-/]{2,20}", voip):
         issues.append("numero_voip con formato irregular.")
+    voip_digits = re.sub(r"\D", "", voip)
+    if voip_digits and len(voip_digits) < 4:
+        issues.append("numero_voip con menos de 4 digitos; validar que no sea etiqueta o valor invalido.")
+
+    for field in ("nombre", "alias"):
+        value = str(mapped_row.get(field) or "").strip().lower()
+        if not value:
+            continue
+        tokens = [t for t in re.split(r"\W+", value) if t]
+        if not tokens:
+            continue
+        if value in _NON_AGENT_TERMS or all(t in _NON_AGENT_TERMS for t in tokens[:3]):
+            issues.append(f"Campo '{field}' parece etiqueta operativa y no nombre de agente: {mapped_row.get(field)}")
+            break
 
     if not str(mapped_row.get("alias") or "").strip() and str(mapped_row.get("nombre") or "").strip():
         issues.append("Alias ausente; se recomienda usar nombre como alias operativo.")

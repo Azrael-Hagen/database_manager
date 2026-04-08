@@ -366,6 +366,21 @@ class TestPreviewImport:
         assert result["nuevos"] == 1
         assert result["actualizaciones"] == 1
 
+    def test_detecta_etiquetas_no_agente_y_voip_muy_corto(self):
+        content = _csv_bytes([
+            {"nombre": "BAJA", "numero_voip": "123", "alias": "EQUIPO"}
+        ])
+        mapping = {"nombre": "nombre", "numero_voip": "numero_voip", "alias": "alias"}
+        result = preview_import(content, "test.csv", mapping, db=self.db)
+
+        diagnostico = result.get("diagnostico_ai") or {}
+        incoherencias = diagnostico.get("incoherencias") or []
+        assert incoherencias, "Debe detectar incoherencias contextuales"
+
+        hallazgos = " | ".join(incoherencias[0].get("hallazgos") or [])
+        assert "etiqueta operativa" in hallazgos.lower()
+        assert "menos de 4 digitos" in hallazgos.lower()
+
 
 # ===========================================================================
 # HTTP endpoint tests
